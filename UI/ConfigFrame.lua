@@ -26,6 +26,7 @@ local ROW_GAP = 3
 local bossRows = {}
 local abilityRows = {}
 local namedIndex = 0
+local refresh
 
 local function nextName(prefix)
 	namedIndex = namedIndex + 1
@@ -110,6 +111,73 @@ local function createCheck(parent, text, onClick)
 		onClick(self:GetChecked() and true or false)
 	end)
 	return check
+end
+
+local function createListScrollBar(parent, offsetField)
+	local scrollBar = CreateFrame("Slider", nextName("ScrollBar"), parent)
+	scrollBar:SetWidth(14)
+	scrollBar:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -6, -8)
+	scrollBar:SetPoint("BOTTOMRIGHT", parent, "BOTTOMRIGHT", -6, 8)
+	scrollBar:SetMinMaxValues(0, 0)
+	if scrollBar.SetOrientation then
+		scrollBar:SetOrientation("VERTICAL")
+	end
+	if scrollBar.SetValueStep then
+		scrollBar:SetValueStep(1)
+	end
+	if scrollBar.SetObeyStepOnDrag then
+		scrollBar:SetObeyStepOnDrag(true)
+	end
+
+	scrollBar.track = scrollBar:CreateTexture(nil, "BACKGROUND")
+	scrollBar.track:SetPoint("TOP", scrollBar, "TOP", 0, 1)
+	scrollBar.track:SetPoint("BOTTOM", scrollBar, "BOTTOM", 0, -1)
+	scrollBar.track:SetWidth(6)
+	scrollBar.track:SetTexture("Interface\\Buttons\\WHITE8X8")
+	scrollBar.track:SetVertexColor(0.08, 0.065, 0.045, 0.70)
+
+	scrollBar.thumb = scrollBar:CreateTexture(nil, "ARTWORK")
+	scrollBar.thumb:SetWidth(12)
+	scrollBar.thumb:SetHeight(24)
+	scrollBar.thumb:SetTexture("Interface\\Buttons\\UI-ScrollBar-Knob")
+	scrollBar:SetThumbTexture(scrollBar.thumb)
+
+	scrollBar:SetScript("OnValueChanged", function(self, value)
+		if self.suppressUpdate then
+			return
+		end
+		local maxOffset = self.maxOffset or 0
+		local offset = clamp(maxOffset - math.floor((tonumber(value) or 0) + 0.5), 0, maxOffset)
+		if state[offsetField] ~= offset then
+			state[offsetField] = offset
+			refresh()
+		end
+	end)
+	scrollBar:EnableMouseWheel(true)
+	scrollBar:SetScript("OnMouseWheel", function(self, delta)
+		local maxOffset = self.maxOffset or 0
+		state[offsetField] = clamp((state[offsetField] or 0) - delta, 0, maxOffset)
+		refresh()
+	end)
+	scrollBar:Hide()
+	return scrollBar
+end
+
+local function updateScrollBar(scrollBar, totalCount, visibleCount, offset)
+	if not scrollBar then
+		return
+	end
+	local maxOffset = math.max(0, (totalCount or 0) - (visibleCount or 0))
+	scrollBar.maxOffset = maxOffset
+	scrollBar.suppressUpdate = true
+	scrollBar:SetMinMaxValues(0, maxOffset)
+	scrollBar:SetValue(maxOffset - clamp(offset or 0, 0, maxOffset))
+	scrollBar.suppressUpdate = false
+	if maxOffset > 0 then
+		scrollBar:Show()
+	else
+		scrollBar:Hide()
+	end
 end
 
 local function selectedEncounter()
@@ -233,8 +301,6 @@ local function collectAbilities()
 	return list
 end
 
-local refresh
-
 local function applyNumeric(editBox, getter, setter)
 	local value = tonumber((editBox:GetText() or ""):gsub(",", "."))
 	if value then
@@ -252,6 +318,13 @@ local function selectBoss(zoneKey, encounterKey)
 end
 
 local function setSegmentButtonActive(button, active)
+	if button.LockHighlight and button.UnlockHighlight then
+		if active then
+			button:LockHighlight()
+		else
+			button:UnlockHighlight()
+		end
+	end
 	if button.SetTextColor then
 		if active then
 			button:SetTextColor(1.0, 0.86, 0.38)
@@ -264,6 +337,21 @@ local function setSegmentButtonActive(button, active)
 		else
 			button:GetFontString():SetTextColor(0.72, 0.72, 0.70)
 		end
+	end
+end
+
+local function applyAbilityIcon(row, ability)
+	local texture = ability and ability.spellId and GetSpellTexture and GetSpellTexture(ability.spellId) or nil
+	row.name:ClearAllPoints()
+	if texture then
+		row.icon:SetTexture(texture)
+		row.icon:Show()
+		row.name:SetPoint("LEFT", row.icon, "RIGHT", 5, 0)
+		row.name:SetWidth(180)
+	else
+		row.icon:Hide()
+		row.name:SetPoint("LEFT", row, "LEFT", 7, 0)
+		row.name:SetWidth(196)
 	end
 end
 
@@ -300,6 +388,7 @@ local function updateBossRows()
 	local maxOffset = math.max(0, #bosses - BOSS_ROW_COUNT)
 	state.bossOffset = clamp(state.bossOffset, 0, maxOffset)
 	frame.bossCount:SetText(#bosses > 0 and (tostring(state.bossOffset + 1) .. "-" .. tostring(math.min(#bosses, state.bossOffset + BOSS_ROW_COUNT)) .. " / " .. tostring(#bosses)) or "0 / 0")
+	updateScrollBar(frame.bossScrollBar, #bosses, BOSS_ROW_COUNT, state.bossOffset)
 
 	for rowIndex = 1, BOSS_ROW_COUNT do
 		local row = bossRows[rowIndex]
@@ -320,6 +409,13 @@ local function updateBossRows()
 				row.status:SetTextColor(0.65, 0.70, 0.76)
 			end
 			row:SetBackdropColor(selected and 0.13 or 0.06, selected and 0.10 or 0.065, selected and 0.05 or 0.075, 0.92)
+			if selected then
+				row:SetBackdropBorderColor(0.95, 0.72, 0.22, 1.0)
+			elseif entry.suppressed then
+				row:SetBackdropBorderColor(0.24, 0.22, 0.20, 0.90)
+			else
+				row:SetBackdropBorderColor(0.34, 0.29, 0.20, 0.95)
+			end
 			row:Show()
 		else
 			row:Hide()
@@ -332,6 +428,7 @@ local function updateAbilityRows()
 	local maxOffset = math.max(0, #abilities - ABILITY_ROW_COUNT)
 	state.abilityOffset = clamp(state.abilityOffset, 0, maxOffset)
 	frame.abilityCount:SetText(#abilities > 0 and (tostring(state.abilityOffset + 1) .. "-" .. tostring(math.min(#abilities, state.abilityOffset + ABILITY_ROW_COUNT)) .. " / " .. tostring(#abilities)) or "0 / 0")
+	updateScrollBar(frame.abilityScrollBar, #abilities, ABILITY_ROW_COUNT, state.abilityOffset)
 
 	if not selectedEncounter() then
 		frame.emptyAbilities:SetText("Select a learned boss.")
@@ -352,11 +449,8 @@ local function updateAbilityRows()
 			row:SetBackdropColor(entry.active and 0.065 or 0.035, entry.active and 0.075 or 0.04, entry.active and 0.085 or 0.045, 0.94)
 			row.name:SetTextColor(entry.active and 0.92 or 0.48, entry.active and 0.90 or 0.48, entry.active and 0.82 or 0.46)
 			row.info:SetTextColor(entry.active and 0.62 or 0.42, entry.active and 0.70 or 0.42, entry.active and 0.78 or 0.42)
-			if ability.spellId and GetSpellTexture then
-				row.icon:SetTexture(GetSpellTexture(ability.spellId) or "Interface\\Icons\\INV_Misc_QuestionMark")
-			else
-				row.icon:SetTexture("Interface\\Icons\\INV_Misc_QuestionMark")
-			end
+			row:SetBackdropBorderColor(entry.active and 0.40 or 0.22, entry.active and 0.34 or 0.20, entry.active and 0.23 or 0.18, 0.95)
+			applyAbilityIcon(row, ability)
 			setSegmentButtonActive(row.autoButton, entry.displayMode == "auto")
 			setSegmentButtonActive(row.showButton, entry.displayMode == "show")
 			setSegmentButtonActive(row.hideButton, entry.displayMode == "hide")
@@ -443,7 +537,7 @@ local function createBossRow(parent, index)
 	local row = createPanel(parent)
 	row:SetHeight(22)
 	row:SetPoint("TOPLEFT", parent, "TOPLEFT", 8, -8 - ((index - 1) * (22 + ROW_GAP)))
-	row:SetPoint("RIGHT", parent, "RIGHT", -8, 0)
+	row:SetPoint("RIGHT", parent, "RIGHT", -28, 0)
 	row:EnableMouse(true)
 	row:SetScript("OnMouseDown", function(self)
 		if self.entry then
@@ -472,12 +566,13 @@ local function createAbilityRow(parent, index)
 	local row = createPanel(parent)
 	row:SetHeight(25)
 	row:SetPoint("TOPLEFT", parent, "TOPLEFT", 8, -8 - ((index - 1) * (25 + ROW_GAP)))
-	row:SetPoint("RIGHT", parent, "RIGHT", -8, 0)
+	row:SetPoint("RIGHT", parent, "RIGHT", -28, 0)
 
 	row.icon = row:CreateTexture(nil, "ARTWORK")
 	row.icon:SetWidth(18)
 	row.icon:SetHeight(18)
 	row.icon:SetPoint("LEFT", row, "LEFT", 5, 0)
+	row.icon:Hide()
 
 	row.name = createLabel(row, "", "GameFontNormalSmall")
 	row.name:SetPoint("LEFT", row.icon, "RIGHT", 5, 0)
@@ -656,20 +751,9 @@ local function ensureFrame()
 	end)
 
 	frame.bossCount = createLabel(frame, "0 / 0")
-	frame.bossCount:SetPoint("RIGHT", frame, "RIGHT", -55, -136)
+	frame.bossCount:SetWidth(82)
+	frame.bossCount:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -22, -136)
 	frame.bossCount:SetJustifyH("RIGHT")
-	frame.bossUp = createButton(frame, "^", 24, 18)
-	frame.bossUp:SetPoint("RIGHT", frame.bossCount, "LEFT", -7, 0)
-	frame.bossUp:SetScript("OnClick", function()
-		state.bossOffset = math.max(0, state.bossOffset - 1)
-		refresh()
-	end)
-	frame.bossDown = createButton(frame, "v", 24, 18)
-	frame.bossDown:SetPoint("LEFT", frame.bossCount, "RIGHT", 7, 0)
-	frame.bossDown:SetScript("OnClick", function()
-		state.bossOffset = state.bossOffset + 1
-		refresh()
-	end)
 
 	frame.bossPanel = createPanel(frame)
 	frame.bossPanel:SetPoint("TOPLEFT", frame, "TOPLEFT", 14, -158)
@@ -680,6 +764,7 @@ local function ensureFrame()
 		state.bossOffset = state.bossOffset - delta
 		refresh()
 	end)
+	frame.bossScrollBar = createListScrollBar(frame.bossPanel, "bossOffset")
 
 	for index = 1, BOSS_ROW_COUNT do
 		bossRows[index] = createBossRow(frame.bossPanel, index)
@@ -696,20 +781,9 @@ local function ensureFrame()
 	end)
 
 	frame.abilityCount = createLabel(frame, "0 / 0")
-	frame.abilityCount:SetPoint("RIGHT", frame, "RIGHT", -55, -356)
+	frame.abilityCount:SetWidth(82)
+	frame.abilityCount:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -22, -356)
 	frame.abilityCount:SetJustifyH("RIGHT")
-	frame.abilityUp = createButton(frame, "^", 24, 18)
-	frame.abilityUp:SetPoint("RIGHT", frame.abilityCount, "LEFT", -7, 0)
-	frame.abilityUp:SetScript("OnClick", function()
-		state.abilityOffset = math.max(0, state.abilityOffset - 1)
-		refresh()
-	end)
-	frame.abilityDown = createButton(frame, "v", 24, 18)
-	frame.abilityDown:SetPoint("LEFT", frame.abilityCount, "RIGHT", 7, 0)
-	frame.abilityDown:SetScript("OnClick", function()
-		state.abilityOffset = state.abilityOffset + 1
-		refresh()
-	end)
 
 	frame.abilityPanel = createPanel(frame)
 	frame.abilityPanel:SetPoint("TOPLEFT", frame, "TOPLEFT", 14, -378)
@@ -719,6 +793,7 @@ local function ensureFrame()
 		state.abilityOffset = state.abilityOffset - delta
 		refresh()
 	end)
+	frame.abilityScrollBar = createListScrollBar(frame.abilityPanel, "abilityOffset")
 
 	frame.emptyAbilities = createLabel(frame.abilityPanel, "", "GameFontNormal")
 	frame.emptyAbilities:SetPoint("CENTER", frame.abilityPanel, "CENTER", 0, 0)
