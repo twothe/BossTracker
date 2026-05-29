@@ -61,6 +61,16 @@ The C++ module replay adapter accepts one or more AzerothCore `boss_*.cpp` files
 
 Without arguments it runs a representative default set. For broad parser coverage, pass the sorted boss-script list from `/home/two/projects/azerothcore-wotlk/src/server/scripts`.
 
+## Release Packaging
+
+Build the WoW-installable ZIP with:
+
+- `bash scripts/package-addon.sh`
+
+The script copies only `BossTracker.toc` and files listed in the TOC into a top-level `BossTracker/` folder. Development files such as tests, docs, GitHub workflow metadata, and repository notes are intentionally excluded.
+
+GitHub releases are built by `.github/workflows/release-addon.yml` when the TOC version increases on `main` or `master`, or manually through `workflow_dispatch` with `force_release`.
+
 ## Alpha Testing
 
 The addon cannot write files directly. After a test run, use `/reload` or log out normally so the client writes `BossTrackerDB` and `BossTrackerCharDB` to disk.

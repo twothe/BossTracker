@@ -1,0 +1,164 @@
+name: Build Addon Release
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - BossTracker.toc
+  workflow_dispatch:
+    inputs:
+      force_release:
+        description: "Skip version-bump check and build release anyway"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+
+jobs:
+  check_version:
+    runs-on: ubuntu-latest
+    outputs:
+      bumped: ${{ steps.version_check.outputs.bumped }}
+      version: ${{ steps.version_check.outputs.version }}
+      previous_version: ${{ steps.version_check.outputs.previous_version }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Check if TOC version increased
+        id: version_check
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+          FORCE_RELEASE: ${{ github.event.inputs.force_release || 'false' }}
+        run: |
+          set -euo pipefail
+
+          extract_version() {
+            local toc_file="$1"
+            local version
+            version="$(awk -F': *' '/^##[[:space:]]*Version[[:space:]]*:/ { print $2; exit }' "${toc_file}" | tr -d '\r')"
+            if [ -z "${version}" ]; then
+              echo "::error::No '## Version:' entry found in ${toc_file}."
+              exit 1
+            fi
+            echo "${version}"
+          }
+
+          is_newer_version() {
+            local old_version="$1"
+            local new_version="$2"
+
+            if [ "${new_version}" = "${old_version}" ]; then
+              return 1
+            fi
+
+            local highest
+            highest="$(printf '%s\n%s\n' "${old_version}" "${new_version}" | sort -V | tail -n1)"
+            [ "${highest}" = "${new_version}" ]
+          }
+
+          get_latest_release_tag_version() {
+            local latest_tag
+            latest_tag="$(git tag -l 'v*' --sort=-v:refname | head -n1 || true)"
+            if [ -z "${latest_tag}" ]; then
+              echo ""
+              return 0
+            fi
+            echo "${latest_tag#v}"
+          }
+
+          new_version="$(extract_version BossTracker.toc)"
+          before_sha="${BEFORE_SHA:-}"
+
+          previous_version=""
+          bumped="false"
+
+          if [ "${FORCE_RELEASE}" = "true" ]; then
+            bumped="true"
+            previous_version="$(get_latest_release_tag_version)"
+          elif [ "${EVENT_NAME}" = "push" ] && [ -n "${before_sha}" ] && [ "${before_sha}" != "0000000000000000000000000000000000000000" ] && git cat-file -e "${before_sha}:BossTracker.toc" 2>/dev/null; then
+            git show "${before_sha}:BossTracker.toc" > /tmp/previous_BossTracker.toc
+            previous_version="$(extract_version /tmp/previous_BossTracker.toc)"
+
+            if is_newer_version "${previous_version}" "${new_version}"; then
+              bumped="true"
+            fi
+          else
+            previous_version="$(get_latest_release_tag_version)"
+            if [ -z "${previous_version}" ]; then
+              bumped="true"
+            elif is_newer_version "${previous_version}" "${new_version}"; then
+              bumped="true"
+            fi
+          fi
+
+          echo "Event: ${EVENT_NAME}"
+          echo "Manual force_release: ${FORCE_RELEASE}"
+          echo "Detected TOC version: ${new_version}"
+          if [ -n "${previous_version}" ]; then
+            echo "Previous TOC version: ${previous_version}"
+          else
+            echo "Previous TOC version: <none>"
+          fi
+          echo "Version bumped: ${bumped}"
+
+          echo "version=${new_version}" >> "${GITHUB_OUTPUT}"
+          echo "previous_version=${previous_version}" >> "${GITHUB_OUTPUT}"
+          echo "bumped=${bumped}" >> "${GITHUB_OUTPUT}"
+
+  release:
+    runs-on: ubuntu-latest
+    needs: check_version
+    if: needs.check_version.outputs.bumped == 'true'
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Build release ZIP (addon runtime files only)
+        id: package
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ needs.check_version.outputs.version }}
+        run: bash scripts/package-addon.sh
+
+      - name: Verify release ZIP contents
+        shell: bash
+        env:
+          ARCHIVE_PATH: ${{ steps.package.outputs.archive_path }}
+        run: |
+          set -euo pipefail
+
+          unzip -l "${ARCHIVE_PATH}"
+
+          disallowed='(^|/)(\.git|\.github|docs|tests|AGENTS\.md|README\.md)(/|$)'
+          if unzip -Z1 "${ARCHIVE_PATH}" | grep -E "${disallowed}"; then
+            echo "::error::Release archive contains development-only files."
+            exit 1
+          fi
+
+      - name: Upload ZIP artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: ${{ steps.package.outputs.archive_name }}
+          path: ${{ steps.package.outputs.archive_path }}
+
+      - name: Create or update GitHub Release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: v${{ needs.check_version.outputs.version }}
+          name: BossTracker v${{ needs.check_version.outputs.version }}
+          artifacts: ${{ steps.package.outputs.archive_path }}
+          allowUpdates: true
+          replacesArtifacts: true
+          generateReleaseNotes: true
+          artifactErrorsFailBuild: true
