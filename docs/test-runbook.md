@@ -29,7 +29,7 @@ BossTracker stores alpha diagnostics in `BossTrackerDB` because the addon cannot
 - HP-transition abilities should not become normal cooldowns only because the same spell appears at two different phase thresholds.
 - Repeated add-summon casts may be learned under the active boss when there is exactly one boss-frame owner. The debug log records `encounter_spell_associated`, and the timer may show the add source, for example `Lupine Horror: Summon Lupine Delusions`.
 - Council and companion bosses may be learned only after the whole pull ends, because the addon needs the complete pull context to distinguish them from adds.
-- If the timer UI blocks play or behaves badly, run `/bt panic`. Capture and debug recording continue.
+- If the timer UI or warnings block play or behave badly, run `/bt panic`. Capture and debug recording continue.
 - If you want to restore the timer UI, run `/bt resume`.
 - Do not use `/bt clearlogs` until the saved test data has been inspected.
 
@@ -41,6 +41,7 @@ Useful commands:
 
 - `/bt status`: show current addon state and active pull summary.
 - `/bt help`: show slash command help.
+- `/bt config`: open global settings, boss cleanup, ability display overrides, and warning controls.
 - `/bt unlock`: show the timer frame for fallback positioning when no timer is active.
 - `/bt preview`: toggle sample timer bars.
 - `/bt scale 1.0`: fallback timer frame scale command.
@@ -48,10 +49,10 @@ Useful commands:
 - `/bt debug on`: enable SavedVariables diagnostics.
 - `/bt debug off`: disable SavedVariables diagnostics.
 - `/bt timers off`: hide timer predictions while keeping capture active.
-- `/bt panic`: hide the timer UI while keeping capture active.
+- `/bt panic`: hide the timer UI and configured warnings while keeping capture active.
 - `/bt resume`: restore timer UI after panic.
 - `/bt resetui`: reset timer frame position.
-- `/bt clearlearned`: clear learned boss models after captured data has been inspected.
+- `/bt clearlearned`: clear learned boss models and related ability overrides after captured data has been inspected.
 
 ## Local Replay Verification
 

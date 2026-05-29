@@ -183,6 +183,123 @@ local function scenarioTenSecondIntervalAllowed()
 	Harness.assertTrue(heavyStrike.autoSuppressed ~= true, "10s ability should not be auto-suppressed by the display floor")
 end
 
+local function scenarioConfigMinimumDelayRefreshesRules()
+	Harness.resetState("Replay Config Minimum")
+	local boss = "Config Commander"
+	local guid = Harness.makeGuid(boss, 656)
+	for index = 0, 3 do
+		Harness.emitSpell({ t = index * 9.8, sourceName = boss, sourceGUID = guid, spellName = "Quick Jab", hp = 100 - index })
+	end
+	Harness.finishPull(40)
+
+	local model = Harness.encounter(addon.Core.Util.bossKey(boss, guid))
+	local quickJab = Harness.ability(model, addon.Core.Util.bossKey(boss, guid), "Quick Jab")
+	Harness.assertTrue(quickJab ~= nil and quickJab.autoSuppressed == true, "Default minimum delay should suppress 9.8s repeats")
+
+	addon.Core.Config.setMinTimerDisplayInterval(9)
+	Harness.assertTrue(quickJab.autoSuppressed ~= true, "Lowering the minimum delay should refresh learned rule suppression")
+	Harness.assertTrue(quickJab.selectedRule and quickJab.selectedRule.type == "time_interval", "Lowered minimum delay should restore the time rule")
+
+	addon.Core.Config.setMinTimerDisplayInterval(10)
+	Harness.assertTrue(quickJab.autoSuppressed == true, "Raising the minimum delay should suppress the ability again")
+end
+
+local function scenarioConfigDisplayOverrideForSuppressedAbility()
+	Harness.resetState("Replay Config Override")
+	local boss = "Override Commander"
+	local guid = Harness.makeGuid(boss, 657)
+	local actorKey = addon.Core.Util.bossKey(boss, guid)
+	Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = guid, spellName = "Quick Jab", hp = 100 })
+	Harness.emitSpell({ t = 8, sourceName = boss, sourceGUID = guid, spellName = "Quick Jab", hp = 99 })
+	Harness.finishPull(20)
+
+	local model = Harness.encounter(actorKey)
+	local quickJab = Harness.ability(model, actorKey, "Quick Jab")
+	Harness.assertTrue(quickJab ~= nil and quickJab.autoSuppressed == true, "Override fixture should start as auto-suppressed")
+
+	local zoneKey = Harness.currentZone().key
+	addon.Core.Config.setAbilityDisplayMode(zoneKey, model.key, quickJab.key, "show")
+	Harness.emitSpell({ t = 100, sourceName = boss, sourceGUID = guid, spellName = "Quick Jab", hp = 100 })
+
+	local timer = Harness.firstPredictionByName("Quick Jab")
+	Harness.assertTrue(timer ~= nil, "Forced Show should display an otherwise suppressed learned timer")
+	Harness.assertNear(timer.remaining, 8, 0.2, "Forced Show should use the learned interval")
+
+	addon.Core.Config.setAbilityDisplayMode(zoneKey, model.key, quickJab.key, "hide")
+	timer = Harness.firstPredictionByName("Quick Jab")
+	Harness.assertTrue(timer == nil, "Hide should suppress a forced or automatically displayed timer")
+end
+
+local function scenarioCombatLogPayloadNormalization()
+	Harness.resetState("Replay Combat Log Payload")
+	local flags = Harness.hostileFlags()
+	local guid = Harness.makeGuid("Payload Boss", 658)
+	local timestamp, eventType, sourceGUID, sourceName, sourceFlags, destGUID, destName, destFlags, spellId, spellName, spellSchool =
+		addon.Capture.CombatLog.normalizePayload(3, "SPELL_CAST_SUCCESS", guid, "Payload Boss", flags, "Player-1", "Tester", 0, 44, "Payload Blast", 1)
+	Harness.assertTrue(timestamp == 3 and eventType == "SPELL_CAST_SUCCESS", "Old CLEU payload should keep timestamp and subevent")
+	Harness.assertTrue(sourceGUID == guid and sourceName == "Payload Boss" and sourceFlags == flags, "Old CLEU payload should keep source fields")
+	Harness.assertTrue(destGUID == "Player-1" and destName == "Tester" and destFlags == 0, "Old CLEU payload should keep dest fields")
+	Harness.assertTrue(spellId == 44 and spellName == "Payload Blast" and spellSchool == 1, "Old CLEU payload should keep spell fields")
+
+	timestamp, eventType, sourceGUID, sourceName, sourceFlags, destGUID, destName, destFlags, spellId, spellName, spellSchool =
+		addon.Capture.CombatLog.normalizePayload(4, "SPELL_CAST_SUCCESS", false, guid, "Payload Boss", flags, 0, "Player-2", "Tester", 0, 0, 45, "Modern Blast", 2)
+	Harness.assertTrue(timestamp == 4 and eventType == "SPELL_CAST_SUCCESS", "Modern CLEU payload should keep timestamp and subevent")
+	Harness.assertTrue(sourceGUID == guid and sourceName == "Payload Boss" and sourceFlags == flags, "Modern CLEU payload should skip hideCaster and source raid flags")
+	Harness.assertTrue(destGUID == "Player-2" and destName == "Tester" and destFlags == 0, "Modern CLEU payload should skip dest raid flags")
+	Harness.assertTrue(spellId == 45 and spellName == "Modern Blast" and spellSchool == 2, "Modern CLEU payload should keep spell fields")
+end
+
+local function scenarioHealOnlySpellCanBecomeTimer()
+	Harness.resetState("Replay Boss Heal")
+	local boss = "Healing Commander"
+	local guid = Harness.makeGuid(boss, 659)
+	Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = guid, spellName = "Holy Light", eventType = "SPELL_HEAL", hp = 100 })
+	Harness.emitSpell({ t = 24, sourceName = boss, sourceGUID = guid, spellName = "Holy Light", eventType = "SPELL_HEAL", hp = 72 })
+
+	local timer = Harness.firstPredictionByName("Holy Light")
+	Harness.assertTrue(timer ~= nil, "A heal-only boss spell should be eligible for live timing")
+	Harness.assertNear(timer.remaining, 24, 0.2, "A heal-only boss spell should use activation-to-activation timing")
+end
+
+local function scenarioClearLearnedClearsConfigOverrides()
+	Harness.resetState("Replay Clear Learned")
+	addon.Core.Config.setAbilityDisplayMode("zone-a", "boss-a", "spell-a", "show")
+	addon.Core.Config.setAbilityWarningMode("zone-a", "boss-a", "spell-a", "raid")
+	Harness.assertTrue(addon.db.config.overrides.zones["zone-a"] ~= nil, "Config override fixture should be present")
+	addon.Core.SavedVariables.clearLearnedData("Replay clear learned")
+	Harness.assertTrue(next(addon.db.learned.zones) == nil, "Clear learned should remove learned zones")
+	Harness.assertTrue(next(addon.db.config.overrides.zones) == nil, "Clear learned should also remove stale ability overrides")
+end
+
+local function scenarioWarningRaidPermissionUsesWotlkApi()
+	Harness.resetState("Replay Warning Permissions")
+	local previousIsInRaid = IsInRaid
+	local previousGetNumRaidMembers = GetNumRaidMembers
+	local previousUnitIsGroupLeader = UnitIsGroupLeader
+	local previousIsRaidLeader = IsRaidLeader
+	local previousIsRaidOfficer = IsRaidOfficer
+
+	IsInRaid = nil
+	GetNumRaidMembers = function() return 10 end
+	UnitIsGroupLeader = nil
+	IsRaidLeader = function() return true end
+	IsRaidOfficer = function() return false end
+	Harness.assertTrue(addon.Runtime.WarningEngine.canSendRaidWarning() == true, "WotLK raid leader API should allow raid warnings")
+
+	IsRaidLeader = function() return false end
+	IsRaidOfficer = function() return true end
+	Harness.assertTrue(addon.Runtime.WarningEngine.canSendRaidWarning() == true, "WotLK raid officer API should allow raid warnings")
+
+	IsRaidOfficer = function() return false end
+	Harness.assertTrue(addon.Runtime.WarningEngine.canSendRaidWarning() == false, "Raid members without permission should fall back to personal warnings")
+
+	IsInRaid = previousIsInRaid
+	GetNumRaidMembers = previousGetNumRaidMembers
+	UnitIsGroupLeader = previousUnitIsGroupLeader
+	IsRaidLeader = previousIsRaidLeader
+	IsRaidOfficer = previousIsRaidOfficer
+end
+
 local function scenarioSingleSampleHpGateNotLiveTime()
 	Harness.resetState("Replay HP Gate")
 	local boss = "Phase Paladin"
@@ -265,6 +382,12 @@ local scenarios = {
 	scenarioLiveNoiseSuppression,
 	scenarioSubTenSecondIntervalSuppression,
 	scenarioTenSecondIntervalAllowed,
+	scenarioConfigMinimumDelayRefreshesRules,
+	scenarioConfigDisplayOverrideForSuppressedAbility,
+	scenarioCombatLogPayloadNormalization,
+	scenarioHealOnlySpellCanBecomeTimer,
+	scenarioClearLearnedClearsConfigOverrides,
+	scenarioWarningRaidPermissionUsesWotlkApi,
 	scenarioSingleSampleHpGateNotLiveTime,
 	scenarioTimedSingleCastDoesNotBecomeHpGateAfterTwoPulls,
 	scenarioUnconfirmedEliteTrashNotPromoted,

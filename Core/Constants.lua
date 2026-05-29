@@ -14,10 +14,15 @@ C.DEFAULT_CONFIG = {
 	debugEnabled = true,
 	uiLocked = false,
 	maxBars = 8,
+	minTimerDisplayInterval = 10,
+	warningLeadTime = 5,
 	minTimerConfidence = 0.25,
 	minEncounterConfidence = 0.55,
 	minTimerSeconds = 1.0,
 	combatLogDebug = true,
+	overrides = {
+		zones = {},
+	},
 }
 
 C.DEFAULT_CHAR_CONFIG = {
@@ -82,6 +87,7 @@ C.EVENT_IMPORTANCE = {
 	SPELL_AURA_REFRESH = 2,
 	SPELL_DAMAGE = 2,
 	SPELL_MISSED = 2,
+	SPELL_HEAL = 3,
 	SPELL_INTERRUPT = 4,
 	SPELL_SUMMON = 4,
 	RANGE_DAMAGE = 2,
@@ -96,6 +102,7 @@ C.PRIMARY_OCCURRENCE_EVENTS = {
 	SPELL_AURA_REFRESH = true,
 	SPELL_DAMAGE = true,
 	SPELL_MISSED = true,
+	SPELL_HEAL = true,
 	SPELL_INTERRUPT = true,
 	SPELL_SUMMON = true,
 	RANGE_DAMAGE = true,

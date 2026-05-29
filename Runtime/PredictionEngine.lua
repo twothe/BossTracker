@@ -171,6 +171,11 @@ local function addTimer(ability, pullAbility, context, nextAt, mode, scheduledKe
 
 	predictions[#predictions + 1] = {
 		key = ability.key,
+		zoneKey = ability.zoneKey,
+		encounterKey = ability.encounterKey,
+		actorKey = ability.actorKey,
+		spellKey = ability.spellKey,
+		abilityKey = ability.key,
 		spellId = ability.spellId,
 		spellName = ability.spellName or ability.key or "Unknown Ability",
 		classification = ability.classification,
@@ -202,6 +207,14 @@ local function looksLikeSingleSampleHpGate(pullAbility)
 		and (maxHpPct - minHpPct) <= C.HP_GATE_SPREAD_PCT
 end
 
+local function displayIntervalFloor()
+	local config = addon.Core and addon.Core.Config
+	if config and config.getMinTimerDisplayInterval then
+		return config.getMinTimerDisplayInterval()
+	end
+	return C.MIN_TIMER_DISPLAY_INTERVAL_SECONDS
+end
+
 local function liveTimeAbility(pullAbility)
 	if not pullAbility
 		or not pullAbility.intervalSamples
@@ -210,7 +223,7 @@ local function liveTimeAbility(pullAbility)
 		or pullAbility.minInterval < C.MIN_INTERVAL_SECONDS then
 		return nil
 	end
-	if pullAbility.minInterval < C.MIN_TIMER_DISPLAY_INTERVAL_SECONDS then
+	if pullAbility.minInterval < displayIntervalFloor() then
 		return nil
 	end
 	local relevanceScorer = addon.Learning and addon.Learning.RelevanceScorer or nil
@@ -245,11 +258,44 @@ local function segmentSeen(pullAbility, segmentKey)
 	return segment and (segment.activationCount or 0) > 0
 end
 
-local function learnedAbilityForPrediction(ability)
-	if type(ability) ~= "table" or ability.hidden or ability.autoSuppressed then
+local function bestDisplayRule(ability, forced)
+	local rule = ability and ability.selectedRule or nil
+	if type(rule) == "table" and rule.type ~= "routine_noise" then
+		return rule
+	end
+	if not forced or type(ability and ability.rules) ~= "table" then
 		return nil
 	end
-	local rule = ability.selectedRule
+
+	local selected = nil
+	local order = { "time_interval", "phase_start_offset", "first_offset", "hp_gate", "phase_once" }
+	for index = 1, #order do
+		local candidate = ability.rules[order[index]]
+		if candidate and (not selected or (candidate.confidence or 0) > (selected.confidence or 0)) then
+			selected = candidate
+		end
+	end
+	return selected
+end
+
+local function learnedAbilityForPrediction(ability, zoneKey, encounterKey)
+	if type(ability) ~= "table" then
+		return nil
+	end
+
+	local config = addon.Core and addon.Core.Config
+	local forced = config
+		and config.isAbilityForcedShown
+		and config.isAbilityForcedShown(zoneKey, encounterKey, ability.key)
+		or false
+	if config and config.isAbilityHidden and config.isAbilityHidden(zoneKey, encounterKey, ability) then
+		return nil
+	end
+	if not forced and (ability.hidden or ability.autoSuppressed) then
+		return nil
+	end
+
+	local rule = bestDisplayRule(ability, forced)
 	if type(rule) ~= "table" or rule.type == "routine_noise" then
 		return nil
 	end
@@ -259,11 +305,13 @@ local function learnedAbilityForPrediction(ability)
 		copy[key] = value
 	end
 	copy.rule = rule
+	copy.zoneKey = zoneKey
+	copy.encounterKey = encounterKey
 	return copy
 end
 
-local function addLearnedAbilityPrediction(context, bossState, ability, pullAbility, now, scheduledKeys)
-	local model = learnedAbilityForPrediction(ability)
+local function addLearnedAbilityPrediction(context, bossState, ability, pullAbility, now, scheduledKeys, zoneKey, encounterKey)
+	local model = learnedAbilityForPrediction(ability, zoneKey, encounterKey)
 	if not model then
 		return
 	end
@@ -309,15 +357,20 @@ local function addLearnedAbilityPrediction(context, bossState, ability, pullAbil
 	end
 end
 
-local function addEncounterPredictions(context, encounter, bossState, minConfidence, now, scheduledKeys)
+local function addEncounterPredictions(context, encounter, bossState, minConfidence, now, scheduledKeys, zoneKey)
 	if not encounter or type(encounter.abilities) ~= "table" then
 		return
 	end
 
 	for key, ability in pairs(encounter.abilities) do
-		if ability.actorKey == context.modelKey and (ability.confidence or 0) >= minConfidence then
+		local config = addon.Core and addon.Core.Config
+		local forced = config
+			and config.isAbilityForcedShown
+			and config.isAbilityForcedShown(zoneKey, encounter.key, ability.key)
+			or false
+		if ability.actorKey == context.modelKey and (forced or (ability.confidence or 0) >= minConfidence) then
 			local pullAbility = bossState and bossState.abilities and bossState.abilities[ability.spellKey] or nil
-			addLearnedAbilityPrediction(context, bossState, ability, pullAbility, now, scheduledKeys)
+			addLearnedAbilityPrediction(context, bossState, ability, pullAbility, now, scheduledKeys, zoneKey, encounter.key)
 		end
 	end
 end
@@ -372,7 +425,7 @@ local function buildPredictions()
 			if contextHasCombatEvidence(context, bossState) then
 				local encounter = groupEncounter and groupEncounter.actors and groupEncounter.actors[context.modelKey] and groupEncounter
 					or addon.Core.ModelStore.findSingleActorEncounter(pull.zone.key, context.modelKey)
-				addEncounterPredictions(context, encounter, bossState, minConfidence, now, scheduledKeys)
+				addEncounterPredictions(context, encounter, bossState, minConfidence, now, scheduledKeys, pull.zone.key)
 				if bossState then
 					addLiveBossPredictions(context, bossState, minConfidence, now, pullWorldbossCount, scheduledKeys)
 				end
@@ -393,7 +446,10 @@ local function buildPredictions()
 		return (a.hpPct or 0) > (b.hpPct or 0)
 	end)
 
-	local maxBars = addon.db.config.maxBars or C.DEFAULT_CONFIG.maxBars
+	local config = addon.Core and addon.Core.Config
+	local maxBars = config and config.getMaxBars and config.getMaxBars()
+		or addon.db.config.maxBars
+		or C.DEFAULT_CONFIG.maxBars
 	for index = #predictions, maxBars + 1, -1 do
 		predictions[index] = nil
 	end
@@ -411,6 +467,11 @@ function PredictionEngine.getPredictions(force)
 end
 
 function PredictionEngine.start()
+	clearPredictions()
+	lastUpdateAt = 0
+end
+
+function PredictionEngine.reset()
 	clearPredictions()
 	lastUpdateAt = 0
 end

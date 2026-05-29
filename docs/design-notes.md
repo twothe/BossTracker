@@ -58,6 +58,8 @@ The addon records hostile NPC spell evidence broadly because manual dungeon test
 - Extremely short high-HP boss-frame partials stay diagnostic-only when they end without death or low-HP evidence. This protects pre-combat or edge-of-combat casts from becoming durable learned pulls while still allowing real wipes and confirmed kills to update boss models.
 - Timer UI updates must not depend on the visible timer frame's `OnUpdate`; hidden WoW frames can stop polling, so the display uses a separate always-active ticker.
 - Timer UI positioning and resizing should be direct mouse interactions on the visible frame. Slash commands are acceptable only as fallback diagnostics or recovery controls.
+- Timer-frame locking must apply to direct drag, resize, and mouse-wheel scaling. Locking is not just a visibility preference.
+- Panic mode is a playability escape hatch. It hides both timer visuals and configured warnings while capture and diagnostics continue.
 
 This keeps diagnostics useful without letting normal trash packs teach the addon permanent boss timers.
 
@@ -73,6 +75,9 @@ BossTracker is organized as a small encounter engine with a simple timer UI:
 - `Learning/RelevanceScorer.lua` adds routine-noise suppression without exposing technical choices to the player.
 - `Core/ModelStore.lua` persists phase-aware encounter models under zones, encounters, actors, and abilities.
 - `Runtime/PredictionEngine.lua` converts active learned rules plus same-pull provisional rules into timer rows for the UI.
+- `Core/Config.lua` owns player-facing overrides so learned data, display decisions, and warnings share one contract.
+- `UI/ConfigFrame.lua` provides searchable boss and ability configuration, learned-data cleanup, and warning mode controls.
+- `Runtime/WarningEngine.lua` emits optional personal or raid warnings from the current prediction list without affecting learning.
 
 The combat-log path stays intentionally light: normalize, filter, store bounded diagnostics, and pass candidate records onward. Heavier grouping, rule selection, and persistence happen in learning modules and at pull end.
 

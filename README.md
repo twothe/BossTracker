@@ -32,6 +32,8 @@ Implemented now:
 - Displayed boss mechanics are merged by visible spell name when Ascension emits separate technical spell ids for cast, effect, and aura events.
 - Learned timers stay hidden for target-only boss contexts until that boss has current combat evidence.
 - Automatic suppression for sub-10s repeated abilities and aura-only same-HP repeat noise.
+- A searchable configuration UI for global settings, learned boss cleanup, ability display overrides, and personal or raid warning modes.
+- Raid warnings use the available WotLK/Ascension raid leader and officer APIs, with personal warnings as the fallback.
 - A compact timer frame for learned time-based, one-time, and HP-linked candidates.
 - Timer UI polling runs from an always-active ticker, so a hidden timer frame can open itself when predictions appear.
 - The visible timer frame can be moved by dragging it and resized from the lower-right corner; slash commands are only fallback controls.
@@ -40,10 +42,8 @@ Implemented now:
 
 Not implemented yet:
 
-- Full configuration UI.
-- User-facing instance, boss, and ability hierarchy.
 - Audio countdowns.
-- Mature drift correction and player-facing relevance controls.
+- Mature drift correction and broader player-facing relevance controls.
 
 ## Development Verification
 
@@ -68,15 +68,16 @@ The addon cannot write files directly. After a test run, use `/reload` or log ou
 Useful commands:
 
 - `/bt` or `/bt help`: show available commands.
+- `/bt config`: open global settings and learned boss/ability configuration.
 - `/bt status`: show current addon state.
 - `/bt unlock`: show the timer frame for fallback positioning when no timer is active.
 - `/bt preview`: toggle sample timer bars.
 - `/bt scale 1.0`: fallback scale command. The visible frame can be resized directly from its lower-right corner.
-- `/bt panic`: hide the timer UI while capture continues.
+- `/bt panic`: hide the timer UI and configured warnings while capture continues.
 - `/bt resume`: restore the timer UI.
 - `/bt timers off`: disable timer display while capture continues.
 - `/bt debug on`: enable SavedVariables diagnostics.
 - `/bt clearlogs`: clear stored debug runs after they are no longer needed.
-- `/bt clearlearned`: clear learned boss models if alpha data becomes contaminated.
+- `/bt clearlearned`: clear learned boss models and related ability overrides if alpha data becomes contaminated.
 
 See `docs/test-runbook.md` for the test workflow.

@@ -207,6 +207,40 @@ function ModelStore.findSingleActorEncounter(zoneKey, actorKey)
 	return ModelStore.getEncounter(zoneKey, actorKey)
 end
 
+function ModelStore.deleteEncounter(zoneKey, encounterKey)
+	local zone = ModelStore.getZone(zoneKey)
+	if not zone or type(zone.encounters) ~= "table" or not encounterKey then
+		return false
+	end
+	if not zone.encounters[encounterKey] then
+		return false
+	end
+	zone.encounters[encounterKey] = nil
+	if addon.Core.Config then
+		addon.Core.Config.clearEncounterOverrides(zoneKey, encounterKey)
+	end
+	addon.Core.SavedVariables.boundLearnedData()
+	return true
+end
+
+function ModelStore.deleteAbility(zoneKey, encounterKey, abilityKey)
+	local zone = ModelStore.getZone(zoneKey)
+	local encounter = zone and zone.encounters and zone.encounters[encounterKey] or nil
+	if not encounter or type(encounter.abilities) ~= "table" or not abilityKey then
+		return false
+	end
+	if not encounter.abilities[abilityKey] then
+		return false
+	end
+	encounter.abilities[abilityKey] = nil
+	if addon.Core.Config then
+		addon.Core.Config.clearAbilityOverrides(zoneKey, encounterKey, abilityKey)
+	end
+	encounter.abilityCount = countKeys(encounter.abilities)
+	addon.Core.SavedVariables.boundLearnedData()
+	return true
+end
+
 function ModelStore.refreshAllRules()
 	if not addon.db or not addon.db.learned or type(addon.db.learned.zones) ~= "table" then
 		return

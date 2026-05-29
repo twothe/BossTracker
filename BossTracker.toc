@@ -12,6 +12,7 @@ Core\Constants.lua
 Core\RingBuffer.lua
 Core\Util.lua
 Core\SavedVariables.lua
+Core\Config.lua
 Core\Logger.lua
 Core\ErrorBoundary.lua
 Core\ModelStore.lua
@@ -29,10 +30,12 @@ Learning\AbilityLearner.lua
 
 Runtime\PredictionEngine.lua
 Runtime\TimerScheduler.lua
+Runtime\WarningEngine.lua
 
 Capture\CombatLog.lua
 
 UI\TimerFrame.lua
+UI\ConfigFrame.lua
 UI\SlashCommand.lua
 
 Init.lua

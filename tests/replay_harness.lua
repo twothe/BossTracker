@@ -112,6 +112,7 @@ local function loadAddon()
 		"Core/RingBuffer.lua",
 		"Core/Util.lua",
 		"Core/SavedVariables.lua",
+		"Core/Config.lua",
 		"Core/Logger.lua",
 		"Core/ErrorBoundary.lua",
 		"Core/ModelStore.lua",
@@ -126,6 +127,8 @@ local function loadAddon()
 		"Learning/AbilityLearner.lua",
 		"Runtime/PredictionEngine.lua",
 		"Runtime/TimerScheduler.lua",
+		"Runtime/WarningEngine.lua",
+		"Capture/CombatLog.lua",
 	}
 	for index = 1, #files do
 		assert(loadfile(files[index]))()
@@ -166,6 +169,7 @@ function Harness.resetState(name)
 	_G.BossTrackerDB = {}
 	_G.BossTrackerCharDB = {}
 	addon.Core.SavedVariables.init()
+	addon.Core.Config.start()
 	addon.Core.Logger.startRun()
 	addon.Core.ModelStore.start()
 	addon.Learning.OccurrenceBuilder.start()

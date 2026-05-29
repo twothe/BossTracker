@@ -157,7 +157,20 @@ local function observeEncounterAssociation(record, pull)
 	addon.Learning.AbilityLearner.observe(associatedRecord, pull)
 end
 
-local function onCombatLog(eventName, timestamp, eventType, sourceGUID, sourceName, sourceFlags, destGUID, destName, destFlags, ...)
+-- Normalizes the stock 3.3.5 CLEU payload and the newer hideCaster/raidFlags
+-- shape used by some embedded libraries into one internal argument contract.
+function CombatLog.normalizePayload(timestamp, eventType, sourceGUIDOrHideCaster, ...)
+	if type(sourceGUIDOrHideCaster) == "boolean" then
+		local sourceGUID, sourceName, sourceFlags = select(1, ...)
+		local destGUID, destName, destFlags = select(5, ...)
+		return timestamp, eventType, sourceGUID, sourceName, sourceFlags, destGUID, destName, destFlags, select(9, ...)
+	end
+
+	return timestamp, eventType, sourceGUIDOrHideCaster, ...
+end
+
+function CombatLog.handleEvent(eventName, ...)
+	local timestamp, eventType, sourceGUID, sourceName, sourceFlags, destGUID, destName, destFlags, spellId, spellName, spellSchool = CombatLog.normalizePayload(...)
 	if not addon.db or not addon.db.config.enabled then
 		return
 	end
@@ -224,5 +237,5 @@ local function onCombatLog(eventName, timestamp, eventType, sourceGUID, sourceNa
 end
 
 function CombatLog.start()
-	addon.RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED", "CombatLog", onCombatLog)
+	addon.RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED", "CombatLog", CombatLog.handleEvent)
 end

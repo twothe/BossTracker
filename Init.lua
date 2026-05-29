@@ -7,6 +7,7 @@ local started = false
 
 local function startModules()
 	local boundary = addon.Core.ErrorBoundary
+	boundary.safeStart("Config", addon.Core.Config)
 	boundary.safeStart("ModelStore", addon.Core.ModelStore)
 	boundary.safeStart("EncounterState", addon.Capture.EncounterState)
 	boundary.safeStart("OccurrenceBuilder", addon.Learning.OccurrenceBuilder)
@@ -17,8 +18,18 @@ local function startModules()
 	boundary.safeStart("AbilityLearner", addon.Learning.AbilityLearner)
 	boundary.safeStart("PredictionEngine", addon.Runtime.PredictionEngine)
 	boundary.safeStart("TimerScheduler", addon.Runtime.TimerScheduler)
+	if addon.Runtime.WarningEngine then
+		boundary.safeStart("WarningEngine", addon.Runtime.WarningEngine)
+	else
+		addon.Core.Logger.chat("BossTracker update needs a full client restart before ability warnings are available.")
+	end
 	boundary.safeStart("CombatLog", addon.Capture.CombatLog)
 	boundary.safeStart("TimerFrame", addon.UI.TimerFrame)
+	if addon.UI.ConfigFrame then
+		boundary.safeStart("ConfigFrame", addon.UI.ConfigFrame)
+	else
+		addon.Core.Logger.chat("BossTracker update needs a full client restart before /bt config is available.")
+	end
 	boundary.safeStart("SlashCommand", addon.UI.SlashCommand)
 end
 

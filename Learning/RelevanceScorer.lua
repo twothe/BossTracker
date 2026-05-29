@@ -9,6 +9,14 @@ local C = addon.Core.Constants
 local RelevanceScorer = {}
 addon.Learning.RelevanceScorer = RelevanceScorer
 
+local function displayIntervalFloor()
+	local config = addon.Core and addon.Core.Config
+	if config and config.getMinTimerDisplayInterval then
+		return config.getMinTimerDisplayInterval()
+	end
+	return C.MIN_TIMER_DISPLAY_INTERVAL_SECONDS
+end
+
 local function textContains(text, pattern)
 	return type(text) == "string" and string.find(text, pattern, 1, true) ~= nil
 end
@@ -71,7 +79,7 @@ local function frequentShortIntervalReason(ability)
 		return nil
 	end
 
-	if activationCount >= 2 and intervalSamples >= 1 and minInterval < C.MIN_TIMER_DISPLAY_INTERVAL_SECONDS then
+	if activationCount >= 2 and intervalSamples >= 1 and minInterval < displayIntervalFloor() then
 		return "short_interval_below_display_floor"
 	end
 

@@ -28,6 +28,9 @@
 - Keep very short, high-HP boss-frame partials diagnostic-only when they end without death or low-HP evidence. A bossframe alone is strong identity evidence, but one pre-combat cast should not become a durable pull.
 - Keep timer UI polling on an always-active ticker, not on the visible timer frame itself. A hidden WoW frame may stop receiving `OnUpdate`, preventing the timer window from opening itself.
 - Timer UI positioning and resizing must be direct mouse interactions on the visible frame; slash commands may remain only as fallback or recovery controls.
+- Timer frame locking must block direct drag, corner resizing, and mouse-wheel scaling, not only hide the frame when idle.
+- `/bt panic` must suppress timer visuals and configured warnings while keeping capture and diagnostics active.
+- Clearing all learned alpha data should also clear related display/warning overrides, because stale overrides can silently affect newly relearned models.
 - Treat non-boss summon spells during a single active boss-frame encounter as possible encounter mechanics owned by that boss, while preserving the original add source in learned data and timer display. Skip association when ownership is ambiguous, especially multi-boss pulls.
 - Keep the learning architecture phase-aware: occurrence lifecycle dedupe, encounter grouping, phase segmentation, rule learning, relevance scoring, model persistence, and prediction should remain separate modules.
 - The addon is unreleased; schema changes may reset old alpha learned data when that is cleaner than preserving contaminated models.
@@ -48,7 +51,7 @@ Planned long-term responsibilities:
 4. Render a minimal timer list with bars, remaining time, and priority highlighting.
 5. Provide a searchable hierarchical configuration by instance, boss, and ability.
 
-The current repository state is an alpha build. Runtime tracking, multi-boss-context learning, timer display, and debug persistence exist; full configuration UI and audio countdowns do not.
+The current repository state is an alpha build. Runtime tracking, multi-boss-context learning, timer display, searchable configuration, per-ability warnings, and debug persistence exist; audio countdowns do not.
 
 Current architecture:
 
@@ -59,7 +62,9 @@ Current architecture:
 5. RuleLearner maintains competing prediction rules per ability.
 6. RelevanceScorer suppresses routine noise.
 7. ModelStore persists phase-aware encounter models.
-8. PredictionEngine builds UI timer rows.
+8. Config keeps player overrides separate from learned model data.
+9. PredictionEngine builds UI timer rows.
+10. WarningEngine emits optional personal or raid warnings from configured timers.
 
 # Documentation Index
 

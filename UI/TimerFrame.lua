@@ -267,6 +267,9 @@ function maxFrameHeight()
 end
 
 function canEditFrame()
+	if addon.db and addon.db.config and addon.db.config.uiLocked then
+		return false
+	end
 	return not InCombatLockdown or not InCombatLockdown()
 end
 

@@ -149,12 +149,21 @@ function SavedVariables.clearLearnedData(reason)
 		return
 	end
 	addon.db.learned = { zones = {} }
+	if addon.db.config and addon.db.config.overrides then
+		addon.db.config.overrides = { zones = {} }
+	end
 	appendMigration(addon.db, {
 		from = C.SCHEMA_VERSION,
 		to = C.SCHEMA_VERSION,
 		at = type(time) == "function" and time() or nil,
 		reason = reason or "Manual learned data reset.",
 	})
+	if addon.Runtime and addon.Runtime.PredictionEngine and addon.Runtime.PredictionEngine.reset then
+		addon.Runtime.PredictionEngine.reset()
+	end
+	if addon.UI and addon.UI.TimerFrame and addon.UI.TimerFrame.refresh then
+		addon.UI.TimerFrame.refresh()
+	end
 end
 
 function SavedVariables.boundLearnedData()

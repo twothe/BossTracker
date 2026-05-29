@@ -13,6 +13,7 @@ addon.UI.SlashCommand = SlashCommand
 local function help()
 	Util.print("BossTracker commands:")
 	Util.print("/bt status - show current addon and capture state")
+	Util.print("/bt config - open boss and ability configuration")
 	Util.print("/bt preview - toggle sample timer bars for positioning")
 	Util.print("Drag the timer frame to move it; drag the lower-right corner to resize it.")
 	Util.print("/bt unlock, /bt lock, /bt resetui - fallback timer frame controls")
@@ -115,6 +116,12 @@ local function handle(input)
 		help()
 	elseif command == "status" then
 		status()
+	elseif command == "config" or command == "options" then
+		if addon.UI.ConfigFrame and addon.UI.ConfigFrame.toggle then
+			addon.UI.ConfigFrame.toggle()
+		else
+			Util.print("full client restart required before the configuration UI is available")
+		end
 	elseif command == "on" then
 		addon.db.config.enabled = true
 		Util.print("enabled")
