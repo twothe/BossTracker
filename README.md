@@ -21,12 +21,14 @@ Implemented now:
 - A conservative ability learner scoped per boss source, including late boss pulls and simultaneous bosses.
 - Council-style boss groups can be persisted as one encounter with multiple boss actors.
 - Pull-wide boss-context qualification before durable learning, with boss-frame actors preferred and nearby trash kept as diagnostics rather than timer data.
+- Non-boss-frame fallback learning requires kill or low-HP confirmation, so long trash casters do not become boss models just because they cast many spells.
 - Add-spawn summon spells from non-boss actors can be associated with one active boss-frame owner as encounter mechanics, while keeping the original add source for display and diagnostics.
 - Boss HP is evidence, not a hard learning gate. A qualified boss attempt can update timer estimates even after an early wipe or reset.
 - Timer display starts from the first usable estimate; low-confidence provisional timers are allowed and refined by later pulls.
 - During a long first pull, repeated casts from a qualified active boss can create provisional same-pull timer bars before the encounter ends.
 - Cast lifecycle and channel events are deduplicated so cast duration, aura duration, and tick spacing are not learned as recast timing.
 - HP phase transitions and repeated one-per-phase transition spells are kept out of normal cooldown models when the evidence supports a phase rule.
+- HP percentage rules require multiple observations; early one-per-pull casts prefer time or phase timing instead of showing HP bars.
 - Displayed boss mechanics are merged by visible spell name when Ascension emits separate technical spell ids for cast, effect, and aura events.
 - Learned timers stay hidden for target-only boss contexts until that boss has current combat evidence.
 - Automatic suppression for sub-10s repeated abilities and aura-only same-HP repeat noise.

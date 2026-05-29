@@ -143,6 +143,10 @@ local function averageComponentConfidence(component)
 	return total / #component
 end
 
+local function encounterIsSuppressed(encounter)
+	return encounter and (encounter.suppressed == true or encounter.autoSuppressed == true)
+end
+
 function ModelStore.abilityModelKey(actorKey, spellKey)
 	return abilityModelKey(actorKey, spellKey)
 end
@@ -159,7 +163,11 @@ function ModelStore.getEncounter(zoneKey, encounterKey)
 	if not zone or type(zone.encounters) ~= "table" then
 		return nil
 	end
-	return zone.encounters[encounterKey]
+	local encounter = zone.encounters[encounterKey]
+	if encounterIsSuppressed(encounter) then
+		return nil
+	end
+	return encounter
 end
 
 function ModelStore.promoteComponent(pullState, component)

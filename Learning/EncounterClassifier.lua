@@ -230,11 +230,21 @@ function EncounterClassifier.scoreContext(context, bossState, modelStats)
 	local unconfirmedHighHp = partialAttempt
 		and endHpPct ~= nil
 		and endHpPct > C.BOSS_COMPLETION_HP_THRESHOLD
+	local unconfirmedNonBossContext = not classifiedAsBoss
+		and endReason ~= "unit_died"
+		and not lowHpCompletion
 	local insufficientHighHpPartial = classifiedAsBoss
 		and endReason ~= "unit_died"
 		and not lowHpCompletion
 		and duration < 8
 		and eventCount < 3
+
+	if unconfirmedNonBossContext then
+		isBoss = false
+		partialAttempt = false
+		unconfirmedHighHp = false
+		addReason(reasons, "unconfirmed_non_boss_context")
+	end
 
 	if insufficientHighHpPartial then
 		isBoss = false

@@ -37,6 +37,7 @@ The addon records hostile NPC spell evidence broadly because manual dungeon test
 - Combat-log, target, and focus evidence remain required fallbacks because custom Ascension encounters may expose incomplete boss-frame state. Target and focus are never required for boss tracking; healers and support players often target friendly units during encounters.
 - Contexts are scored for durable learning at pull end, after the addon can see the full boss group and repeated trash models.
 - Only qualified boss-like contexts are promoted into persistent timer models.
+- Non-boss-frame and non-worldboss fallback contexts require death or low-HP confirmation before promotion. Long elite trash with many casts stays diagnostic-only unless the client sees stronger boss evidence.
 - Repeated model names inside one run are strong evidence for trash or adds unless boss-frame or worldboss classification proves a boss.
 - If a pull has boss-frame evidence, nearby non-boss actors are treated conservatively so adds and long trash chains do not become timer models.
 - Summon spells from non-boss actors may be associated with a single active boss-frame owner as encounter mechanics. The boss owns the encounter timer, but the original source is retained so add-driven mechanics are not treated as direct boss casts. Ambiguous multi-boss ownership is skipped until the model can resolve it safely.
@@ -53,6 +54,7 @@ The addon records hostile NPC spell evidence broadly because manual dungeon test
 - Pure aura-only repeats at nearly the same HP are hidden as likely passive, consequence, or phase-state noise unless future relevance logic has stronger evidence that they are player-actionable mechanics.
 - Routine suppression applies to live provisional timers as well as persisted models, so repeated filler casts do not flash in the timer frame during the first observed boss pull.
 - A live time timer is not created from only one interval sample when the two activations occur at nearly the same HP. That pattern is treated as likely HP-gated or phase-gated until later evidence proves a real cooldown.
+- Stable HP samples need at least three observations before they can become an `hp_gate` rule. With one or two pulls, the model prefers timing or phase timing so normal scripted boss casts do not appear as HP percentage bars just because group DPS was similar.
 - Extremely short high-HP boss-frame partials stay diagnostic-only when they end without death or low-HP evidence. This protects pre-combat or edge-of-combat casts from becoming durable learned pulls while still allowing real wipes and confirmed kills to update boss models.
 - Timer UI updates must not depend on the visible timer frame's `OnUpdate`; hidden WoW frames can stop polling, so the display uses a separate always-active ticker.
 - Timer UI positioning and resizing should be direct mouse interactions on the visible frame. Slash commands are acceptable only as fallback diagnostics or recovery controls.

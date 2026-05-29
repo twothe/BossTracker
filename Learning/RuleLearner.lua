@@ -68,7 +68,7 @@ local function mergeMinMax(target, targetMin, targetMax, source, sourceMin, sour
 end
 
 local function stableHpGate(ability)
-	if not ability.hpSamples or ability.hpSamples <= 0 then
+	if not ability.hpSamples or ability.hpSamples < C.MIN_HP_GATE_SAMPLES then
 		return false
 	end
 	if not ability.minHpPct or not ability.maxHpPct then

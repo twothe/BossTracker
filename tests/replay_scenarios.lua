@@ -194,6 +194,49 @@ local function scenarioSingleSampleHpGateNotLiveTime()
 	Harness.assertTrue(timer == nil, "A two-sample HP-gated phase ability must not become a live time timer")
 end
 
+local function scenarioTimedSingleCastDoesNotBecomeHpGateAfterTwoPulls()
+	Harness.resetState("Replay Timed Single Cast")
+	local boss = "Cathedral Commander"
+	local guid = Harness.makeGuid(boss, 670)
+	Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = guid, spellName = "Opening Strike", hp = 100 })
+	Harness.emitSpell({ t = 20, sourceName = boss, sourceGUID = guid, spellName = "Timed Sleep", hp = 50 })
+	Harness.finishPull(45, "unit_died")
+
+	Harness.emitSpell({ t = 100, sourceName = boss, sourceGUID = guid, spellName = "Opening Strike", hp = 100 })
+	Harness.emitSpell({ t = 124, sourceName = boss, sourceGUID = guid, spellName = "Timed Sleep", hp = 51 })
+	Harness.finishPull(150, "unit_died")
+
+	local model = Harness.encounter(addon.Core.Util.bossKey(boss, guid))
+	local sleep = Harness.ability(model, addon.Core.Util.bossKey(boss, guid), "Timed Sleep")
+	Harness.assertTrue(sleep ~= nil, "Timed single-cast ability should be learned")
+	Harness.assertTrue(sleep.selectedRule and sleep.selectedRule.type ~= "hp_gate", "Two similar HP samples should not force HP display over timing")
+end
+
+local function scenarioUnconfirmedEliteTrashNotPromoted()
+	Harness.resetState("Replay Elite Trash")
+	local mob = "Scarlet Sorcerer"
+	local guid = Harness.makeGuid(mob, 680)
+	local spells = { "Frostbolt", "Blizzard", "Slow", "Chilled", "Frost Nova" }
+	for index = 0, 24 do
+		local _, context = Harness.emitSpell({
+			t = index * 2.5,
+			sourceName = mob,
+			sourceGUID = guid,
+			spellName = spells[(index % #spells) + 1],
+			hp = index == 0 and 100 or 88,
+			boss = false,
+		})
+		context.unitClassification = "elite"
+		context.lastUnitSource = "target"
+		context.lastUnitToken = "target"
+		context.lastHpPct = 88
+	end
+	Harness.finishPull(70, "out_of_combat")
+
+	local model = Harness.encounter(addon.Core.Util.bossKey(mob, guid))
+	Harness.assertTrue(model == nil, "Long unconfirmed elite trash must not be promoted as a boss")
+end
+
 local function scenarioShortHighHpPartialIgnored()
 	Harness.resetState("Replay Short Partial")
 	local boss = "Lord Cobrahn"
@@ -223,6 +266,8 @@ local scenarios = {
 	scenarioSubTenSecondIntervalSuppression,
 	scenarioTenSecondIntervalAllowed,
 	scenarioSingleSampleHpGateNotLiveTime,
+	scenarioTimedSingleCastDoesNotBecomeHpGateAfterTwoPulls,
+	scenarioUnconfirmedEliteTrashNotPromoted,
 	scenarioShortHighHpPartialIgnored,
 }
 
