@@ -135,10 +135,15 @@ local function intervalsConnected(left, right)
 		and rightStart <= leftEnd + C.ENCOUNTER_GROUP_GAP_SECONDS
 end
 
-local function sortedComponentKeys(component)
+local function sortedUniqueComponentValues(component, valueFn)
 	local keys = {}
+	local seen = {}
 	for index = 1, #component do
-		keys[#keys + 1] = component[index].bossState.bossKey
+		local value = valueFn(component[index])
+		if value and not seen[value] then
+			seen[value] = true
+			keys[#keys + 1] = value
+		end
 	end
 	table.sort(keys)
 	return keys
@@ -148,7 +153,13 @@ local function encounterKeyForComponent(component)
 	if #component <= 1 then
 		return component[1].bossState.bossKey
 	end
-	return "group:" .. table.concat(sortedComponentKeys(component), "+")
+	local keys = sortedUniqueComponentValues(component, function(entry)
+		return entry.bossState.bossKey
+	end)
+	if #keys <= 1 then
+		return keys[1] or component[1].bossState.bossKey
+	end
+	return "group:" .. table.concat(keys, "+")
 end
 
 local function encounterNameForComponent(component)
@@ -156,11 +167,9 @@ local function encounterNameForComponent(component)
 		return component[1].bossState.bossName
 	end
 
-	local names = {}
-	for index = 1, #component do
-		names[#names + 1] = component[index].bossState.bossName
-	end
-	table.sort(names)
+	local names = sortedUniqueComponentValues(component, function(entry)
+		return entry.bossState.bossName
+	end)
 	return table.concat(names, " / ")
 end
 
@@ -307,9 +316,13 @@ end
 
 function EncounterModel.activeGroupKey(contexts)
 	local keys = {}
+	local seen = {}
 	for _, context in pairs(contexts or {}) do
 		if context.active and isBossSignalContext(context) and context.modelKey then
-			keys[#keys + 1] = context.modelKey
+			if not seen[context.modelKey] then
+				seen[context.modelKey] = true
+				keys[#keys + 1] = context.modelKey
+			end
 		end
 	end
 	if #keys <= 1 then

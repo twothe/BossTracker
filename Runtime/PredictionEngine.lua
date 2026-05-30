@@ -415,6 +415,27 @@ local function addEncounterPredictions(context, encounter, bossState, minConfide
 	end
 end
 
+local function learnedEncounterForContext(pull, groupEncounter, context)
+	local modelStore = addon.Core and addon.Core.ModelStore
+	if not modelStore or not pull or not context or not context.modelKey then
+		return nil
+	end
+
+	local encounter = groupEncounter
+		and groupEncounter.actors
+		and groupEncounter.actors[context.modelKey]
+		and groupEncounter
+		or modelStore.findSingleActorEncounter(pull.zone.key, context.modelKey)
+	if encounter then
+		return encounter
+	end
+
+	if pull.bossKey == context.modelKey and modelStore.findBestEncounterContainingActor then
+		return modelStore.findBestEncounterContainingActor(pull.zone.key, context.modelKey)
+	end
+	return nil
+end
+
 local function addLiveBossPredictions(context, bossState, minConfidence, now, pullWorldbossCount, scheduledKeys)
 	if not liveBossQualifies(context, bossState, pullWorldbossCount, now) then
 		return
@@ -464,8 +485,7 @@ local function buildPredictions()
 			local bossState = pullState and pullState.bosses and pullState.bosses[actorKey] or nil
 			if contextHasCombatEvidence(context, bossState)
 				and (not isRaidPull(pull) or isBossSignalContext(context)) then
-				local encounter = groupEncounter and groupEncounter.actors and groupEncounter.actors[context.modelKey] and groupEncounter
-					or addon.Core.ModelStore.findSingleActorEncounter(pull.zone.key, context.modelKey)
+				local encounter = learnedEncounterForContext(pull, groupEncounter, context)
 				addEncounterPredictions(context, encounter, bossState, minConfidence, now, scheduledKeys, pull.zone.key)
 				if bossState then
 					addLiveBossPredictions(context, bossState, minConfidence, now, pullWorldbossCount, scheduledKeys)

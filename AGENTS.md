@@ -25,6 +25,7 @@
 - Suppress repeated abilities with an observed interval below 10 seconds before display. Keep their diagnostic evidence, but treat them as standard repertoire rather than useful timer bars.
 - Track raw activation gaps separately from timer-quality intervals. Gaps below the timer model floor still prove routine spam and must prevent counterspell/lockout gaps from looking like real cooldowns.
 - Suppress pure aura-only repeats at nearly the same HP as likely passive, consequence, or phase-state noise unless later architecture adds a stronger relevance signal.
+- For dynamic add encounters, keep group encounter keys unique by boss model key and allow the primary boss to reuse learned group variants that contain the same actor when no exact group or single-actor model exists. Do not use that fallback for non-primary adds.
 - Apply routine suppression before live provisional timer display as well as after pull-end model promotion; otherwise repeated filler casts can appear during the first live boss pull.
 - Use learned routine evidence across confirmed bosses to suppress live provisional timers for shared filler spells. A spell can look long on its first two casts in a new pull and only reveal its short routine cadence later.
 - Do not create a live time timer from only one interval sample when the two activations occur at nearly the same HP. That evidence is more likely HP-gated or phase-gated than a real cooldown.

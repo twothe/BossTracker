@@ -592,6 +592,119 @@ local function scenarioPredictionDeduplicatesSameModelAbility()
 	Harness.assertNear(nextAt, 148, 0.01, "Duplicate timer dedupe should keep the seen-this-pull interval prediction")
 end
 
+local function scenarioGroupKeyDeduplicatesSameModelActors()
+	local key = addon.Learning.EncounterModel.activeGroupKey({
+		first = {
+			active = true,
+			modelKey = "broodlord_lashlayer",
+			unitClassification = "worldboss",
+		},
+		second = {
+			active = true,
+			modelKey = "greater_corrupted_black_whelp",
+			unitClassification = "worldboss",
+		},
+		third = {
+			active = true,
+			modelKey = "greater_corrupted_black_whelp",
+			unitClassification = "worldboss",
+		},
+	})
+	Harness.assertTrue(
+		key == "group:broodlord_lashlayer+greater_corrupted_black_whelp",
+		"Dynamic add groups should not include duplicate model keys"
+	)
+end
+
+local function scenarioPrimaryBossUsesDynamicGroupVariantModel()
+	Harness.resetState("Replay Dynamic Group Variant")
+	Harness.setInstanceInfo({
+		name = "Blackwing Lair",
+		instanceType = "raid",
+		maxPlayers = 40,
+		mapId = 469,
+		difficultyIndex = 1,
+	})
+
+	local boss = "Broodlord Lashlayer"
+	local learnedAdd = "Greater Corrupted Blue Whelp"
+	local activeAdd = "Greater Corrupted Green Whelp"
+	local bossKey = addon.Core.Util.bossKey(boss)
+	local learnedAddKey = addon.Core.Util.bossKey(learnedAdd)
+	local learnedEncounterKey = "group:" .. bossKey .. "+" .. learnedAddKey
+	local spellName = "Knock Away"
+	local spellKey = addon.Core.Util.timerAbilityKey(nil, spellName)
+	local abilityKey = addon.Core.ModelStore.abilityModelKey(bossKey, spellKey)
+	local zoneInfo = addon.Core.Util.zoneInfo()
+
+	addon.db.learned.zones[zoneInfo.key] = {
+		key = zoneInfo.key,
+		name = zoneInfo.name,
+		instanceType = zoneInfo.instanceType,
+		maxPlayers = zoneInfo.maxPlayers,
+		encounters = {
+			[learnedEncounterKey] = {
+				key = learnedEncounterKey,
+				name = boss .. " / " .. learnedAdd,
+				confidence = 0.9,
+				pullCount = 1,
+				lastSeenAt = 1000,
+				actors = {
+					[bossKey] = {
+						key = bossKey,
+						name = boss,
+						pullCount = 1,
+						confidence = 0.9,
+					},
+					[learnedAddKey] = {
+						key = learnedAddKey,
+						name = learnedAdd,
+						pullCount = 1,
+						confidence = 0.6,
+					},
+				},
+				abilities = {
+					[abilityKey] = {
+						key = abilityKey,
+						actorKey = bossKey,
+						actorName = boss,
+						spellKey = spellKey,
+						spellName = spellName,
+						confidence = 0.9,
+						minFirstOffset = 12,
+						minInterval = 30,
+						selectedRule = {
+							type = "time_interval",
+							confidence = 0.9,
+							minInterval = 30,
+						},
+					},
+				},
+			},
+		},
+	}
+
+	Harness.emitSpell({
+		t = 100,
+		sourceName = boss,
+		sourceGUID = Harness.makeGuid(boss, 653),
+		spellName = "Pull Signal",
+		hp = 100,
+	})
+	Harness.emitSpell({
+		t = 101,
+		sourceName = activeAdd,
+		sourceGUID = Harness.makeGuid(activeAdd, 654),
+		spellName = "Lesser Acid Breath",
+		hp = 100,
+	})
+
+	local timer = Harness.firstPredictionByName(spellName)
+	Harness.assertTrue(timer ~= nil, "Primary boss should use learned timers from a previous dynamic add group variant")
+	Harness.assertTrue(timer.provisional ~= true, "Dynamic group variant fallback should use the persisted model")
+	Harness.assertNear(timer.remaining, 11, 0.2, "Persisted first offset should be scheduled from the current boss pull")
+end
+
 local function scenarioSingleSampleHpGateNotLiveTime()
 	Harness.resetState("Replay HP Gate")
 	local boss = "Phase Paladin"
@@ -864,6 +977,8 @@ local scenarios = {
 	scenarioWarningRaidPermissionUsesWotlkApi,
 	scenarioConfiguredWarningPlaysSound,
 	scenarioPredictionDeduplicatesSameModelAbility,
+	scenarioGroupKeyDeduplicatesSameModelActors,
+	scenarioPrimaryBossUsesDynamicGroupVariantModel,
 	scenarioSingleSampleHpGateNotLiveTime,
 	scenarioTimedSingleCastDoesNotBecomeHpGateAfterTwoPulls,
 	scenarioUnconfirmedEliteTrashNotPromoted,

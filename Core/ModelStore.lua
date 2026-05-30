@@ -211,6 +211,44 @@ function ModelStore.findSingleActorEncounter(zoneKey, actorKey)
 	return ModelStore.getEncounter(zoneKey, actorKey)
 end
 
+-- Returns the strongest learned encounter variant that contains the actor.
+-- This is used only as a prediction fallback when dynamic adds change group keys.
+function ModelStore.findBestEncounterContainingActor(zoneKey, actorKey)
+	local zone = ModelStore.getZone(zoneKey)
+	if not zone or type(zone.encounters) ~= "table" or not actorKey then
+		return nil
+	end
+
+	local bestEncounter = nil
+	local bestScore = nil
+	for _, encounter in pairs(zone.encounters) do
+		if not encounterIsSuppressed(encounter)
+			and type(encounter.actors) == "table"
+			and encounter.actors[actorKey] then
+			local actor = encounter.actors[actorKey]
+			local actorAbilityCount = 0
+			for _, ability in pairs(encounter.abilities or {}) do
+				if ability.actorKey == actorKey then
+					actorAbilityCount = actorAbilityCount + 1
+				end
+			end
+			if actorAbilityCount > 0 then
+				local score = (encounter.key == actorKey and 100000000 or 0)
+					+ ((tonumber(actor.pullCount) or 0) * 100000)
+					+ ((tonumber(encounter.pullCount) or 0) * 10000)
+					+ (actorAbilityCount * 100)
+					+ math.floor((tonumber(encounter.confidence) or 0) * 100)
+					+ (tonumber(encounter.lastSeenAt) or 0)
+				if not bestScore or score > bestScore then
+					bestScore = score
+					bestEncounter = encounter
+				end
+			end
+		end
+	end
+	return bestEncounter
+end
+
 function ModelStore.deleteEncounter(zoneKey, encounterKey)
 	local zone = ModelStore.getZone(zoneKey)
 	if not zone or type(zone.encounters) ~= "table" or not encounterKey then
