@@ -5,7 +5,7 @@ local addon = _G.BossTracker
 local C = {}
 addon.Core.Constants = C
 
-C.VERSION = "1.1.1"
+C.VERSION = "1.2.1"
 C.SCHEMA_VERSION = 6
 
 C.DEFAULT_CONFIG = {

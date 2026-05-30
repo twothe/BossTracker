@@ -40,6 +40,7 @@
 - Treat non-boss summon spells during a single active boss-frame encounter as possible encounter mechanics owned by that boss, while preserving the original add source in learned data and timer display. Skip association when ownership is ambiguous, especially multi-boss pulls.
 - Keep the learning architecture phase-aware: occurrence lifecycle dedupe, encounter grouping, phase segmentation, rule learning, relevance scoring, model persistence, and prediction should remain separate modules.
 - The addon is unreleased; schema changes may reset old alpha learned data when that is cleaner than preserving contaminated models.
+- For release-relevant bug fixes and features, update the addon version consistently in `BossTracker.toc`, `Core/Constants.lua`, and `Core/Namespace.lua` using patch increments for fixes and minor increments for user-facing features.
 - During live addon iteration, `/reload` can leave the running client with the old `.toc` file list. If a newly added file is missing, warn the player in chat to restart the client and disable only the affected feature for that session.
 - Combat-log parser tests must exercise `Capture.CombatLog.handleEvent`, not only helper normalization or direct learner records. A parser regression once learned subevent names such as `SPELL_HEAL` as ability names because tests bypassed the real event handler.
 - Before reporting completion for code changes, at minimum run `luac -p Core/*.lua Capture/*.lua Learning/*.lua Runtime/*.lua UI/*.lua Init.lua` when Lua syntax tools are available.

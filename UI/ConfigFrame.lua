@@ -625,6 +625,45 @@ local function setTooltip(frameObject, title, text)
 	end)
 end
 
+local function showAbilitySpellTooltip(owner, entry)
+	if not GameTooltip or not entry or not entry.ability then
+		return
+	end
+
+	local ability = entry.ability
+	local spellId = tonumber(ability.spellId)
+	GameTooltip:SetOwner(owner, "ANCHOR_CURSOR")
+	GameTooltip:ClearLines()
+	if spellId and spellId > 0 and (not GetSpellInfo or GetSpellInfo(spellId)) then
+		if GameTooltip.SetHyperlink then
+			local ok = pcall(GameTooltip.SetHyperlink, GameTooltip, "spell:" .. tostring(spellId))
+			if ok then
+				GameTooltip:Show()
+				return
+			end
+		elseif GameTooltip.SetSpellByID then
+			local ok = pcall(GameTooltip.SetSpellByID, GameTooltip, spellId)
+			if ok then
+				GameTooltip:Show()
+				return
+			end
+		end
+	end
+
+	GameTooltip:SetText(abilityDisplayName(ability))
+	if GameTooltip.AddLine then
+		GameTooltip:AddLine(abilityTimingText(ability), 0.82, 0.82, 0.72, true)
+		GameTooltip:AddLine("No spell tooltip is available for this ability.", 0.58, 0.62, 0.66, true)
+	end
+	GameTooltip:Show()
+end
+
+local function hideGameTooltip()
+	if GameTooltip then
+		GameTooltip:Hide()
+	end
+end
+
 local function createWarningSoundDropDown(row)
 	local dropdownName = nextName("WarningSoundDropDown")
 	local dropdown = CreateFrame("Frame", dropdownName, row, "UIDropDownMenuTemplate")
@@ -678,6 +717,11 @@ local function createAbilityRow(parent, index)
 	row:SetHeight(25)
 	row:SetPoint("TOPLEFT", parent, "TOPLEFT", 8, -8 - ((index - 1) * (25 + ROW_GAP)))
 	row:SetPoint("RIGHT", parent, "RIGHT", -28, 0)
+	row:EnableMouse(true)
+	row:SetScript("OnEnter", function(self)
+		showAbilitySpellTooltip(self, self.entry)
+	end)
+	row:SetScript("OnLeave", hideGameTooltip)
 
 	row.icon = row:CreateTexture(nil, "ARTWORK")
 	row.icon:SetWidth(18)
