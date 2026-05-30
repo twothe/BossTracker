@@ -17,11 +17,13 @@
 - Allow live same-pull provisional timers for repeated casts from qualified active boss contexts, but do not persist those estimates until the normal pull-end learner path qualifies the context.
 - Use canonical timer ability keys based on the visible spell name when available. Ascension/WoW combat logs may emit different technical spell ids for the cast, effect, and aura of one displayed boss mechanic.
 - Deduplicate cast lifecycle events for one ability. A `SPELL_CAST_START` or `SPELL_CAST_SUCCESS` followed shortly by success, damage, aura, heal, summon, or miss evidence is one boss ability occurrence, not the ability cooldown.
+- Treat player `SPELL_INTERRUPT` events against hostile NPCs as evidence for the interrupted boss spell from the event's extra spell fields, not as the player's interrupt ability.
 - Treat self-applied aura windows as ability lifecycles. Channeled or aura-driven mechanics can emit ticks and aura removal after the visible activation; those events must not be learned as recast intervals.
 - Use `/home/two/projects/azerothcore-wotlk` as a local pattern reference for common boss script shapes, but never as authoritative Ascension behavior.
 - Do not show learned persistent timers for a target/focus-only boss context until the context has actual boss combat evidence through boss events or a matching unit that is affecting combat.
 - In raid instances, do not promote or display fallback elite contexts without a boss-frame, worldboss, or council signal. Raid trash can look boss-like by duration, low HP, and event volume.
 - Suppress repeated abilities with an observed interval below 10 seconds before display. Keep their diagnostic evidence, but treat them as standard repertoire rather than useful timer bars.
+- Track raw activation gaps separately from timer-quality intervals. Gaps below the timer model floor still prove routine spam and must prevent counterspell/lockout gaps from looking like real cooldowns.
 - Suppress pure aura-only repeats at nearly the same HP as likely passive, consequence, or phase-state noise unless later architecture adds a stronger relevance signal.
 - Apply routine suppression before live provisional timer display as well as after pull-end model promotion; otherwise repeated filler casts can appear during the first live boss pull.
 - Use learned routine evidence across confirmed bosses to suppress live provisional timers for shared filler spells. A spell can look long on its first two casts in a new pull and only reveal its short routine cadence later.

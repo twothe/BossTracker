@@ -97,6 +97,10 @@ local function ensurePullAbility(bossState, key, spellId, spellName)
 			minInterval = nil,
 			maxInterval = nil,
 			avgInterval = nil,
+			observedGapSamples = 0,
+			minObservedGap = nil,
+			maxObservedGap = nil,
+			avgObservedGap = nil,
 			hpSamples = 0,
 			minHpPct = nil,
 			maxHpPct = nil,
@@ -127,6 +131,10 @@ local function ensureSegmentStats(ability, segment)
 			minInterval = nil,
 			maxInterval = nil,
 			avgInterval = nil,
+			observedGapSamples = 0,
+			minObservedGap = nil,
+			maxObservedGap = nil,
+			avgObservedGap = nil,
 		}
 		ability.segmentStats[key] = stats
 	end
@@ -137,6 +145,13 @@ local function noteInterval(target, interval)
 	if interval and interval >= C.MIN_INTERVAL_SECONDS and interval <= C.MAX_REASONABLE_INTERVAL_SECONDS then
 		target.avgInterval, target.intervalSamples = updateAverage(target.avgInterval, target.intervalSamples, interval)
 		updateMinMax(target, "minInterval", "maxInterval", interval)
+	end
+end
+
+local function noteObservedGap(target, interval)
+	if interval and interval >= 0 and interval <= C.MAX_REASONABLE_INTERVAL_SECONDS then
+		target.avgObservedGap, target.observedGapSamples = updateAverage(target.avgObservedGap, target.observedGapSamples, interval)
+		updateMinMax(target, "minObservedGap", "maxObservedGap", interval)
 	end
 end
 
@@ -177,7 +192,9 @@ function RuleLearner.noteActivation(bossState, activation, segment)
 		ability.firstOffset = activation.t - (bossState.startedAtSession or activation.t)
 	end
 	if previousActivationAt then
-		noteInterval(ability, activation.t - previousActivationAt)
+		local interval = activation.t - previousActivationAt
+		noteObservedGap(ability, interval)
+		noteInterval(ability, interval)
 	end
 	if activation.hpPct then
 		ability.avgHpPct, ability.hpSamples = updateAverage(ability.avgHpPct, ability.hpSamples, activation.hpPct)
@@ -194,7 +211,9 @@ function RuleLearner.noteActivation(bossState, activation, segment)
 		segmentStats.firstPhaseOffset = activation.t - (segment and segment.startedAt or bossState.startedAtSession or activation.t)
 	end
 	if previousSegmentActivationAt then
-		noteInterval(segmentStats, activation.t - previousSegmentActivationAt)
+		local interval = activation.t - previousSegmentActivationAt
+		noteObservedGap(segmentStats, interval)
+		noteInterval(segmentStats, interval)
 	end
 
 	bossState.activationCount = (bossState.activationCount or 0) + 1
@@ -357,6 +376,13 @@ function RuleLearner.mergePullAbility(learnedAbility, pullAbility)
 		pullAbility.intervalSamples
 	)
 	mergeMinMax(learnedAbility, "minInterval", "maxInterval", pullAbility, "minInterval", "maxInterval")
+	learnedAbility.avgObservedGap, learnedAbility.observedGapSamples = mergeAverage(
+		learnedAbility.avgObservedGap,
+		learnedAbility.observedGapSamples,
+		pullAbility.avgObservedGap,
+		pullAbility.observedGapSamples
+	)
+	mergeMinMax(learnedAbility, "minObservedGap", "maxObservedGap", pullAbility, "minObservedGap", "maxObservedGap")
 
 	learnedAbility.avgHpPct, learnedAbility.hpSamples = mergeAverage(
 		learnedAbility.avgHpPct,
@@ -382,6 +408,7 @@ function RuleLearner.mergePullAbility(learnedAbility, pullAbility)
 				seenCount = 0,
 				activationCount = 0,
 				intervalSamples = 0,
+				observedGapSamples = 0,
 			}
 			learnedAbility.segmentStats[segmentKey] = targetSegment
 		end
@@ -404,6 +431,13 @@ function RuleLearner.mergePullAbility(learnedAbility, pullAbility)
 			pullSegment.intervalSamples
 		)
 		mergeMinMax(targetSegment, "minInterval", "maxInterval", pullSegment, "minInterval", "maxInterval")
+		targetSegment.avgObservedGap, targetSegment.observedGapSamples = mergeAverage(
+			targetSegment.avgObservedGap,
+			targetSegment.observedGapSamples,
+			pullSegment.avgObservedGap,
+			pullSegment.observedGapSamples
+		)
+		mergeMinMax(targetSegment, "minObservedGap", "maxObservedGap", pullSegment, "minObservedGap", "maxObservedGap")
 	end
 
 	learnedAbility.updatedAt = Util.wallTime()

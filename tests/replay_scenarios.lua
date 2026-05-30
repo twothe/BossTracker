@@ -166,6 +166,102 @@ local function scenarioSubTenSecondIntervalSuppression()
 	Harness.assertTrue(quickJab.autoSuppressed == true, "Sub-10s ability should be auto-suppressed after promotion")
 end
 
+local function scenarioInterruptedSpamDoesNotBecomeLongTimer()
+	Harness.resetState("Replay Interrupted Spam")
+	local boss = "Storm Caster"
+	local guid = Harness.makeGuid(boss, 651)
+	local castTimes = { 0, 2.5, 5.0, 17.6, 20.1, 22.6 }
+	for index = 1, #castTimes do
+		Harness.emitSpell({
+			t = castTimes[index],
+			sourceName = boss,
+			sourceGUID = guid,
+			spellName = "Lightning Bolt",
+			hp = 100 - index * 10,
+			eventType = "SPELL_CAST_START",
+		})
+	end
+
+	local timer = Harness.firstPredictionByName("Lightning Bolt")
+	Harness.assertTrue(timer == nil, "Interrupted spam casts must not become a live long-interval timer")
+	Harness.finishPull(35)
+
+	local model = Harness.encounter(addon.Core.Util.bossKey(boss, guid))
+	local lightningBolt = Harness.ability(model, addon.Core.Util.bossKey(boss, guid), "Lightning Bolt")
+	Harness.assertTrue(lightningBolt ~= nil, "Interrupted spam ability should remain available for diagnostics")
+	Harness.assertNear(lightningBolt.minObservedGap, 2.5, 0.01, "Observed activation gaps should retain sub-model-floor casts")
+	Harness.assertTrue(lightningBolt.autoSuppressed == true, "Interrupted spam ability should be auto-suppressed after promotion")
+	Harness.assertTrue(lightningBolt.suppressionReason == "short_activation_gap_below_display_floor", "Suppression should use the observed short activation gap")
+end
+
+local function scenarioPlayerInterruptLearnsInterruptedBossSpell()
+	Harness.resetState("Replay Player Interrupt")
+	local boss = "Interruptible Caster"
+	local guid = Harness.makeGuid(boss, 652)
+	local actorKey = addon.Core.Util.actorKey(boss, guid)
+	local function emitInterrupt(t)
+		Harness.setTime(t)
+		addon.Capture.CombatLog.handleEvent(
+			"COMBAT_LOG_EVENT_UNFILTERED",
+			t,
+			"SPELL_INTERRUPT",
+			"Player-1",
+			"Replay Mage",
+			COMBATLOG_OBJECT_TYPE_PLAYER,
+			guid,
+			boss,
+			Harness.hostileFlags(),
+			2139,
+			"Counterspell",
+			64,
+			9001,
+			"Lightning Bolt",
+			8
+		)
+		local pull = addon.Capture.EncounterState.getCurrent()
+		local context = pull and pull.bossContexts and pull.bossContexts[actorKey] or nil
+		if context then
+			Harness.markBossContext(context, 100 - t)
+		end
+	end
+
+	emitInterrupt(0)
+	emitInterrupt(2.5)
+	Harness.emitCombatLogSpell({ t = 15, sourceName = boss, sourceGUID = guid, spellName = "Lightning Bolt", spellId = 9001, eventType = "SPELL_CAST_START", hp = 60 })
+	local pull = addon.Capture.EncounterState.getCurrent()
+	local context = pull and pull.bossContexts and pull.bossContexts[actorKey] or nil
+	if context then
+		Harness.markBossContext(context, 60)
+	end
+
+	local timer = Harness.firstPredictionByName("Lightning Bolt")
+	Harness.assertTrue(timer == nil, "Player-interrupted spam should not become a long timer")
+	Harness.finishPull(30)
+
+	local model = Harness.encounter(addon.Core.Util.bossKey(boss, guid))
+	local lightningBolt = Harness.ability(model, addon.Core.Util.bossKey(boss, guid), "Lightning Bolt")
+	Harness.assertTrue(lightningBolt ~= nil, "Interrupted boss spell should be learned under the boss spell, not the player interrupt spell")
+	Harness.assertTrue(lightningBolt.events.SPELL_INTERRUPT == 2, "Player interrupt events should count as interrupted boss spell evidence")
+	Harness.assertTrue(lightningBolt.autoSuppressed == true, "Player-interrupted spam should be auto-suppressed after promotion")
+end
+
+local function scenarioLegacyUncountedSpamGapSuppressed()
+	Harness.resetState("Replay Legacy Spam")
+	local ability = {
+		activationCount = 7,
+		pullSeenCount = 1,
+		intervalSamples = 1,
+		minInterval = 12.6,
+		spellKey = addon.Core.Util.timerAbilityKey(nil, "Lightning Bolt"),
+		events = {
+			SPELL_CAST_START = 7,
+		},
+	}
+
+	local reason = addon.Learning.RelevanceScorer.routineReasonForAbility(ability)
+	Harness.assertTrue(reason == "uncounted_activation_gap_below_model_floor", "Legacy spam models with many uncounted gaps should be suppressed")
+end
+
 local function scenarioTenSecondIntervalAllowed()
 	Harness.resetState("Replay Relevant Timer")
 	local boss = "Timer Commander"
@@ -231,6 +327,38 @@ local function scenarioKnownRoutineSpellSuppressesLiveProvisional()
 
 	local timer = Harness.firstPredictionByName(spellName)
 	Harness.assertTrue(timer == nil, "Known global routine spells must not appear as live provisional timers even after a long first interval")
+end
+
+local function scenarioKnownRoutineSpellSuppressesPersistentSparseModel()
+	Harness.resetState("Replay Persistent Known Routine")
+	local spellName = "Shared Filler"
+	for bossIndex = 1, 2 do
+		local boss = "Routine Model Boss " .. tostring(bossIndex)
+		local guid = Harness.makeGuid(boss, 720 + bossIndex)
+		for castIndex = 0, 3 do
+			Harness.emitSpell({
+				t = bossIndex * 100 + castIndex * 6,
+				sourceName = boss,
+				sourceGUID = guid,
+				spellName = spellName,
+				hp = 100 - castIndex * 12,
+			})
+		end
+		Harness.finishPull(bossIndex * 100 + 30, "unit_died")
+	end
+
+	local boss = "Sparse Routine Boss"
+	local guid = Harness.makeGuid(boss, 730)
+	local actorKey = addon.Core.Util.bossKey(boss, guid)
+	Harness.emitSpell({ t = 300, sourceName = boss, sourceGUID = guid, spellName = spellName, hp = 100 })
+	Harness.emitSpell({ t = 324, sourceName = boss, sourceGUID = guid, spellName = spellName, hp = 60 })
+	Harness.finishPull(350, "unit_died")
+
+	local model = Harness.encounter(actorKey)
+	local ability = Harness.ability(model, actorKey, spellName)
+	Harness.assertTrue(ability ~= nil, "Sparse shared routine spell should be learned for diagnostics")
+	Harness.assertTrue(ability.autoSuppressed == true, "Sparse shared routine spell should be suppressed after promotion")
+	Harness.assertTrue(ability.suppressionReason == "shared_routine_spell", "Persistent sparse model should use shared routine evidence")
 end
 
 local function scenarioConfigDisplayOverrideForSuppressedAbility()
@@ -587,9 +715,13 @@ local scenarios = {
 	scenarioEncounterOwnedAdd,
 	scenarioLiveNoiseSuppression,
 	scenarioSubTenSecondIntervalSuppression,
+	scenarioInterruptedSpamDoesNotBecomeLongTimer,
+	scenarioPlayerInterruptLearnsInterruptedBossSpell,
+	scenarioLegacyUncountedSpamGapSuppressed,
 	scenarioTenSecondIntervalAllowed,
 	scenarioConfigMinimumDelayRefreshesRules,
 	scenarioKnownRoutineSpellSuppressesLiveProvisional,
+	scenarioKnownRoutineSpellSuppressesPersistentSparseModel,
 	scenarioConfigDisplayOverrideForSuppressedAbility,
 	scenarioCombatLogPayloadNormalization,
 	scenarioCombatLogHandlerKeepsSpellNames,

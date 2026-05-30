@@ -91,6 +91,25 @@ local function makeRecord(timestamp, eventType, sourceGUID, sourceName, sourceFl
 	}
 end
 
+local function makeInterruptedHostileCastRecord(timestamp, sourceGUID, sourceName, sourceFlags, destGUID, destName, destFlags, interruptSpellId, interruptSpellName, extraSpellId, extraSpellName, extraSpellSchool)
+	local record = makeRecord(
+		timestamp,
+		"SPELL_INTERRUPT",
+		destGUID,
+		destName,
+		destFlags,
+		sourceGUID,
+		sourceName,
+		sourceFlags,
+		extraSpellId,
+		extraSpellName,
+		extraSpellSchool
+	)
+	record.interruptedBySpellId = interruptSpellId
+	record.interruptedBySpellName = interruptSpellName
+	return record
+end
+
 local function copyRecord(record)
 	local copy = {}
 	for key, value in pairs(record or {}) do
@@ -170,7 +189,7 @@ function CombatLog.normalizePayload(timestamp, eventType, sourceGUIDOrHideCaster
 end
 
 function CombatLog.handleEvent(eventName, ...)
-	local timestamp, eventType, sourceGUID, sourceName, sourceFlags, destGUID, destName, destFlags, spellId, spellName, spellSchool = CombatLog.normalizePayload(...)
+	local timestamp, eventType, sourceGUID, sourceName, sourceFlags, destGUID, destName, destFlags, spellId, spellName, spellSchool, extraSpellId, extraSpellName, extraSpellSchool = CombatLog.normalizePayload(...)
 	if not addon.db or not addon.db.config.enabled then
 		return
 	end
@@ -209,7 +228,25 @@ function CombatLog.handleEvent(eventName, ...)
 		return
 	end
 
-	local record = makeRecord(timestamp, eventType, sourceGUID, sourceName, sourceFlags, destGUID, destName, destFlags, spellId, spellName, spellSchool)
+	local record
+	if eventType == "SPELL_INTERRUPT" and not sourceIsHostileNpc and destIsHostileNpc and (extraSpellId or extraSpellName) then
+		record = makeInterruptedHostileCastRecord(
+			timestamp,
+			sourceGUID,
+			sourceName,
+			sourceFlags,
+			destGUID,
+			destName,
+			destFlags,
+			spellId,
+			spellName,
+			extraSpellId,
+			extraSpellName,
+			extraSpellSchool
+		)
+	else
+		record = makeRecord(timestamp, eventType, sourceGUID, sourceName, sourceFlags, destGUID, destName, destFlags, spellId, spellName, spellSchool)
+	end
 	local accepted, reason = addon.Learning.Relevance.evaluate(record)
 
 	if not accepted then

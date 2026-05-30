@@ -78,12 +78,31 @@ local function frequentShortIntervalReason(ability)
 	local activationCount = tonumber(ability.activationCount) or 0
 	local intervalSamples = tonumber(ability.intervalSamples) or 0
 	local minInterval = tonumber(ability.minInterval)
-	if not minInterval then
-		return nil
+	local observedGapSamples = tonumber(ability.observedGapSamples) or 0
+	local minObservedGap = tonumber(ability.minObservedGap)
+
+	if activationCount >= 2 and intervalSamples >= 1 and minInterval and minInterval < displayIntervalFloor() then
+		return "short_interval_below_display_floor"
 	end
 
-	if activationCount >= 2 and intervalSamples >= 1 and minInterval < displayIntervalFloor() then
-		return "short_interval_below_display_floor"
+	if activationCount >= 2 and observedGapSamples >= 1 and minObservedGap and minObservedGap < displayIntervalFloor() then
+		return "short_activation_gap_below_display_floor"
+	end
+
+	local pullSeenCount = tonumber(ability.pullSeenCount) or 0
+	if pullSeenCount <= 0 and activationCount > 0 then
+		pullSeenCount = 1
+	end
+	local possibleIntervalCount = math.max(0, activationCount - pullSeenCount)
+	local uncountedIntervalCount = possibleIntervalCount - intervalSamples
+	if activationCount >= 4
+		and uncountedIntervalCount >= 2
+		and uncountedIntervalCount >= intervalSamples then
+		return "uncounted_activation_gap_below_model_floor"
+	end
+
+	if type(ability.spellKey) == "string" and RelevanceScorer.isKnownRoutineSpell(ability.spellKey) then
+		return "shared_routine_spell"
 	end
 
 	return nil

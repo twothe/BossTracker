@@ -28,6 +28,7 @@ local function isCastStartResolutionEvent(eventType)
 	return eventType == "SPELL_CAST_SUCCESS"
 		or eventType == "SPELL_DAMAGE"
 		or eventType == "SPELL_MISSED"
+		or eventType == "SPELL_INTERRUPT"
 		or eventType == "SPELL_AURA_APPLIED"
 		or eventType == "SPELL_AURA_REFRESH"
 		or eventType == "SPELL_HEAL"
