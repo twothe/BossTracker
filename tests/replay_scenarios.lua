@@ -1478,6 +1478,233 @@ local function scenarioUnitDiedUsesGuidBeforeName()
 	Harness.assertTrue(secondContext.active == true, "UNIT_DIED must not close other active units with the same name")
 end
 
+local function scenarioEvidenceStoresOnlyCompletedKills()
+	Harness.resetState("Replay Evidence Kill")
+	local boss = "Evidence Keeper"
+	local guid = Harness.makeGuid(boss, 900)
+	Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = guid, spellName = "Measured Strike", hp = 100 })
+	Harness.emitSpell({ t = 20, sourceName = boss, sourceGUID = guid, spellName = "Measured Strike", hp = 70 })
+	Harness.finishPull(42, "unit_died")
+
+	Harness.assertTrue(addon.Core.EvidenceStore.countPermanentKills() == 1, "Completed boss kills should enter permanent evidence")
+	Harness.assertTrue(addon.Core.EvidenceStore.countIncomplete() == 0, "Completed boss kills should not enter incomplete evidence")
+
+	Harness.resetState("Replay Evidence Partial")
+	Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = guid, spellName = "Measured Strike", hp = 100 })
+	Harness.emitSpell({ t = 20, sourceName = boss, sourceGUID = guid, spellName = "Measured Strike", hp = 70 })
+	Harness.finishPull(30, "out_of_combat")
+
+	Harness.assertTrue(addon.Core.EvidenceStore.countPermanentKills() == 0, "Incomplete attempts must not enter permanent evidence")
+	Harness.assertTrue(addon.Core.EvidenceStore.countIncomplete() == 1, "Incomplete attempts should remain bounded separately")
+end
+
+local function scenarioEvidenceRebuildsLearnedModel()
+	Harness.resetState("Replay Evidence Rebuild")
+	local boss = "Rebuild Sentinel"
+	local guid = Harness.makeGuid(boss, 901)
+	Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = guid, spellName = "Clockwork Slam", hp = 100 })
+	Harness.emitSpell({ t = 24, sourceName = boss, sourceGUID = guid, spellName = "Clockwork Slam", hp = 68 })
+	Harness.finishPull(50, "unit_died")
+
+	local bossKey = addon.Core.Util.bossKey(boss, guid)
+	local direct = Harness.ability(Harness.encounter(bossKey), bossKey, "Clockwork Slam")
+	Harness.assertTrue(direct ~= nil and direct.minInterval == 24, "Fixture should learn a direct interval before rebuild")
+	Harness.assertTrue(addon.Core.EvidenceStore.countPermanentKills() == 1, "Fixture should capture one permanent kill before rebuild")
+
+	local promoted = addon.Core.EvidenceStore.rebuildLearned()
+	Harness.assertTrue(promoted >= 1, "Evidence rebuild should promote at least one encounter")
+	local rebuilt = Harness.ability(Harness.encounter(bossKey), bossKey, "Clockwork Slam")
+	Harness.assertTrue(rebuilt ~= nil, "Evidence rebuild should recreate the learned ability")
+	Harness.assertNear(rebuilt.minInterval, 24, 0.01, "Evidence rebuild should preserve interval evidence")
+end
+
+local function scenarioEvidenceSyncRoundTripRebuildsModel()
+	Harness.resetState("Replay Evidence Sync")
+	local boss = "Sync Sentinel"
+	local guid = Harness.makeGuid(boss, 905)
+	Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = guid, spellName = "Peer Slam", hp = 100 })
+	Harness.emitSpell({ t = 30, sourceName = boss, sourceGUID = guid, spellName = "Peer Slam", hp = 60 })
+	Harness.finishPull(60, "unit_died")
+
+	local payload, exportStatsOrError = addon.Core.EvidenceSync.exportPayload()
+	Harness.assertTrue(payload ~= nil, "Evidence sync should export captured kill evidence: " .. tostring(exportStatsOrError))
+	Harness.assertTrue(exportStatsOrError.exported == 1, "Evidence sync should export one kill")
+
+	addon.Core.SavedVariables.clearLearnedData("Test clears local data before sync import.")
+	Harness.assertTrue(addon.Core.EvidenceStore.countPermanentKills() == 0, "Test setup should clear local evidence before import")
+	local importStats, importError = addon.Core.EvidenceSync.importPayload(payload, "PeerTester")
+	Harness.assertTrue(importStats ~= nil, "Evidence sync should import exported payload: " .. tostring(importError))
+	Harness.assertTrue(importStats.imported == 1, "Evidence sync should import one new kill")
+	Harness.assertTrue(addon.Core.EvidenceStore.countPermanentKills() == 1, "Imported sync evidence should merge into permanent evidence")
+
+	local bossKey = addon.Core.Util.bossKey(boss, guid)
+	local rebuilt = Harness.ability(Harness.encounter(bossKey), bossKey, "Peer Slam")
+	Harness.assertTrue(rebuilt ~= nil, "Imported sync evidence should rebuild the learned ability")
+	Harness.assertNear(rebuilt.minInterval, 30, 0.01, "Imported sync evidence should preserve interval evidence")
+	Harness.assertTrue(rebuilt.minDifficultyOrdinal == 1, "Imported sync evidence should preserve ability difficulty metadata")
+
+	local function firstEvidenceKillHash()
+		for _, instance in pairs(addon.db.evidence.instances or {}) do
+			for _, evidenceBoss in pairs(instance.bosses or {}) do
+				for _, kill in pairs(evidenceBoss.kills or {}) do
+					return kill.hash
+				end
+			end
+		end
+		return nil
+	end
+
+	local originalHash = firstEvidenceKillHash()
+	Harness.assertTrue(originalHash ~= nil, "Imported evidence should expose a content hash")
+	local tamperedHash = originalHash == "ffffffff" and "eeeeeeee" or "ffffffff"
+	local tamperedPayload = string.gsub(payload, originalHash, tamperedHash)
+	local duplicateStats, duplicateError = addon.Core.EvidenceSync.importPayload(tamperedPayload, "PeerTester")
+	Harness.assertTrue(duplicateStats ~= nil, "Tampered duplicate payload should remain parseable: " .. tostring(duplicateError))
+	Harness.assertTrue(duplicateStats.imported == 0, "Tampered duplicate evidence must not import as a new kill")
+	Harness.assertTrue(duplicateStats.duplicates == 1, "Tampered duplicate evidence should dedupe by recomputed content hash")
+	Harness.assertTrue(addon.Core.EvidenceStore.countPermanentKills() == 1, "Tampered duplicate evidence must not increase permanent evidence count")
+
+	Harness.setUnit("target", {
+		name = "PeerSyncTarget",
+		guid = "Player-0-0-0-0-9-PeerSyncTarget",
+		player = true,
+	})
+	addon.Core.EvidenceSync.handleSlash("target")
+	local messages = Harness.sentAddonMessages()
+	local lastMessage = messages[#messages]
+	Harness.assertTrue(lastMessage ~= nil, "Evidence sync target command should send a request")
+	Harness.assertTrue(lastMessage.prefix == addon.Core.Constants.SYNC_PREFIX, "Evidence sync should use the configured prefix")
+	Harness.assertTrue(lastMessage.distribution == "WHISPER", "Target sync should whisper the request")
+	Harness.assertTrue(lastMessage.target == "PeerSyncTarget", "Target sync should preserve the selected player name")
+	Harness.assertTrue(string.sub(lastMessage.message, 1, 2) == "R|", "Target sync should send a request message")
+	local sessionId = string.match(lastMessage.message, "^R|([^|]+)|")
+	Harness.assertTrue(sessionId ~= nil, "Target sync request should include a session id")
+
+	Harness.clearAddonMessages()
+	addon.Core.EvidenceSync.handleAddonMessage("CHAT_MSG_ADDON", addon.Core.Constants.SYNC_PREFIX, "A|" .. sessionId .. "|1.5.0", "WHISPER", "PeerSyncTarget")
+	addon.Core.EvidenceSync.flushQueue()
+	messages = Harness.sentAddonMessages()
+	Harness.assertTrue(#messages >= 2, "Accepted sync should send a header and at least one payload chunk")
+	Harness.assertTrue(string.sub(messages[1].message, 1, 2) == "H|", "Accepted sync should start with a transfer header")
+	for index = 1, #messages do
+		Harness.assertTrue(#messages[index].message <= 255, "Sync addon message " .. tostring(index) .. " should stay below the client limit")
+	end
+
+	addon.Core.SavedVariables.clearLearnedData("Test clears local data before chunked sync receive.")
+	Harness.assertTrue(addon.Core.EvidenceStore.countPermanentKills() == 0, "Test setup should clear local evidence before chunked receive")
+	for index = 1, #messages do
+		addon.Core.EvidenceSync.handleAddonMessage("CHAT_MSG_ADDON", addon.Core.Constants.SYNC_PREFIX, messages[index].message, "WHISPER", "Intruder")
+	end
+	Harness.assertTrue(addon.Core.EvidenceStore.countPermanentKills() == 0, "Unauthorized sync headers must not import evidence")
+	for index = 1, #messages do
+		addon.Core.EvidenceSync.handleAddonMessage("CHAT_MSG_ADDON", addon.Core.Constants.SYNC_PREFIX, messages[index].message, "WHISPER", "PeerSyncTarget")
+	end
+	Harness.assertTrue(addon.Core.EvidenceStore.countPermanentKills() == 1, "Chunked sync receive should import permanent evidence")
+	rebuilt = Harness.ability(Harness.encounter(bossKey), bossKey, "Peer Slam")
+	Harness.assertTrue(rebuilt ~= nil, "Chunked sync receive should rebuild the learned ability")
+	Harness.assertNear(rebuilt.minInterval, 30, 0.01, "Chunked sync receive should preserve interval evidence")
+
+	Harness.clearAddonMessages()
+	addon.Core.EvidenceSync.handleAddonMessage("CHAT_MSG_ADDON", addon.Core.Constants.SYNC_PREFIX, "R|peer-session|1.5.0|2|7", "WHISPER", "PeerSyncTarget")
+	addon.Core.EvidenceSync.acceptRequest("PeerSyncTarget", "peer-session")
+	addon.Core.EvidenceSync.flushQueue()
+	messages = Harness.sentAddonMessages()
+	Harness.assertTrue(messages[1] ~= nil and messages[1].message == "A|peer-session|1.5.0", "Accepting a sync request should acknowledge the sender")
+	local reciprocalHeader
+	for index = 1, #messages do
+		if string.sub(messages[index].message, 1, 2) == "H|" then
+			reciprocalHeader = messages[index]
+		end
+		Harness.assertTrue(#messages[index].message <= 255, "Reciprocal sync message " .. tostring(index) .. " should stay below the client limit")
+	end
+	Harness.assertTrue(reciprocalHeader ~= nil and reciprocalHeader.distribution == "WHISPER", "Accepting a sync request should also whisper local evidence back")
+
+	addon.Core.SavedVariables.clearLearnedData("Test allows sync request without local evidence.")
+	Harness.assertTrue(addon.Core.EvidenceStore.countPermanentKills() == 0, "Test setup should have no local evidence before empty request")
+	Harness.clearAddonMessages()
+	addon.Core.EvidenceSync.handleSlash("target")
+	messages = Harness.sentAddonMessages()
+	lastMessage = messages[#messages]
+	Harness.assertTrue(lastMessage ~= nil and string.sub(lastMessage.message, 1, 2) == "R|", "Sync request should still be allowed without local evidence")
+	local advertisedKills = tonumber(string.match(lastMessage.message, "^R|[^|]+|[^|]+|([^|]+)|"))
+	Harness.assertTrue(advertisedKills == 0, "Empty local sync request should advertise zero local kills")
+
+	Harness.clearAddonMessages()
+	Harness.setGroupMembers(4, 0)
+	addon.Core.EvidenceSync.handleSlash("group")
+	messages = Harness.sentAddonMessages()
+	lastMessage = messages[#messages]
+	Harness.assertTrue(lastMessage ~= nil and lastMessage.distribution == "PARTY", "Group sync should use party distribution outside raids")
+	Harness.assertTrue(lastMessage.target == nil, "Group sync request should not whisper a single target")
+
+	Harness.clearAddonMessages()
+	Harness.setGroupMembers(4, 10)
+	addon.Core.EvidenceSync.handleSlash("raid")
+	messages = Harness.sentAddonMessages()
+	lastMessage = messages[#messages]
+	Harness.assertTrue(lastMessage ~= nil and lastMessage.distribution == "RAID", "Raid sync should use raid distribution")
+	Harness.assertTrue(lastMessage.target == nil, "Raid sync request should not whisper a single target")
+end
+
+local function scenarioEvidenceDifficultyAbilityAvailability()
+	Harness.resetState("Replay Evidence Difficulty")
+	Harness.setInstanceInfo({
+		name = "Ascension Difficulty Lab",
+		difficultyName = "Normal",
+		difficultyIndex = 1,
+		mapId = 990001,
+	})
+	local boss = "Difficulty Warden"
+	local normalGuid = Harness.makeGuid(boss, 902)
+	Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = normalGuid, spellName = "Shared Strike", hp = 100 })
+	Harness.emitSpell({ t = 20, sourceName = boss, sourceGUID = normalGuid, spellName = "Shared Strike", hp = 70 })
+	Harness.finishPull(45, "unit_died")
+
+	Harness.setInstanceInfo({
+		name = "Ascension Difficulty Lab",
+		difficultyName = "Ascended",
+		difficultyIndex = 4,
+		mapId = 990001,
+	})
+	local ascendedGuid = Harness.makeGuid(boss, 903)
+	Harness.emitSpell({ t = 100, sourceName = boss, sourceGUID = ascendedGuid, spellName = "Shared Strike", hp = 100 })
+	Harness.emitSpell({ t = 110, sourceName = boss, sourceGUID = ascendedGuid, spellName = "Ascended Blast", hp = 85 })
+	Harness.emitSpell({ t = 120, sourceName = boss, sourceGUID = ascendedGuid, spellName = "Shared Strike", hp = 70 })
+	Harness.emitSpell({ t = 130, sourceName = boss, sourceGUID = ascendedGuid, spellName = "Ascended Blast", hp = 52 })
+	Harness.finishPull(150, "unit_died")
+
+	addon.Core.EvidenceStore.rebuildLearned()
+	local bossKey = addon.Core.Util.bossKey(boss, normalGuid)
+	local model = Harness.encounter(bossKey)
+	local shared = Harness.ability(model, bossKey, "Shared Strike")
+	local ascended = Harness.ability(model, bossKey, "Ascended Blast")
+	Harness.assertTrue(shared ~= nil, "Shared lower-difficulty ability should be rebuilt")
+	Harness.assertTrue(ascended ~= nil, "Ascended-only ability should be rebuilt")
+	Harness.assertTrue(shared.minDifficultyOrdinal == 1, "Shared ability should remember normal as its minimum difficulty")
+	Harness.assertTrue(ascended.minDifficultyOrdinal == 4, "Ascended-only ability should remember ascended as its minimum difficulty")
+
+	Harness.setInstanceInfo({
+		name = "Ascension Difficulty Lab",
+		difficultyName = "Normal",
+		difficultyIndex = 1,
+		mapId = 990001,
+	})
+	Harness.assertTrue(addon.Core.Difficulty.abilityAvailable(shared) == true, "Normal should show normal abilities")
+	Harness.assertTrue(addon.Core.Difficulty.abilityAvailable(ascended) == false, "Normal must not show ascended-only abilities")
+	Harness.emitSpell({ t = 200, sourceName = boss, sourceGUID = Harness.makeGuid(boss, 904), spellName = "Shared Strike", hp = 100 })
+	Harness.assertTrue(Harness.firstPredictionByName("Ascended Blast") == nil, "Normal timer predictions must not include ascended-only abilities")
+	Harness.finishPull(205, "out_of_combat")
+
+	Harness.setInstanceInfo({
+		name = "Ascension Difficulty Lab",
+		difficultyName = "Ascended",
+		difficultyIndex = 4,
+		mapId = 990001,
+	})
+	Harness.assertTrue(addon.Core.Difficulty.abilityAvailable(shared) == true, "Ascended should inherit normal abilities")
+	Harness.assertTrue(addon.Core.Difficulty.abilityAvailable(ascended) == true, "Ascended should show ascended abilities")
+end
+
 local scenarios = {
 	scenarioChannelLifecycle,
 	scenarioPhaseHpRules,
@@ -1523,6 +1750,10 @@ local scenarios = {
 	scenarioShortHighHpPartialIgnored,
 	scenarioUnitDiedDefersWhileBossFrameAlive,
 	scenarioUnitDiedUsesGuidBeforeName,
+	scenarioEvidenceStoresOnlyCompletedKills,
+	scenarioEvidenceRebuildsLearnedModel,
+	scenarioEvidenceSyncRoundTripRebuildsModel,
+	scenarioEvidenceDifficultyAbilityAvailability,
 }
 
 for index = 1, #scenarios do

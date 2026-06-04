@@ -74,6 +74,10 @@ Raid warning falls back to a personal warning if raid warning is not available.
 - `/bt timers on` - Enable timer display again.
 - `/bt resetui` - Reset the timer window position.
 - `/bt unlock` and `/bt lock` - Allow or prevent moving and resizing the timer window.
+- `/bt sync target` - Ask the currently selected player to exchange BossTracker kill evidence.
+- `/bt sync PlayerName` - Ask a named player to exchange kill evidence.
+- `/bt sync group` or `/bt sync raid` - Ask addon users in your party or raid whether they want to exchange evidence.
+- `/bt sync accept PlayerName` - Accept a sync request if the popup is not available.
 - `/bt clearlearned` - Clear learned boss data and ability settings.
 
 Most players only need `/bt config`, `/bt preview`, and `/bt panic`.
@@ -83,6 +87,7 @@ Most players only need `/bt config`, `/bt preview`, and `/bt panic`.
 - Fight bosses normally. You do not need to target the boss all the time.
 - If a boss is wiped at low health, the pull can still help BossTracker learn.
 - If a timer looks wrong after a patch or unusual pull, let the addon observe more attempts.
+- Use `/bt sync target` or `/bt sync group` to exchange completed-kill evidence with another BossTracker user. Sync does not copy their calculated timer settings.
 - If bad data was clearly learned from trash or a broken run, delete that boss in `/bt config`.
 - If everything looks contaminated, use `/bt clearlearned` and start fresh.
 

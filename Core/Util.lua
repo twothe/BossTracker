@@ -95,7 +95,7 @@ function Util.zoneInfo()
 	local zoneName = type(GetRealZoneText) == "function" and GetRealZoneText() or nil
 	local subZoneName = type(GetSubZoneText) == "function" and GetSubZoneText() or nil
 	local name = instanceName and instanceName ~= "" and instanceName or zoneName or "Unknown Zone"
-	local key = Util.slug((mapId or name) .. ":" .. (difficultyIndex or 0) .. ":" .. name)
+	local key = Util.slug((mapId or name) .. ":" .. name)
 
 	return {
 		key = key,

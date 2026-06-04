@@ -8,6 +8,16 @@ local started = false
 local function startModules()
 	local boundary = addon.Core.ErrorBoundary
 	boundary.safeStart("Config", addon.Core.Config)
+	if addon.Core.EvidenceStore then
+		boundary.safeStart("EvidenceStore", addon.Core.EvidenceStore)
+	else
+		addon.Core.Logger.chat("BossTracker update needs a full client restart before evidence storage is available.")
+	end
+	if addon.Core.EvidenceSync then
+		boundary.safeStart("EvidenceSync", addon.Core.EvidenceSync)
+	else
+		addon.Core.Logger.chat("BossTracker update needs a full client restart before /bt sync is available.")
+	end
 	boundary.safeStart("ModelStore", addon.Core.ModelStore)
 	boundary.safeStart("EncounterState", addon.Capture.EncounterState)
 	boundary.safeStart("OccurrenceBuilder", addon.Learning.OccurrenceBuilder)

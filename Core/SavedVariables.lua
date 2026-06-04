@@ -411,7 +411,7 @@ local function resetLearnedDataForSchema(db, previousSchemaVersion)
 		from = previousSchemaVersion,
 		to = C.SCHEMA_VERSION,
 		at = wallTime(),
-		reason = "Reset alpha learned data for phase-aware encounter model schema.",
+		reason = "Reset alpha learned data for evidence-backed difficulty-aware model schema.",
 	})
 end
 
@@ -591,6 +591,16 @@ function SavedVariables.init()
 	copyDefaults(db.config, C.DEFAULT_CONFIG)
 	db.learned = type(db.learned) == "table" and db.learned or { zones = {} }
 	db.learned.zones = type(db.learned.zones) == "table" and db.learned.zones or {}
+	if addon.Core.EvidenceStore and addon.Core.EvidenceStore.ensureDb then
+		addon.Core.EvidenceStore.ensureDb(db)
+	else
+		db.evidence = type(db.evidence) == "table" and db.evidence or {
+			schemaVersion = C.EVIDENCE_SCHEMA_VERSION,
+			revision = 0,
+			instances = {},
+			incomplete = {},
+		}
+	end
 	if learnedHasData(db.learned) then
 		ensureLearnedMeta(db).clearedAt = nil
 	end
@@ -691,6 +701,16 @@ function SavedVariables.clearLearnedData(reason)
 		return
 	end
 	addon.db.learned = { zones = {} }
+	if addon.Core.EvidenceStore and addon.Core.EvidenceStore.clearAll then
+		addon.Core.EvidenceStore.clearAll()
+	else
+		addon.db.evidence = {
+			schemaVersion = C.EVIDENCE_SCHEMA_VERSION,
+			revision = 0,
+			instances = {},
+			incomplete = {},
+		}
+	end
 	if addon.db.config and addon.db.config.overrides then
 		addon.db.config.overrides = { zones = {} }
 	end
@@ -718,6 +738,9 @@ end
 function SavedVariables.boundLearnedData()
 	if addon.db and addon.db.learned then
 		boundLearnedData(addon.db.learned)
+		if addon.Core.EvidenceStore and addon.Core.EvidenceStore.bound then
+			addon.Core.EvidenceStore.bound(addon.db.evidence)
+		end
 		writeLearnedBackup(true, true)
 	end
 end

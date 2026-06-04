@@ -19,6 +19,7 @@ local function help()
 	Util.print("/bt unlock, /bt lock, /bt resetui - fallback timer frame controls")
 	Util.print("/bt scale 1.0, /bt bigger, /bt smaller - fallback scale controls")
 	Util.print("/bt panic, /bt resume, /bt timers on/off - control timer visibility")
+	Util.print("/bt sync target|player|group|raid - request evidence exchange")
 	Util.print("/bt debug on/off, /bt clearlogs, /bt clearlearned - alpha diagnostics")
 end
 
@@ -48,6 +49,9 @@ local function status()
 	end
 	if run then
 		Util.print("debug run " .. tostring(run.id) .. " is recording. Use /reload after a test to write SavedVariables.")
+	end
+	if addon.Core.EvidenceStore then
+		Util.print("evidence=" .. tostring(addon.Core.EvidenceStore.countPermanentKills()) .. " completed kill(s), incomplete=" .. tostring(addon.Core.EvidenceStore.countIncomplete()))
 	end
 end
 
@@ -115,8 +119,10 @@ local function adjustScale(delta)
 end
 
 local function handle(input)
-	input = string.lower(tostring(input or ""))
+	input = tostring(input or "")
 	local command, rest = string.match(input, "^(%S*)%s*(.-)$")
+	command = string.lower(command or "")
+	local loweredRest = string.lower(rest or "")
 
 	if command == "" or command == "help" then
 		help()
@@ -138,7 +144,7 @@ local function handle(input)
 		addon.UI.TimerFrame.hide()
 		Util.print("disabled")
 	elseif command == "debug" then
-		if rest == "off" then
+		if loweredRest == "off" then
 			addon.db.config.debugEnabled = false
 			Util.print("debug recording disabled")
 		else
@@ -146,7 +152,7 @@ local function handle(input)
 			Util.print("debug recording enabled")
 		end
 	elseif command == "timers" then
-		if rest == "off" then
+		if loweredRest == "off" then
 			addon.db.config.timersEnabled = false
 			syncLearnedBackup()
 			addon.charDB.config.previewTimers = false
@@ -196,6 +202,12 @@ local function handle(input)
 		clearLogs()
 	elseif command == "clearlearned" then
 		clearLearned()
+	elseif command == "sync" then
+		if addon.Core.EvidenceSync and addon.Core.EvidenceSync.handleSlash then
+			addon.Core.EvidenceSync.handleSlash(rest)
+		else
+			Util.print("full client restart required before evidence sync is available")
+		end
 	else
 		help()
 	end

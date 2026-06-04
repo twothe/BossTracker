@@ -18,6 +18,10 @@ local mapId = 900001
 local unitState = {}
 local createdFrames = {}
 local playedSounds = {}
+local sentAddonMessages = {}
+local registeredAddonPrefixes = {}
+local raidMembers = 0
+local partyMembers = 0
 
 UIParent = UIParent or {}
 DEFAULT_CHAT_FRAME = DEFAULT_CHAT_FRAME or {
@@ -87,8 +91,8 @@ function UnitCanAttack(_, unit)
 	return unitState[unit] and unitState[unit].attackable ~= false or false
 end
 
-function UnitIsPlayer()
-	return false
+function UnitIsPlayer(unit)
+	return unitState[unit] and unitState[unit].player == true or false
 end
 
 function GetInstanceInfo()
@@ -101,6 +105,29 @@ end
 
 function GetSubZoneText()
 	return ""
+end
+
+function GetNumRaidMembers()
+	return raidMembers
+end
+
+function GetNumPartyMembers()
+	return partyMembers
+end
+
+function RegisterAddonMessagePrefix(prefix)
+	registeredAddonPrefixes[prefix] = true
+	return true
+end
+
+function SendAddonMessage(prefix, message, distribution, target)
+	sentAddonMessages[#sentAddonMessages + 1] = {
+		prefix = prefix,
+		message = message,
+		distribution = distribution,
+		target = target,
+	}
+	return true
 end
 
 function CreateFrame(_, name)
@@ -148,6 +175,9 @@ local function loadAddon()
 		"Core/Constants.lua",
 		"Core/RingBuffer.lua",
 		"Core/Util.lua",
+		"Core/Difficulty.lua",
+		"Core/EvidenceStore.lua",
+		"Core/EvidenceSync.lua",
 		"Core/SavedVariables.lua",
 		"Core/Config.lua",
 		"Core/Logger.lua",
@@ -211,11 +241,17 @@ function Harness.resetState(name)
 	mapId = mapId + 1
 	unitState = {}
 	playedSounds = {}
+	sentAddonMessages = {}
+	registeredAddonPrefixes = {}
+	raidMembers = 0
+	partyMembers = 0
 	_G.BossTrackerDB = {}
 	_G.BossTrackerCharDB = {}
 	addon.Core.SavedVariables.init()
 	addon.Core.Config.start()
 	addon.Core.Logger.startRun()
+	addon.Core.EvidenceStore.start()
+	addon.Core.EvidenceSync.start()
 	addon.Core.ModelStore.start()
 	addon.Learning.OccurrenceBuilder.start()
 	addon.Learning.EncounterModel.start()
@@ -233,6 +269,23 @@ end
 
 function Harness.clearPlayedSounds()
 	playedSounds = {}
+end
+
+function Harness.sentAddonMessages()
+	return sentAddonMessages
+end
+
+function Harness.clearAddonMessages()
+	sentAddonMessages = {}
+end
+
+function Harness.registeredAddonPrefix(prefix)
+	return registeredAddonPrefixes[prefix] == true
+end
+
+function Harness.setGroupMembers(partyCount, raidCount)
+	partyMembers = partyCount or 0
+	raidMembers = raidCount or 0
 end
 
 function Harness.lastPlayedSound()

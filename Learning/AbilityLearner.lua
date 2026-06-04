@@ -103,6 +103,9 @@ function AbilityLearner.observe(record, pull)
 	if not bossState then
 		return
 	end
+	if addon.Core.EvidenceStore and addon.Core.EvidenceStore.recordSpellEvent then
+		addon.Core.EvidenceStore.recordSpellEvent(pull, record)
+	end
 
 	bossState.eventCount = (bossState.eventCount or 0) + 1
 	bossState.lastSeenAt = record.t or Util.now()
@@ -200,6 +203,9 @@ function AbilityLearner.finishPull(pull, reason)
 			councilSignal = decision.councilSignal,
 			otherBossFramePresent = decision.otherBossFramePresent,
 		})
+	end
+	if addon.Core.EvidenceStore and addon.Core.EvidenceStore.finishPull then
+		addon.Core.EvidenceStore.finishPull(pull, reason, pullState, components)
 	end
 
 	addon.Core.Logger.event({

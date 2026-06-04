@@ -432,6 +432,9 @@ function ModelStore.promoteComponent(pullState, component)
 			if pullAbility.activationCount and pullAbility.activationCount > 0 then
 				local ability = ensureAbility(encounter, bossState, pullAbility)
 				addon.Learning.RuleLearner.mergePullAbility(ability, pullAbility)
+				if addon.Core.Difficulty and addon.Core.Difficulty.noteAbilitySeen then
+					addon.Core.Difficulty.noteAbilitySeen(ability, pullState.zone)
+				end
 			end
 		end
 	end

@@ -52,6 +52,9 @@ Useful commands:
 - `/bt panic`: hide the timer UI and configured warnings while keeping capture active.
 - `/bt resume`: restore timer UI after panic.
 - `/bt resetui`: reset timer frame position.
+- `/bt sync target`: request completed-kill evidence exchange with the selected player.
+- `/bt sync group` or `/bt sync raid`: request evidence exchange with addon users in the party or raid.
+- `/bt sync accept PlayerName`: accept a pending sync request if the popup is unavailable.
 - `/bt clearlearned`: clear learned boss models and related ability overrides after captured data has been inspected.
 
 ## Local Replay Verification
