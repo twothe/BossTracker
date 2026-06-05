@@ -77,6 +77,30 @@ local function stableHpGate(ability)
 	return ability.maxHpPct - ability.minHpPct <= C.HP_GATE_SPREAD_PCT
 end
 
+local function isAuraEvent(eventType)
+	return eventType == "SPELL_AURA_APPLIED"
+		or eventType == "SPELL_AURA_REFRESH"
+		or eventType == "SPELL_AURA_REMOVED"
+		or eventType == "SPELL_AURA_APPLIED_DOSE"
+		or eventType == "SPELL_AURA_REMOVED_DOSE"
+end
+
+local function isBossSelfAuraRecord(bossState, record)
+	if not record then
+		return false
+	end
+	if record.destGUID and bossState and bossState.guid and record.destGUID == bossState.guid then
+		return true
+	end
+	if record.sourceGUID and record.destGUID and record.sourceGUID == record.destGUID then
+		return true
+	end
+	return record.destIsHostileNpc == true
+		and bossState
+		and record.destName
+		and record.destName == bossState.bossName
+end
+
 local function ensurePullAbility(bossState, key, spellId, spellName)
 	local ability = bossState.abilities[key]
 	if not ability then
@@ -105,6 +129,9 @@ local function ensurePullAbility(bossState, key, spellId, spellName)
 			minHpPct = nil,
 			maxHpPct = nil,
 			avgHpPct = nil,
+			auraEventCount = 0,
+			bossSelfAuraEventCount = 0,
+			playerAuraEventCount = 0,
 			segmentStats = {},
 			encounterAssociated = false,
 			associatedSourceName = nil,
@@ -114,6 +141,18 @@ local function ensurePullAbility(bossState, key, spellId, spellName)
 	ability.spellId = ability.spellId or spellId
 	ability.spellName = spellName or ability.spellName
 	return ability
+end
+
+local function noteAuraEvidence(ability, bossState, record)
+	if not ability or not record or not isAuraEvent(record.eventType) then
+		return
+	end
+	ability.auraEventCount = (ability.auraEventCount or 0) + 1
+	if record.destFlags and Util.flagSet(record.destFlags, C.FLAG_PLAYER) then
+		ability.playerAuraEventCount = (ability.playerAuraEventCount or 0) + 1
+	elseif isBossSelfAuraRecord(bossState, record) then
+		ability.bossSelfAuraEventCount = (ability.bossSelfAuraEventCount or 0) + 1
+	end
 end
 
 local function ensureSegmentStats(ability, segment)
@@ -173,6 +212,7 @@ function RuleLearner.noteEvent(bossState, record)
 		ability.encounterAssociated = true
 		ability.associatedSourceName = record.associatedSourceName or ability.associatedSourceName or record.sourceName
 	end
+	noteAuraEvidence(ability, bossState, record)
 	return ability
 end
 
@@ -292,10 +332,16 @@ function RuleLearner.refreshRules(ability)
 	local phaseOffsetAverage = nil
 	local phaseOffsetSampleCount = 0
 	local phaseOnce = true
+	local hasRepeatedPhaseSegment = false
+	local phaseSegmentCount = 0
 	for _, segment in pairs(ability.segmentStats or {}) do
 		local hasPhaseOffset = segment.avgPhaseOffset ~= nil or segment.firstPhaseOffset ~= nil
 		local segmentPhaseSamples = segment.phaseOffsetSamples or (hasPhaseOffset and 1 or 0)
 		if segment.key ~= "pull" and segmentPhaseSamples and segmentPhaseSamples > 0 then
+			phaseSegmentCount = phaseSegmentCount + 1
+			if segmentPhaseSamples >= 2 or (tonumber(segment.seenCount) or 0) >= 2 then
+				hasRepeatedPhaseSegment = true
+			end
 			phaseOffsetAverage, phaseOffsetSampleCount = mergeAverage(
 				phaseOffsetAverage,
 				phaseOffsetSampleCount,
@@ -308,9 +354,20 @@ function RuleLearner.refreshRules(ability)
 			end
 		end
 	end
-	local phaseOnlyRepeated = phaseSamples >= 2 and phaseOnce and (ability.activationCount or 0) <= phaseSamples + 1
+	local stableTimeEvidence = (tonumber(ability.intervalSamples) or 0) >= 2
+	local repeatedSinglePhaseOnly = hasRepeatedPhaseSegment and phaseSegmentCount == 1
+	local phaseOnlyRepeated = hasRepeatedPhaseSegment
+		and phaseSamples >= 2
+		and phaseOnce
+		and (ability.activationCount or 0) <= phaseSamples + 1
+		and (not stableTimeEvidence or repeatedSinglePhaseOnly)
+	local weakSingleIntervalAcrossOneOffPhases = not hasRepeatedPhaseSegment
+		and phaseSamples >= 2
+		and phaseOnce
+		and (tonumber(ability.intervalSamples) or 0) < 2
 
 	if not phaseOnlyRepeated
+		and not weakSingleIntervalAcrossOneOffPhases
 		and ability.intervalSamples
 		and ability.intervalSamples >= 1
 		and ability.minInterval
@@ -383,6 +440,9 @@ function RuleLearner.mergePullAbility(learnedAbility, pullAbility)
 	learnedAbility.sourceName = learnedAbility.sourceName or pullAbility.sourceName
 	learnedAbility.eventCount = (learnedAbility.eventCount or 0) + (pullAbility.eventCount or 0)
 	learnedAbility.activationCount = (learnedAbility.activationCount or 0) + (pullAbility.activationCount or 0)
+	learnedAbility.auraEventCount = (learnedAbility.auraEventCount or 0) + (pullAbility.auraEventCount or 0)
+	learnedAbility.bossSelfAuraEventCount = (learnedAbility.bossSelfAuraEventCount or 0) + (pullAbility.bossSelfAuraEventCount or 0)
+	learnedAbility.playerAuraEventCount = (learnedAbility.playerAuraEventCount or 0) + (pullAbility.playerAuraEventCount or 0)
 	learnedAbility.events = type(learnedAbility.events) == "table" and learnedAbility.events or {}
 	for eventType, count in pairs(pullAbility.events or {}) do
 		learnedAbility.events[eventType] = (learnedAbility.events[eventType] or 0) + count

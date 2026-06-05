@@ -247,6 +247,17 @@ local function auraOnlySameHpRepeatReason(ability)
 	return nil
 end
 
+local function bossSelfAuraPhaseStateReason(ability)
+	if type(ability) ~= "table"
+		or ability.encounterAssociated
+		or not isAuraOnlyAbility(ability)
+		or (tonumber(ability.bossSelfAuraEventCount) or 0) <= 0
+		or (tonumber(ability.playerAuraEventCount) or 0) > 0 then
+		return nil
+	end
+	return "boss_self_aura_phase_state"
+end
+
 local function abilityHasRoutineRule(ability)
 	if type(ability) ~= "table" then
 		return false
@@ -305,6 +316,7 @@ function RelevanceScorer.routineReasonForAbility(ability)
 	return frequentShortIntervalReason(ability)
 		or auraStackStateReason(ability)
 		or auraOnlySameHpRepeatReason(ability)
+		or bossSelfAuraPhaseStateReason(ability)
 end
 
 function RelevanceScorer.applyRoutineCandidate(ability, candidate)

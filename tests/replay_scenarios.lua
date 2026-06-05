@@ -56,6 +56,45 @@ local function scenarioPhaseHpRules()
 	Harness.assertTrue(cleave.selectedRule and (cleave.selectedRule.type == "hp_gate" or cleave.selectedRule.type == "phase_start_offset"), "Cleave should classify as HP or phase-start driven")
 end
 
+local function scenarioStableIntervalSurvivesDifferentPhaseSegments()
+	Harness.resetState("Replay Segmented Interval")
+	local boss = "Segmented Timer Sentinel"
+	local guid = Harness.makeGuid(boss, 201)
+	Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = guid, spellName = "Opening Bolt", hp = 100 })
+	Harness.emitSpell({ t = 5, sourceName = boss, sourceGUID = guid, spellName = "Blue Stance", hp = 98, eventType = "SPELL_AURA_APPLIED", selfTarget = true })
+	Harness.emitSpell({ t = 8, sourceName = boss, sourceGUID = guid, spellName = "Measured Pulse", hp = 96 })
+	Harness.emitSpell({ t = 20, sourceName = boss, sourceGUID = guid, spellName = "Measured Pulse", hp = 74 })
+	Harness.emitSpell({ t = 32, sourceName = boss, sourceGUID = guid, spellName = "Measured Pulse", hp = 49 })
+	Harness.emitSpell({ t = 44, sourceName = boss, sourceGUID = guid, spellName = "Measured Pulse", hp = 24 })
+	Harness.finishPull(60)
+
+	local bossKey = addon.Core.Util.bossKey(boss, guid)
+	local pulse = Harness.ability(Harness.encounter(bossKey), bossKey, "Measured Pulse")
+	Harness.assertTrue(pulse ~= nil and pulse.intervalSamples == 3, "Fixture should collect stable interval samples")
+	Harness.assertTrue(pulse.selectedRule and pulse.selectedRule.type == "time_interval", "Different one-off phase segments must not suppress a stable time interval")
+end
+
+local function scenarioStableIntervalSurvivesRepeatedPhaseCoincidence()
+	Harness.resetState("Replay Repeated Segment Interval")
+	local boss = "Repeated Segment Sentinel"
+	local guid = Harness.makeGuid(boss, 202)
+	local playerFlags = addon.Core.Constants.FLAG_PLAYER
+	Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = guid, spellName = "Opening Bolt", hp = 100 })
+	Harness.emitSpell({ t = 5, sourceName = boss, sourceGUID = guid, spellName = "Ground Mark", hp = 96, eventType = "SPELL_AURA_APPLIED", destGUID = "Player-1", destName = "Replay Tank", destFlags = playerFlags })
+	Harness.emitSpell({ t = 6, sourceName = boss, sourceGUID = guid, spellName = "Ground Mark", hp = 95, eventType = "SPELL_AURA_REMOVED", destGUID = "Player-1", destName = "Replay Tank", destFlags = playerFlags })
+	Harness.emitSpell({ t = 10, sourceName = boss, sourceGUID = guid, spellName = "Clock Pulse", hp = 94 })
+	Harness.emitSpell({ t = 40, sourceName = boss, sourceGUID = guid, spellName = "Clock Pulse", hp = 58 })
+	Harness.emitSpell({ t = 65, sourceName = boss, sourceGUID = guid, spellName = "Ground Mark", hp = 38, eventType = "SPELL_AURA_APPLIED", destGUID = "Player-2", destName = "Replay Healer", destFlags = playerFlags })
+	Harness.emitSpell({ t = 66, sourceName = boss, sourceGUID = guid, spellName = "Ground Mark", hp = 36, eventType = "SPELL_AURA_REMOVED", destGUID = "Player-2", destName = "Replay Healer", destFlags = playerFlags })
+	Harness.emitSpell({ t = 70, sourceName = boss, sourceGUID = guid, spellName = "Clock Pulse", hp = 35 })
+	Harness.finishPull(90)
+
+	local bossKey = addon.Core.Util.bossKey(boss, guid)
+	local pulse = Harness.ability(Harness.encounter(bossKey), bossKey, "Clock Pulse")
+	Harness.assertTrue(pulse ~= nil and pulse.intervalSamples == 2, "Fixture should collect stable interval samples with repeated phase coincidence")
+	Harness.assertTrue(pulse.selectedRule and pulse.selectedRule.type == "time_interval", "Repeated phase coincidence must not suppress a stable time interval observed outside that phase")
+end
+
 local function scenarioBossAuraPhaseRules()
 	Harness.resetState("Replay Boss Aura Phase")
 	local boss = "Chromatic Sentinel"
@@ -163,6 +202,26 @@ local function scenarioPlayerAuraPhaseRules()
 	local reset = Harness.ability(model, bossKey, "Arcane Reset")
 	Harness.assertTrue(pulse ~= nil and pulse.segmentStats and pulse.segmentStats[auraSegmentKey("aura", "player", "Frost Mark")] ~= nil, "First active player aura should create a player phase segment")
 	Harness.assertTrue(reset ~= nil and reset.segmentStats and reset.segmentStats[auraSegmentKey("aura_clear", "player", "Frost Mark")] ~= nil, "Last removed player aura should create a clear phase segment")
+end
+
+local function scenarioAuraBoundaryDoesNotClassifyItself()
+	Harness.resetState("Replay Aura Boundary Guard")
+	local boss = "Stance Sentinel"
+	local guid = Harness.makeGuid(boss, 217)
+	Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = guid, spellName = "Opening Bolt", hp = 100 })
+	Harness.emitSpell({ t = 5, sourceName = boss, sourceGUID = guid, spellName = "Battle Stance", hp = 98, eventType = "SPELL_AURA_APPLIED", selfTarget = true })
+	Harness.emitSpell({ t = 8, sourceName = boss, sourceGUID = guid, spellName = "Stance Cleave", hp = 96 })
+	Harness.finishPull(30)
+
+	local bossKey = addon.Core.Util.bossKey(boss, guid)
+	local model = Harness.encounter(bossKey)
+	local stance = Harness.ability(model, bossKey, "Battle Stance")
+	local cleave = Harness.ability(model, bossKey, "Stance Cleave")
+	local stanceSegmentKey = auraSegmentKey("aura", "boss", "Battle Stance")
+	Harness.assertTrue(cleave ~= nil and cleave.segmentStats and cleave.segmentStats[stanceSegmentKey] ~= nil, "Boss aura should still segment following abilities")
+	Harness.assertTrue(stance ~= nil and not (stance.segmentStats and stance.segmentStats[stanceSegmentKey]), "Aura boundary event must not classify itself inside its own phase")
+	Harness.assertTrue(stance.selectedRule and stance.selectedRule.type == "routine_noise", "Pure boss self-aura phase state should be hidden by default")
+	Harness.assertTrue(stance.suppressionReason == "boss_self_aura_phase_state", "Pure boss self-aura state should explain its suppression reason")
 end
 
 local function scenarioRepeatedTransitionSpell()
@@ -1165,11 +1224,13 @@ end
 local function scenarioSlashHelpAvoidsRawPipeSeparators()
 	Harness.resetState("Replay Slash Help")
 	Harness.clearChatMessages()
+	Harness.assertTrue(SLASH_BOSSTRACKER1 == "/btr", "Primary slash command should avoid Bartender's short namespace")
+	Harness.assertTrue(SLASH_BOSSTRACKER2 == "/bosstracker", "Long slash command should remain available")
 	SlashCmdList.BOSSTRACKER("help")
 
 	local foundSyncHelp = false
 	for _, message in ipairs(Harness.chatMessages()) do
-		if string.find(message, "/bt sync target, player, group, raid", 1, true) then
+		if string.find(message, "/btr sync target, player, group, raid", 1, true) then
 			foundSyncHelp = true
 		end
 		Harness.assertTrue(string.find(message, "target|player|group|raid", 1, true) == nil, "Slash help must not print raw pipe separators because WoW chat treats pipes as escape markers")
@@ -2231,11 +2292,14 @@ end
 local scenarios = {
 	scenarioChannelLifecycle,
 	scenarioPhaseHpRules,
+	scenarioStableIntervalSurvivesDifferentPhaseSegments,
+	scenarioStableIntervalSurvivesRepeatedPhaseCoincidence,
 	scenarioBossAuraPhaseRules,
 	scenarioAssociatedAddSelfAuraDoesNotCreateBossPhase,
 	scenarioReenteredBossAuraPhaseShowsTimerAgain,
 	scenarioRecurringBossAuraPhaseLearnsPhaseRule,
 	scenarioPlayerAuraPhaseRules,
+	scenarioAuraBoundaryDoesNotClassifyItself,
 	scenarioRepeatedTransitionSpell,
 	scenarioCouncilGrouping,
 	scenarioEncounterOwnedAdd,

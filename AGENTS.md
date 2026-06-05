@@ -33,6 +33,7 @@
 - Track raw activation gaps separately from timer-quality intervals. Gaps below the timer model floor still prove routine spam and must prevent counterspell/lockout gaps from looking like real cooldowns.
 - Suppress pure aura-only repeats at nearly the same HP as likely passive, consequence, or phase-state noise unless later architecture adds a stronger relevance signal.
 - Suppress aura stack state updates where one aura application is followed by many `SPELL_AURA_APPLIED_DOSE` or `SPELL_AURA_REMOVED_DOSE` events and no timer interval. These are state/stack changes, not player-actionable boss timers.
+- Do not let an aura event classify itself as a phase-start ability for the aura phase it just created. Aura boundary events start interpreted phase state for following abilities; pure boss self-aura state should be hidden by default unless explicitly shown by the player.
 - For dynamic add encounters, keep group encounter keys unique by boss model key and allow the primary boss to reuse learned group variants that contain the same actor when no exact group or single-actor model exists. Do not use that fallback for non-primary adds.
 - If a single-actor encounter model is contained in an existing group encounter for the same zone, merge it into that group during model normalization. This represents phase shifts, not a separate boss configuration entry.
 - Apply routine suppression before live provisional timer display as well as after pull-end model promotion; otherwise repeated filler casts can appear during the first live boss pull.
@@ -44,11 +45,11 @@
 - Deduplicate displayed timer predictions by boss model and spell key, not by active source actor. Same-name boss contexts and learned-plus-provisional evidence can otherwise create several bars for one player-facing ability.
 - Timer UI positioning and resizing must be direct mouse interactions on the visible frame; slash commands may remain only as fallback or recovery controls.
 - Timer frame locking must block direct drag, corner resizing, and mouse-wheel scaling, not only hide the frame when idle.
-- `/bt panic` must suppress timer visuals and configured warnings while keeping capture and diagnostics active.
+- `/btr panic` must suppress timer visuals and configured warnings while keeping capture and diagnostics active.
 - Clearing all learned alpha data should also clear related display/warning overrides, because stale overrides can silently affect newly relearned models.
 - Keep a versioned per-character backup of learned encounter data and ability overrides, so an account-wide SavedVariables load failure can restore the player-facing boss configuration on the next addon start.
 - Never let a character backup silently overwrite a non-empty account learned-data store. If the character backup is newer, show an on-screen choice to restore the backup or keep the current account data.
-- Treat schema resets and missing-account-file initialization differently from explicit learned-data clears. Only `/bt clearlearned`-style manual clears may block later character-backup restoration.
+- Treat schema resets and missing-account-file initialization differently from explicit learned-data clears. Only `/btr clearlearned`-style manual clears may block later character-backup restoration.
 - Treat non-boss summon spells during a single active boss-frame encounter as possible encounter mechanics owned by that boss, while preserving the original add source in learned data and timer display. Skip association when ownership is ambiguous, especially multi-boss pulls.
 - Keep the learning architecture phase-aware: occurrence lifecycle dedupe, encounter grouping, phase segmentation, rule learning, relevance scoring, model persistence, and prediction should remain separate modules.
 - Treat accepted boss self-auras and boss-applied player auras as phase-state evidence, not just ability noise. Permanent evidence may store anonymous player-target flags and per-kill target slots for rebuilds, while the aura-to-phase interpretation stays in the calculated model layer.

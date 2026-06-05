@@ -255,6 +255,9 @@ local function mergeAbility(target, source)
 	target.encounterAssociated = target.encounterAssociated == true or source.encounterAssociated == true or nil
 	target.associatedSourceName = target.associatedSourceName or source.associatedSourceName
 	target.sourceType = target.sourceType or source.sourceType
+	target.auraEventCount = (tonumber(target.auraEventCount) or 0) + (tonumber(source.auraEventCount) or 0)
+	target.bossSelfAuraEventCount = (tonumber(target.bossSelfAuraEventCount) or 0) + (tonumber(source.bossSelfAuraEventCount) or 0)
+	target.playerAuraEventCount = (tonumber(target.playerAuraEventCount) or 0) + (tonumber(source.playerAuraEventCount) or 0)
 	mergeEventCounts(target, source)
 	mergeAverageField(target, source, "avgFirstOffset", "firstOffsetSamples")
 	mergeAverageField(target, source, "avgInterval", "intervalSamples")

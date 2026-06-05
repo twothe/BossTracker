@@ -2,7 +2,7 @@
 
 This document captures the agreed design and current implementation contract for
 persistent encounter evidence and player-to-player synchronization. Version
-1.8.0 includes the local evidence store, the shared packed `EvidenceCodec`,
+1.9.1 includes the local evidence store, the shared packed `EvidenceCodec`,
 completed-segment commit path, evidence rebuild path, interpretation-engine rebuild
 detection, difficulty-aware ability availability, and accepted player-to-player
 sync transport.
@@ -328,7 +328,7 @@ modules so parity can be tested directly.
 
 ## Sync Transport Contract
 
-`/bt sync target`, `/bt sync PlayerName`, `/bt sync group`, and `/bt sync raid`
+`/btr sync target`, `/btr sync PlayerName`, `/btr sync group`, and `/btr sync raid`
 request evidence exchange with other BossTracker users. Group and raid requests
 are small broadcast requests only. After approval, both sides whisper their
 available permanent evidence payloads for that session, so large evidence

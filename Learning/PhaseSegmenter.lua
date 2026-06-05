@@ -222,10 +222,20 @@ local function startAuraSegment(bossState, state, record, active, activeCount)
 	local prefix = active and "aura" or "aura_clear"
 	local reason = active and (state.scope .. "_aura_applied") or (state.scope .. "_aura_removed")
 	local key = auraSegmentKey(prefix, state.scope, state.spellKey)
+	local previousSegment = ensureSegments(bossState)
 	local segment = startSegment(bossState, key, reason, record, auraFields(state, activeCount))
-	record.phaseSegmentKey = segment and segment.key or record.phaseSegmentKey
-	record.phaseSegmentReason = reason
+	if segment and previousSegment and previousSegment.key ~= segment.key then
+		segment.previousSegmentKey = previousSegment.key
+	end
 	return segment
+end
+
+local function isOwnAuraBoundarySegment(segment, activation)
+	return segment
+		and activation
+		and segment.auraScope
+		and segment.spellKey
+		and segment.spellKey == activation.spellKey
 end
 
 local function applyBossAuraState(bossState, state, record)
@@ -309,6 +319,11 @@ function PhaseSegmenter.assignSegment(bossState, activation, preferredSegment)
 		if activation.phaseSegmentKey and bossState.segments and bossState.segments[activation.phaseSegmentKey] then
 			segment = bossState.segments[activation.phaseSegmentKey]
 			bossState.currentSegmentKey = segment.key
+		elseif isOwnAuraBoundarySegment(segment, activation)
+			and segment.previousSegmentKey
+			and bossState.segments
+			and bossState.segments[segment.previousSegmentKey] then
+			segment = bossState.segments[segment.previousSegmentKey]
 		elseif not preferredSegment then
 			local hpBucket = crossedHpBucket(bossState, activation.hpPct)
 			if hpBucket then

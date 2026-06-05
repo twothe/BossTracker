@@ -478,7 +478,7 @@ end
 
 local function showRequestPopup(request)
 	if not StaticPopupDialogs or not StaticPopup_Show then
-		chat(tostring(request.sender) .. " wants to exchange BossTracker evidence. Use /bt sync accept " .. tostring(request.sender) .. " to accept.")
+		chat(tostring(request.sender) .. " wants to exchange BossTracker evidence. Use /btr sync accept " .. tostring(request.sender) .. " to accept.")
 		return false
 	end
 	StaticPopupDialogs.BOSSTRACKER_EVIDENCE_SYNC_REQUEST = {
@@ -740,7 +740,7 @@ local function requestSync(target)
 	local rawTarget = tostring(target or "")
 	local lowerTarget = string.lower(rawTarget)
 	if lowerTarget == "" then
-		chat("usage: /bt sync target, player, group, raid")
+		chat("usage: /btr sync target, player, group, raid")
 		return false
 	end
 

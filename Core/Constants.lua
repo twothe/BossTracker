@@ -5,9 +5,9 @@ local addon = _G.BossTracker
 local C = {}
 addon.Core.Constants = C
 
-C.VERSION = "1.8.0"
+C.VERSION = "1.9.1"
 C.SCHEMA_VERSION = 7
-C.INTERPRETATION_ENGINE_VERSION = 3
+C.INTERPRETATION_ENGINE_VERSION = 5
 C.LEARNED_BACKUP_SCHEMA_VERSION = 1
 C.EVIDENCE_SCHEMA_VERSION = 2
 C.EVIDENCE_COMPLETION_REASONS = {
@@ -41,6 +41,9 @@ C.DEFAULT_CHAR_CONFIG = {
 		width = 300,
 		height = 194,
 		scale = 1.0,
+	},
+	minimap = {
+		angle = 225,
 	},
 	panic = false,
 	previewTimers = false,

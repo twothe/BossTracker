@@ -16,7 +16,7 @@ local function startModules()
 	if addon.Core.EvidenceSync then
 		boundary.safeStart("EvidenceSync", addon.Core.EvidenceSync)
 	else
-		addon.Core.Logger.chat("BossTracker update needs a full client restart before /bt sync is available.")
+		addon.Core.Logger.chat("BossTracker update needs a full client restart before /btr sync is available.")
 	end
 	boundary.safeStart("ModelStore", addon.Core.ModelStore)
 	boundary.safeStart("EncounterState", addon.Capture.EncounterState)
@@ -38,7 +38,12 @@ local function startModules()
 	if addon.UI.ConfigFrame then
 		boundary.safeStart("ConfigFrame", addon.UI.ConfigFrame)
 	else
-		addon.Core.Logger.chat("BossTracker update needs a full client restart before /bt config is available.")
+		addon.Core.Logger.chat("BossTracker update needs a full client restart before /btr config is available.")
+	end
+	if addon.UI.MinimapButton then
+		boundary.safeStart("MinimapButton", addon.UI.MinimapButton)
+	else
+		addon.Core.Logger.chat("BossTracker update needs a full client restart before the minimap button is available.")
 	end
 	boundary.safeStart("SlashCommand", addon.UI.SlashCommand)
 end
@@ -60,7 +65,7 @@ local function boot()
 		addon.Core.SavedVariables.rebuildLearnedIfNeeded()
 	end
 	addon.Core.SavedVariables.showLearnedBackupConflictPrompt()
-	addon.Core.Logger.chat("v" .. addon.Core.Constants.VERSION .. " loaded. /bt status")
+	addon.Core.Logger.chat("v" .. addon.Core.Constants.VERSION .. " loaded. /btr status")
 end
 
 local function shutdown()

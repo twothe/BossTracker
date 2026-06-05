@@ -12,15 +12,15 @@ addon.UI.SlashCommand = SlashCommand
 
 local function help()
 	Util.print("BossTracker commands:")
-	Util.print("/bt status - show current addon and capture state")
-	Util.print("/bt config - open boss and ability configuration")
-	Util.print("/bt preview - toggle sample timer bars for positioning")
+	Util.print("/btr status - show current addon and capture state")
+	Util.print("/btr config - open boss and ability configuration")
+	Util.print("/btr preview - toggle sample timer bars for positioning")
 	Util.print("Drag the timer frame to move it; drag the lower-right corner to resize it.")
-	Util.print("/bt unlock, /bt lock, /bt resetui - fallback timer frame controls")
-	Util.print("/bt scale 1.0, /bt bigger, /bt smaller - fallback scale controls")
-	Util.print("/bt panic, /bt resume, /bt timers on/off - control timer visibility")
-	Util.print("/bt sync target, player, group, raid - request evidence exchange")
-	Util.print("/bt debug on/off, /bt clearlogs, /bt clearlearned - alpha diagnostics")
+	Util.print("/btr unlock, /btr lock, /btr resetui - fallback timer frame controls")
+	Util.print("/btr scale 1.0, /btr bigger, /btr smaller - fallback scale controls")
+	Util.print("/btr panic, /btr resume, /btr timers on/off - control timer visibility")
+	Util.print("/btr sync target, player, group, raid - request evidence exchange")
+	Util.print("/btr debug on/off, /btr clearlogs, /btr clearlearned - alpha diagnostics")
 end
 
 local function status()
@@ -103,7 +103,7 @@ local function setScale(rest)
 	local normalized = string.gsub(rest, ",", ".")
 	local scale = tonumber(normalized)
 	if not scale then
-		Util.print("usage: /bt scale 1.0")
+		Util.print("usage: /btr scale 1.0")
 		return
 	end
 
@@ -214,7 +214,7 @@ local function handle(input)
 end
 
 function SlashCommand.start()
-	SLASH_BOSSTRACKER1 = "/bt"
+	SLASH_BOSSTRACKER1 = "/btr"
 	SLASH_BOSSTRACKER2 = "/bosstracker"
 	SlashCmdList.BOSSTRACKER = function(input)
 		addon.Core.ErrorBoundary.call("SlashCommand", "slash", handle, input)
