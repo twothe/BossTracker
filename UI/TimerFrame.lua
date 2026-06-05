@@ -144,6 +144,9 @@ local function formatRemaining(timer)
 		end
 		return "HP"
 	end
+	if timer.status == "delayed" then
+		return "Overdue"
+	end
 	if not timer.remaining then
 		return ""
 	end
@@ -176,6 +179,9 @@ local function timerDisplayName(timer)
 end
 
 local function rowColor(timer)
+	if timer.status == "delayed" then
+		return 0.86, 0.48, 0.22
+	end
 	if timer.mode == "hp" then
 		return 0.52, 0.74, 0.56
 	end
@@ -215,13 +221,13 @@ local function createRow(parent, index)
 
 	row.name = row.bar:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
 	row.name:SetPoint("LEFT", row.bar, "LEFT", 5, 0)
-	row.name:SetPoint("RIGHT", row.bar, "RIGHT", -42, 0)
+	row.name:SetPoint("RIGHT", row.bar, "RIGHT", -52, 0)
 	row.name:SetJustifyH("LEFT")
 	row.name:SetTextColor(0.93, 0.93, 0.90)
 
 	row.time = row.bar:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
 	row.time:SetPoint("RIGHT", row.bar, "RIGHT", -5, 0)
-	row.time:SetWidth(38)
+	row.time:SetWidth(48)
 	row.time:SetJustifyH("RIGHT")
 	row.time:SetTextColor(1, 1, 1)
 

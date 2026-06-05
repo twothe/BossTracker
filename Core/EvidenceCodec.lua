@@ -243,6 +243,7 @@ local function packEvents(events)
 			fieldNumber(event and event[6]),
 			fieldNumber(event and event[7]),
 			fieldNumber(event and event[8]),
+			fieldNumber(event and event[9]),
 		}, ",")
 	end
 	return table.concat(packed, ";")
@@ -267,6 +268,7 @@ local function unpackEvents(value)
 			tonumber(parts[6]) or 0,
 			tonumber(parts[7]),
 			tonumber(parts[8]) or 0,
+			tonumber(parts[9]),
 		}
 		if event[2] ~= "" and event[3] > 0 and event[4] > 0 and event[6] > 0 then
 			events[#events + 1] = event
@@ -350,6 +352,7 @@ function EvidenceCodec.hashKillData(instanceKey, encounterKey, difficultyKey, ac
 			spellHashKey(spell),
 			tostring(event[7] or ""),
 			tostring(event[8] or ""),
+			tostring(event[9] or ""),
 		}, ",")
 	end
 	return hashString(table.concat(parts, "|"))

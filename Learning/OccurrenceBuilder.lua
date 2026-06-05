@@ -163,6 +163,8 @@ local function makeActivation(state, record, reason)
 		associatedSourceActorKey = record.associatedSourceActorKey,
 		associatedSourceName = record.associatedSourceName,
 		lifecycleReason = reason,
+		phaseSegmentKey = record.phaseSegmentKey,
+		phaseSegmentReason = record.phaseSegmentReason,
 	}
 end
 

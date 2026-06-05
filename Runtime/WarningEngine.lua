@@ -1,5 +1,5 @@
 -- WarningEngine.lua
--- Emits optional five-second personal or raid warnings for configured learned
+-- Emits optional personal or raid warnings for configured learned
 -- abilities. It only reads the current prediction list and never influences
 -- learning or timer construction.
 

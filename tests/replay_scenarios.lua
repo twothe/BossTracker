@@ -6,6 +6,14 @@
 local Harness = dofile("tests/replay_harness.lua")
 local addon = Harness.addon
 
+local function auraSegmentKey(prefix, scope, spellName)
+	return table.concat({
+		prefix,
+		scope,
+		addon.Core.Util.slug(addon.Core.Util.timerAbilityKey(nil, spellName)),
+	}, "_")
+end
+
 local function scenarioChannelLifecycle()
 	Harness.resetState("Replay Herod")
 	local boss = "Herod"
@@ -46,6 +54,115 @@ local function scenarioPhaseHpRules()
 	Harness.assertTrue(cleave ~= nil, "Cleave should be learned")
 	Harness.assertTrue(cleave.segmentStats.hp_65 ~= nil, "Cleave should be tied to the 65% phase segment")
 	Harness.assertTrue(cleave.selectedRule and (cleave.selectedRule.type == "hp_gate" or cleave.selectedRule.type == "phase_start_offset"), "Cleave should classify as HP or phase-start driven")
+end
+
+local function scenarioBossAuraPhaseRules()
+	Harness.resetState("Replay Boss Aura Phase")
+	local boss = "Chromatic Sentinel"
+	local guid = Harness.makeGuid(boss, 210)
+	Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = guid, spellName = "Opening Bolt", hp = 100 })
+	Harness.emitSpell({ t = 10, sourceName = boss, sourceGUID = guid, spellName = "Red Infusion", hp = 96, eventType = "SPELL_AURA_APPLIED", selfTarget = true })
+	Harness.emitSpell({ t = 13, sourceName = boss, sourceGUID = guid, spellName = "Flame Buffet", hp = 95 })
+	Harness.finishPull(35)
+
+	local bossKey = addon.Core.Util.bossKey(boss, guid)
+	local model = Harness.encounter(bossKey)
+	local buffet = Harness.ability(model, bossKey, "Flame Buffet")
+	local segmentKey = auraSegmentKey("aura", "boss", "Red Infusion")
+	Harness.assertTrue(buffet ~= nil, "Aura-phase ability should be learned")
+	Harness.assertTrue(buffet.segmentStats and buffet.segmentStats[segmentKey] ~= nil, "Boss self aura should create the active phase segment")
+	Harness.assertTrue(buffet.selectedRule and buffet.selectedRule.type == "phase_start_offset", "Boss aura phase should support a phase-start rule")
+end
+
+local function scenarioAssociatedAddSelfAuraDoesNotCreateBossPhase()
+	Harness.resetState("Replay Add Aura Phase Guard")
+	local boss = "Chromatic Commander"
+	local guid = Harness.makeGuid(boss, 214)
+	local pull, context = Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = guid, spellName = "Opening Bolt", hp = 100 })
+	Harness.emitAssociatedSpell({
+		t = 5,
+		pull = pull,
+		ownerContext = context,
+		sourceName = "Chromatic Helper",
+		sourceGUID = Harness.makeGuid("Chromatic Helper", 215),
+		spellName = "Helper Frenzy",
+		eventType = "SPELL_AURA_APPLIED",
+		selfTarget = true,
+		hp = 99,
+	})
+	Harness.emitSpell({ t = 8, sourceName = boss, sourceGUID = guid, spellName = "Commander Cleave", hp = 96 })
+	Harness.finishPull(30)
+
+	local bossKey = addon.Core.Util.bossKey(boss, guid)
+	local model = Harness.encounter(bossKey)
+	local cleave = Harness.ability(model, bossKey, "Commander Cleave")
+	local addAuraSegmentKey = auraSegmentKey("aura", "boss", "Helper Frenzy")
+	Harness.assertTrue(cleave ~= nil, "Boss ability after associated add aura should be learned")
+	Harness.assertTrue(not (cleave.segmentStats and cleave.segmentStats[addAuraSegmentKey]), "Associated add self aura must not create a boss aura phase")
+end
+
+local function scenarioReenteredBossAuraPhaseShowsTimerAgain()
+	Harness.resetState("Replay Reentered Boss Aura Phase")
+	local boss = "Chromatic Cycle Sentinel"
+	local firstGuid = Harness.makeGuid(boss, 212)
+	Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = firstGuid, spellName = "Opening Bolt", hp = 100 })
+	Harness.emitSpell({ t = 10, sourceName = boss, sourceGUID = firstGuid, spellName = "Red Infusion", hp = 96, eventType = "SPELL_AURA_APPLIED", selfTarget = true })
+	Harness.emitSpell({ t = 13, sourceName = boss, sourceGUID = firstGuid, spellName = "Flame Buffet", hp = 95 })
+	Harness.finishPull(35)
+
+	local secondGuid = Harness.makeGuid(boss, 213)
+	Harness.emitSpell({ t = 100, sourceName = boss, sourceGUID = secondGuid, spellName = "Opening Bolt", hp = 100 })
+	Harness.emitSpell({ t = 110, sourceName = boss, sourceGUID = secondGuid, spellName = "Red Infusion", hp = 98, eventType = "SPELL_AURA_APPLIED", selfTarget = true })
+	Harness.emitSpell({ t = 113, sourceName = boss, sourceGUID = secondGuid, spellName = "Flame Buffet", hp = 97 })
+	Harness.emitSpell({ t = 120, sourceName = boss, sourceGUID = secondGuid, spellName = "Red Infusion", hp = 96, eventType = "SPELL_AURA_REMOVED", selfTarget = true })
+	Harness.emitSpell({ t = 140, sourceName = boss, sourceGUID = secondGuid, spellName = "Red Infusion", hp = 95, eventType = "SPELL_AURA_APPLIED", selfTarget = true })
+
+	Harness.setTime(141)
+	local timer = Harness.firstPredictionByName("Flame Buffet")
+	Harness.assertTrue(timer ~= nil, "Re-entered aura phase should show the learned phase timer again")
+	Harness.assertNear(timer.nextAt, 143, 0.2, "Re-entered aura phase should anchor the timer on the latest aura application")
+end
+
+local function scenarioRecurringBossAuraPhaseLearnsPhaseRule()
+	Harness.resetState("Replay Recurring Boss Aura Phase")
+	local boss = "Chromatic Recurrence Sentinel"
+	local guid = Harness.makeGuid(boss, 216)
+	Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = guid, spellName = "Opening Bolt", hp = 100 })
+	Harness.emitSpell({ t = 10, sourceName = boss, sourceGUID = guid, spellName = "Red Infusion", hp = 96, eventType = "SPELL_AURA_APPLIED", selfTarget = true })
+	Harness.emitSpell({ t = 13, sourceName = boss, sourceGUID = guid, spellName = "Flame Buffet", hp = 95 })
+	Harness.emitSpell({ t = 20, sourceName = boss, sourceGUID = guid, spellName = "Red Infusion", hp = 94, eventType = "SPELL_AURA_REMOVED", selfTarget = true })
+	Harness.emitSpell({ t = 40, sourceName = boss, sourceGUID = guid, spellName = "Red Infusion", hp = 90, eventType = "SPELL_AURA_APPLIED", selfTarget = true })
+	Harness.emitSpell({ t = 43, sourceName = boss, sourceGUID = guid, spellName = "Flame Buffet", hp = 89 })
+	Harness.finishPull(70)
+
+	local bossKey = addon.Core.Util.bossKey(boss, guid)
+	local model = Harness.encounter(bossKey)
+	local buffet = Harness.ability(model, bossKey, "Flame Buffet")
+	local segment = buffet and buffet.segmentStats and buffet.segmentStats[auraSegmentKey("aura", "boss", "Red Infusion")]
+	Harness.assertTrue(segment ~= nil and (segment.phaseOffsetSamples or 0) == 2, "Recurring aura phase should learn one phase-offset sample per phase entry")
+	Harness.assertTrue(buffet.selectedRule and buffet.selectedRule.type == "phase_start_offset", "Recurring phase-only ability should prefer the phase rule over a global time interval")
+end
+
+local function scenarioPlayerAuraPhaseRules()
+	Harness.resetState("Replay Player Aura Phase")
+	local boss = "Mark Sentinel"
+	local guid = Harness.makeGuid(boss, 211)
+	local playerFlags = addon.Core.Constants.FLAG_PLAYER
+	Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = guid, spellName = "Opening Bolt", hp = 100 })
+	Harness.emitSpell({ t = 8, sourceName = boss, sourceGUID = guid, spellName = "Frost Mark", hp = 98, eventType = "SPELL_AURA_APPLIED", destGUID = "Player-1", destName = "Replay Tank", destFlags = playerFlags })
+	Harness.emitSpell({ t = 9, sourceName = boss, sourceGUID = guid, spellName = "Frost Mark", hp = 97, eventType = "SPELL_AURA_APPLIED", destGUID = "Player-2", destName = "Replay Healer", destFlags = playerFlags })
+	Harness.emitSpell({ t = 12, sourceName = boss, sourceGUID = guid, spellName = "Frost Pulse", hp = 96 })
+	Harness.emitSpell({ t = 15, sourceName = boss, sourceGUID = guid, spellName = "Frost Mark", hp = 95, eventType = "SPELL_AURA_REMOVED", destGUID = "Player-1", destName = "Replay Tank", destFlags = playerFlags })
+	Harness.emitSpell({ t = 16, sourceName = boss, sourceGUID = guid, spellName = "Frost Mark", hp = 94, eventType = "SPELL_AURA_REMOVED", destGUID = "Player-2", destName = "Replay Healer", destFlags = playerFlags })
+	Harness.emitSpell({ t = 19, sourceName = boss, sourceGUID = guid, spellName = "Arcane Reset", hp = 93 })
+	Harness.finishPull(40)
+
+	local bossKey = addon.Core.Util.bossKey(boss, guid)
+	local model = Harness.encounter(bossKey)
+	local pulse = Harness.ability(model, bossKey, "Frost Pulse")
+	local reset = Harness.ability(model, bossKey, "Arcane Reset")
+	Harness.assertTrue(pulse ~= nil and pulse.segmentStats and pulse.segmentStats[auraSegmentKey("aura", "player", "Frost Mark")] ~= nil, "First active player aura should create a player phase segment")
+	Harness.assertTrue(reset ~= nil and reset.segmentStats and reset.segmentStats[auraSegmentKey("aura_clear", "player", "Frost Mark")] ~= nil, "Last removed player aura should create a clear phase segment")
 end
 
 local function scenarioRepeatedTransitionSpell()
@@ -946,6 +1063,7 @@ end
 
 local function scenarioConfiguredWarningPlaysSound()
 	Harness.resetState("Replay Warning Sound")
+	Harness.assertTrue(addon.Core.Config.getWarningLeadTime() == 3, "Default warning lead time should be three seconds")
 	local boss = "Sound Sentinel"
 	local guid = Harness.makeGuid(boss, 650)
 	local actorKey = addon.Core.Util.bossKey(boss, guid)
@@ -966,7 +1084,7 @@ local function scenarioConfiguredWarningPlaysSound()
 	addon.Runtime.WarningEngine.start()
 
 	Harness.clearPlayedSounds()
-	Harness.setTime((timer.nextAt or 40) - 4)
+	Harness.setTime((timer.nextAt or 40) - 2)
 	local warningFrame = Harness.frame("BossTrackerWarningTicker")
 	Harness.assertTrue(warningFrame and warningFrame.scripts and warningFrame.scripts.OnUpdate, "Warning ticker frame should be available")
 	warningFrame.scripts.OnUpdate(warningFrame, addon.Core.Constants.TIMER_UPDATE_SECONDS)
@@ -975,6 +1093,73 @@ local function scenarioConfiguredWarningPlaysSound()
 	local expected = addon.Core.Config.getWarningSoundInfo("soft_bell")
 	Harness.assertTrue(sound and sound.path == expected.path, "Configured warning sound should play with the warning")
 	Harness.assertTrue(sound.channel == "Master", "Warning sounds should use the master channel")
+end
+
+local function countDebugEvents(kind)
+	local run = addon.Core.Logger.getRun()
+	local events = run and run.events and run.events.items or {}
+	local count = 0
+	for _, event in pairs(events) do
+		if type(event) == "table" and event.kind == kind then
+			count = count + 1
+		end
+	end
+	return count
+end
+
+local function scenarioDelayedTimerHidesUntilObservedAgain()
+	Harness.resetState("Replay Delayed Timer")
+	local boss = "Delayed Sentinel"
+	local guid = Harness.makeGuid(boss, 657)
+	Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = guid, spellName = "Phase Bolt", hp = 100 })
+	Harness.emitSpell({ t = 30, sourceName = boss, sourceGUID = guid, spellName = "Phase Bolt", hp = 80 })
+
+	Harness.setTime(60.1)
+	local timer = Harness.firstPredictionByName("Phase Bolt")
+	Harness.assertTrue(timer ~= nil, "Missed timer should remain briefly visible")
+	Harness.assertTrue(timer.status == "delayed", "Missed timer should be marked delayed after its timing window")
+	Harness.assertTrue(countDebugEvents("prediction_timer_delayed") == 1, "Delayed timer should write a bounded diagnostic event")
+
+	Harness.setTime(69)
+	timer = Harness.firstPredictionByName("Phase Bolt")
+	Harness.assertTrue(timer == nil, "Delayed timer should leave the active list after the visible delay period")
+	Harness.assertTrue(countDebugEvents("prediction_timer_delay_hidden") == 1, "Hidden delayed timer should write a diagnostic event")
+
+	Harness.emitSpell({ t = 80, sourceName = boss, sourceGUID = guid, spellName = "Phase Bolt", hp = 60 })
+	timer = Harness.firstPredictionByName("Phase Bolt")
+	Harness.assertTrue(timer ~= nil, "Observed activation should restart the timer")
+	Harness.assertTrue(timer.status ~= "delayed", "Restarted timer should not stay delayed")
+	Harness.assertNear(timer.remaining, 30, 0.2, "Restarted timer should use the observed activation as the new anchor")
+	Harness.assertTrue(countDebugEvents("prediction_timer_delay_resolved") == 1, "Observed activation should resolve the delayed diagnostic")
+end
+
+local function scenarioLearnedDelayedTimerHidesUntilObservedAgain()
+	Harness.resetState("Replay Learned Delayed Timer")
+	local boss = "Learned Delay Sentinel"
+	local firstGuid = Harness.makeGuid(boss, 658)
+	local nextGuid = Harness.makeGuid(boss, 659)
+	Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = firstGuid, spellName = "Phase Bolt", hp = 100 })
+	Harness.emitSpell({ t = 30, sourceName = boss, sourceGUID = firstGuid, spellName = "Phase Bolt", hp = 80 })
+	Harness.finishPull(70)
+
+	Harness.emitSpell({ t = 100, sourceName = boss, sourceGUID = nextGuid, spellName = "Phase Bolt", hp = 100 })
+	Harness.setTime(130.1)
+	local timer = Harness.firstPredictionByName("Phase Bolt")
+	Harness.assertTrue(timer ~= nil, "Missed learned timer should remain briefly visible")
+	Harness.assertTrue(timer.status == "delayed", "Missed learned timer should be marked delayed after its timing window")
+	Harness.assertTrue(countDebugEvents("prediction_timer_delayed") == 1, "Learned delayed timer should write a bounded diagnostic event")
+
+	Harness.setTime(139)
+	timer = Harness.firstPredictionByName("Phase Bolt")
+	Harness.assertTrue(timer == nil, "Hidden learned delay should leave the active list before the next activation")
+	Harness.assertTrue(countDebugEvents("prediction_timer_delay_hidden") == 1, "Hidden learned delay should write a diagnostic event")
+
+	Harness.emitSpell({ t = 150, sourceName = boss, sourceGUID = nextGuid, spellName = "Phase Bolt", hp = 70 })
+	timer = Harness.firstPredictionByName("Phase Bolt")
+	Harness.assertTrue(timer ~= nil, "Observed learned activation should restart the timer")
+	Harness.assertTrue(timer.status ~= "delayed", "Restarted learned timer should not stay delayed")
+	Harness.assertNear(timer.remaining, 30, 0.2, "Restarted learned timer should use the observed activation as the new anchor")
+	Harness.assertTrue(countDebugEvents("prediction_timer_delay_resolved") == 1, "Observed learned activation should resolve the delayed diagnostic")
 end
 
 local function scenarioSlashHelpAvoidsRawPipeSeparators()
@@ -1714,6 +1899,36 @@ local function scenarioEvidenceRebuildsLearnedModel()
 	Harness.assertNear(rebuilt.minInterval, 24, 0.01, "Evidence rebuild should preserve interval evidence")
 end
 
+local function scenarioEvidenceRebuildPreservesPlayerAuraPhase()
+	Harness.resetState("Replay Evidence Player Aura Phase")
+	local boss = "Evidence Aura Sentinel"
+	local guid = Harness.makeGuid(boss, 902)
+	local playerFlags = addon.Core.Constants.FLAG_PLAYER
+	Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = guid, spellName = "Opening Bolt", hp = 100 })
+	Harness.emitSpell({ t = 8, sourceName = boss, sourceGUID = guid, spellName = "Frost Mark", hp = 98, eventType = "SPELL_AURA_APPLIED", destGUID = "Player-1", destName = "Replay Tank", destFlags = playerFlags })
+	Harness.emitSpell({ t = 9, sourceName = boss, sourceGUID = guid, spellName = "Frost Mark", hp = 97, eventType = "SPELL_AURA_APPLIED", destGUID = "Player-2", destName = "Replay Healer", destFlags = playerFlags })
+	Harness.emitSpell({ t = 12, sourceName = boss, sourceGUID = guid, spellName = "Frost Mark", hp = 96, eventType = "SPELL_AURA_REMOVED", destGUID = "Player-1", destName = "Replay Tank", destFlags = playerFlags })
+	Harness.emitSpell({ t = 13, sourceName = boss, sourceGUID = guid, spellName = "Frost Pulse", hp = 95 })
+	Harness.emitSpell({ t = 16, sourceName = boss, sourceGUID = guid, spellName = "Frost Mark", hp = 94, eventType = "SPELL_AURA_REMOVED", destGUID = "Player-2", destName = "Replay Healer", destFlags = playerFlags })
+	Harness.emitSpell({ t = 19, sourceName = boss, sourceGUID = guid, spellName = "Arcane Reset", hp = 93 })
+	Harness.finishPull(35, "unit_died")
+
+	local bossKey = addon.Core.Util.bossKey(boss, guid)
+	local direct = Harness.ability(Harness.encounter(bossKey), bossKey, "Frost Pulse")
+	local segmentKey = auraSegmentKey("aura", "player", "Frost Mark")
+	local clearSegmentKey = auraSegmentKey("aura_clear", "player", "Frost Mark")
+	Harness.assertTrue(direct ~= nil and direct.segmentStats and direct.segmentStats[segmentKey] ~= nil, "Fixture should learn the player aura phase before rebuild")
+	local directReset = Harness.ability(Harness.encounter(bossKey), bossKey, "Arcane Reset")
+	Harness.assertTrue(directReset ~= nil and directReset.segmentStats and directReset.segmentStats[clearSegmentKey] ~= nil, "Fixture should learn the player aura clear phase before rebuild")
+
+	local promoted = addon.Core.EvidenceStore.rebuildLearned()
+	Harness.assertTrue(promoted >= 1, "Evidence rebuild should promote the player-aura encounter")
+	local rebuilt = Harness.ability(Harness.encounter(bossKey), bossKey, "Frost Pulse")
+	Harness.assertTrue(rebuilt ~= nil and rebuilt.segmentStats and rebuilt.segmentStats[segmentKey] ~= nil, "Evidence rebuild should preserve overlapping anonymous player aura phase facts")
+	local rebuiltReset = Harness.ability(Harness.encounter(bossKey), bossKey, "Arcane Reset")
+	Harness.assertTrue(rebuiltReset ~= nil and rebuiltReset.segmentStats and rebuiltReset.segmentStats[clearSegmentKey] ~= nil, "Evidence rebuild should preserve anonymous player aura clear phase facts")
+end
+
 local function scenarioEvidenceEngineVersionRebuildsFinalData()
 	Harness.resetState("Replay Evidence Engine Version")
 	local boss = "Engine Sentinel"
@@ -2016,6 +2231,11 @@ end
 local scenarios = {
 	scenarioChannelLifecycle,
 	scenarioPhaseHpRules,
+	scenarioBossAuraPhaseRules,
+	scenarioAssociatedAddSelfAuraDoesNotCreateBossPhase,
+	scenarioReenteredBossAuraPhaseShowsTimerAgain,
+	scenarioRecurringBossAuraPhaseLearnsPhaseRule,
+	scenarioPlayerAuraPhaseRules,
 	scenarioRepeatedTransitionSpell,
 	scenarioCouncilGrouping,
 	scenarioEncounterOwnedAdd,
@@ -2044,6 +2264,8 @@ local scenarios = {
 	scenarioClearLearnedClearsConfigOverrides,
 	scenarioWarningRaidPermissionUsesWotlkApi,
 	scenarioConfiguredWarningPlaysSound,
+	scenarioDelayedTimerHidesUntilObservedAgain,
+	scenarioLearnedDelayedTimerHidesUntilObservedAgain,
 	scenarioSlashHelpAvoidsRawPipeSeparators,
 	scenarioPredictionDeduplicatesSameModelAbility,
 	scenarioGroupKeyDeduplicatesSameModelActors,
@@ -2065,6 +2287,7 @@ local scenarios = {
 	scenarioEvidenceCountsAreSegmentLocal,
 	scenarioEvidenceStoresAddHeavyKillsWithinCap,
 	scenarioEvidenceRebuildsLearnedModel,
+	scenarioEvidenceRebuildPreservesPlayerAuraPhase,
 	scenarioEvidenceEngineVersionRebuildsFinalData,
 	scenarioMissingEvidenceEngineVersionRebuildsForFutureEngines,
 	scenarioEvidenceSyncRoundTripRebuildsModel,

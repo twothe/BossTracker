@@ -440,6 +440,10 @@ function Harness.emitAssociatedSpell(args)
 	fakeNow = args.t
 	local Util = addon.Core.Util
 	local sourceGUID = args.sourceGUID or Harness.makeGuid(args.sourceName, args.sourceId)
+	local destGUID = args.destGUID
+	if args.selfTarget then
+		destGUID = sourceGUID
+	end
 	local record = {
 		t = fakeNow,
 		combatTimestamp = fakeNow,
@@ -450,6 +454,10 @@ function Harness.emitAssociatedSpell(args)
 		sourceIsHostileNpc = true,
 		sourceActorKey = Util.actorKey(args.sourceName, sourceGUID),
 		sourceBossKey = Util.bossKey(args.sourceName, sourceGUID),
+		destGUID = destGUID,
+		destName = args.destName,
+		destFlags = args.destFlags,
+		destIsHostileNpc = args.destIsHostileNpc == true,
 		spellId = args.spellId,
 		spellName = args.spellName,
 		spellSchool = 1,

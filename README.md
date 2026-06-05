@@ -19,6 +19,10 @@ BossTracker is made for players who want cleaner timing information for interrup
 
 BossTracker improves with evidence. The first pull of a boss may show little or nothing. Once the addon has seen an ability repeat or has enough useful timing evidence, timers can appear during the fight and on later pulls.
 
+BossTracker can also use boss-applied aura changes as phase hints. For example, a boss self-buff or a boss-applied player debuff can become the phase context for abilities that only happen while that aura state is active.
+
+If an expected ability does not happen in its learned timing window, BossTracker briefly marks that bar as overdue and then removes it from the active list until the ability is actually observed again. This keeps stale predictions from pushing more useful timers down while preserving diagnostic data for later model improvements.
+
 ## Installation
 
 1. Download the release ZIP.
@@ -56,8 +60,8 @@ The configuration lets you:
 - Search a selected boss's abilities.
 - Toggle whether each ability is shown in the timer window.
 - Set an ability to be highlighted.
-- Enable a 5-second personal warning.
-- Enable a 5-second raid warning if you are allowed to send one.
+- Enable a 3-second personal warning.
+- Enable a 3-second raid warning if you are allowed to send one.
 - Choose an optional warning sound for each ability.
 
 Raid warning falls back to a personal warning if raid warning is not available.
@@ -86,7 +90,7 @@ Most players only need `/bt config`, `/bt preview`, and `/bt panic`.
 
 - Fight bosses normally. You do not need to target the boss all the time.
 - If a boss is wiped at low health, the pull can still help BossTracker learn.
-- If a timer looks wrong after a patch or unusual pull, let the addon observe more attempts.
+- If a timer looks wrong after a patch or unusual pull, let the addon observe more attempts. Delayed predictions are kept as bounded diagnostics, not synced learned rules.
 - Use `/bt sync target` or `/bt sync group` to exchange completed encounter evidence with another BossTracker user. Sync does not copy their calculated timer settings.
 - If bad data was clearly learned from trash or a broken run, delete that boss in `/bt config`.
 - If everything looks contaminated, use `/bt clearlearned` and start fresh.

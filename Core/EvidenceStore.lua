@@ -30,6 +30,10 @@ local EVENT_TO_CODE = {
 	SPELL_SUMMON = "SM",
 }
 
+local EVENT_FLAG_SELF_TARGET = 1
+local EVENT_FLAG_ASSOCIATED = 2
+local EVENT_FLAG_DEST_PLAYER = 4
+
 local CODE_TO_EVENT = {}
 for eventType, code in pairs(EVENT_TO_CODE) do
 	if code == "DM" then
@@ -39,6 +43,11 @@ for eventType, code in pairs(EVENT_TO_CODE) do
 	else
 		CODE_TO_EVENT[code] = eventType
 	end
+end
+
+local function eventFlagSet(flags, flag)
+	flags = tonumber(flags) or 0
+	return flags % (flag * 2) >= flag
 end
 
 local function countKeys(tbl)
@@ -211,6 +220,8 @@ local function ensureDraft(pull)
 		spells = {},
 		spellByKey = {},
 		spellCount = 0,
+		playerTargetByKey = {},
+		playerTargetCount = 0,
 		events = {},
 		eventCounts = {},
 		truncated = false,
@@ -373,6 +384,26 @@ local function destActor(draft, record, source, t10Value)
 	return nil
 end
 
+local function anonymousPlayerTargetId(draft, record)
+	if not draft
+		or not record
+		or not record.destFlags
+		or not Util.flagSet(record.destFlags, C.FLAG_PLAYER) then
+		return nil
+	end
+	local targetKey = record.destGUID or record.destName
+	if not targetKey then
+		return nil
+	end
+	local targetId = draft.playerTargetByKey[targetKey]
+	if not targetId then
+		draft.playerTargetCount = (draft.playerTargetCount or 0) + 1
+		targetId = draft.playerTargetCount
+		draft.playerTargetByKey[targetKey] = targetId
+	end
+	return targetId
+end
+
 function EvidenceStore.recordSpellEvent(pull, record)
 	if suspended or not addon.db or not pull or type(record) ~= "table" or not record.spellKey then
 		return
@@ -406,11 +437,15 @@ function EvidenceStore.recordSpellEvent(pull, record)
 
 	local flags = 0
 	if dest and dest.id == source.id then
-		flags = flags + 1
+		flags = flags + EVENT_FLAG_SELF_TARGET
 	end
 	if record.associatedWithBoss == true or owner.id ~= source.id then
-		flags = flags + 2
+		flags = flags + EVENT_FLAG_ASSOCIATED
 	end
+	if record.destFlags and Util.flagSet(record.destFlags, C.FLAG_PLAYER) then
+		flags = flags + EVENT_FLAG_DEST_PLAYER
+	end
+	local playerTargetId = anonymousPlayerTargetId(draft, record)
 
 	draft.events[#draft.events + 1] = {
 		relativeT10,
@@ -421,6 +456,7 @@ function EvidenceStore.recordSpellEvent(pull, record)
 		spell.id,
 		recordHp10,
 		flags,
+		playerTargetId,
 	}
 	draft.eventCounts[code] = (draft.eventCounts[code] or 0) + 1
 end
@@ -995,8 +1031,12 @@ local function replayKill(instance, boss, kill, pullId)
 		if ownerContext and source and spell then
 			local sourceGuid = source.key or source.guidHash
 			local destGuid = dest and (dest.key or dest.guidHash) or nil
-			if event[8] and event[8] % 2 == 1 then
+			local eventFlags = tonumber(event[8]) or 0
+			local destIsPlayer = eventFlagSet(eventFlags, EVENT_FLAG_DEST_PLAYER)
+			if eventFlagSet(eventFlags, EVENT_FLAG_SELF_TARGET) then
 				destGuid = sourceGuid
+			elseif destIsPlayer then
+				destGuid = event[9] and ("player:" .. tostring(event[9])) or "player"
 			end
 			addon.Learning.AbilityLearner.observe({
 				t = (event[1] or 0) / 10,
@@ -1010,7 +1050,8 @@ local function replayKill(instance, boss, kill, pullId)
 				sourceBossKey = source.modelKey,
 				destGUID = destGuid,
 				destName = dest and dest.name or nil,
-				destIsHostileNpc = dest ~= nil,
+				destFlags = destIsPlayer and C.FLAG_PLAYER or nil,
+				destIsHostileNpc = dest ~= nil and not destIsPlayer,
 				spellId = spell.spellIds and spell.spellIds[1] or nil,
 				spellName = spell.name,
 				spellKey = spell.displayKey or spell.key,

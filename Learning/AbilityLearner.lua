@@ -17,6 +17,7 @@ local REQUIRED_MODULES = {
 	{ path = { "Learning", "OccurrenceBuilder" }, method = "observe" },
 	{ path = { "Learning", "EncounterModel" }, method = "ensurePull" },
 	{ path = { "Learning", "PhaseSegmenter" }, method = "assignSegment" },
+	{ path = { "Learning", "PhaseSegmenter" }, method = "observeAura" },
 	{ path = { "Learning", "RuleLearner" }, method = "noteActivation" },
 	{ path = { "Learning", "RelevanceScorer" }, method = "applyRoutineCandidate" },
 	{ path = { "Core", "ModelStore" }, method = "promoteComponent" },
@@ -111,12 +112,13 @@ function AbilityLearner.observe(record, pull)
 	bossState.lastSeenAt = record.t or Util.now()
 	bossState.observedHpPct = record.hpPct or bossState.observedHpPct
 	local pullAbility = addon.Learning.RuleLearner.noteEvent(bossState, record)
+	local auraSegment = addon.Learning.PhaseSegmenter.observeAura(bossState, record)
 
 	local activation, activationReason = addon.Learning.OccurrenceBuilder.observe(record)
 	local acceptedActivation = false
 	if activation then
 		acceptedActivation = true
-		local segment = addon.Learning.PhaseSegmenter.assignSegment(bossState, activation)
+		local segment = addon.Learning.PhaseSegmenter.assignSegment(bossState, activation, auraSegment)
 		pullAbility = addon.Learning.RuleLearner.noteActivation(bossState, activation, segment) or pullAbility
 	elseif record.hpPct then
 		bossState.lastHpPct = record.hpPct

@@ -297,6 +297,7 @@ function EncounterModel.ensureBossState(pullState, record, pull)
 			actorKey = actorKey,
 			bossKey = bossKey,
 			bossName = bossName,
+			guid = context and context.guid or record.sourceGUID,
 			startedAtSession = context and context.startedAtSession or record.bossStartedAtSession or record.t or pullState.startedAtSession,
 			firstSeenAt = record.t,
 			lastSeenAt = record.t,
@@ -314,6 +315,7 @@ function EncounterModel.ensureBossState(pullState, record, pull)
 
 	bossState.bossKey = bossKey or bossState.bossKey
 	bossState.bossName = bossName or bossState.bossName
+	bossState.guid = bossState.guid or context and context.guid or record.sourceGUID
 	bossState.lastSeenAt = record.t or bossState.lastSeenAt
 	bossState.observedHpPct = record.hpPct or context and context.lastHpPct or bossState.observedHpPct
 	copyContextEvidence(bossState, context, false)

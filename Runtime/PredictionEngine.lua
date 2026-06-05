@@ -11,6 +11,7 @@ addon.Runtime.PredictionEngine = PredictionEngine
 
 local predictions = {}
 local lastUpdateAt = 0
+local delayedTimers = {}
 
 local function clearPredictions()
 	for index = #predictions, 1, -1 do
@@ -153,6 +154,125 @@ local function timerIdentity(context, ability)
 		.. tostring(ability and (ability.spellKey or ability.key) or "unknown")
 end
 
+local function timerStateKey(context, ability, pullId)
+	return tostring(pullId or "no_pull") .. "|" .. timerIdentity(context, ability)
+end
+
+local function clearDelayedTimers()
+	for key in pairs(delayedTimers) do
+		delayedTimers[key] = nil
+	end
+end
+
+local function pruneDelayedTimersForPull(pullId)
+	for key, state in pairs(delayedTimers) do
+		if state.pullId ~= pullId then
+			delayedTimers[key] = nil
+		end
+	end
+end
+
+local function logDelayEvent(kind, state, timer, context, now, fields)
+	if not addon.Core.Logger or not addon.Core.Logger.event then
+		return
+	end
+	fields = fields or {}
+	addon.Core.Logger.event({
+		kind = kind,
+		pullId = fields.pullId or state and state.pullId or timer and timer.pullId,
+		bossKey = fields.bossKey or state and state.bossKey or context and context.modelKey,
+		bossName = fields.bossName or state and state.bossName or context and context.name,
+		spellKey = fields.spellKey or state and state.spellKey or timer and timer.spellKey,
+		spellName = fields.spellName or state and state.spellName or timer and timer.spellName,
+		ruleType = fields.ruleType or state and state.ruleType or timer and timer.predictionRuleType,
+		segmentKey = fields.segmentKey or state and state.segmentKey or timer and timer.segmentKey,
+		anchorAt = fields.anchorAt or state and state.anchorAt or timer and timer.anchorAt,
+		expectedAt = fields.expectedAt or state and state.expectedAt or timer and timer.expectedAt,
+		windowEndAt = fields.windowEndAt or state and state.windowEndAt or timer and timer.windowEndAt,
+		hiddenAt = fields.hiddenAt or state and state.hiddenAt,
+		observedAt = fields.observedAt,
+		delaySeconds = fields.delaySeconds,
+		hp = fields.hp or context and context.lastHpPct,
+		t = now,
+	})
+end
+
+local function resolveDelayedTimerAt(context, ability, pullId, observedAt, now)
+	if not observedAt then
+		return
+	end
+
+	local key = timerStateKey(context, ability, pullId)
+	local state = delayedTimers[key]
+	if not state or not state.anchorAt or observedAt <= state.anchorAt + 0.01 then
+		return
+	end
+
+	logDelayEvent("prediction_timer_delay_resolved", state, nil, context, now, {
+		observedAt = observedAt,
+		delaySeconds = state.windowEndAt and math.max(0, observedAt - state.windowEndAt) or nil,
+	})
+	delayedTimers[key] = nil
+end
+
+local function ensureDelayState(timer, context, ability)
+	local key = timerStateKey(context, ability, timer.pullId)
+	local state = delayedTimers[key]
+	if not state or state.anchorAt ~= timer.anchorAt then
+		state = {
+			pullId = timer.pullId,
+			bossKey = context and context.modelKey,
+			bossName = context and context.name,
+			spellKey = timer.spellKey,
+			spellName = timer.spellName,
+			ruleType = timer.predictionRuleType,
+			segmentKey = timer.segmentKey,
+			anchorAt = timer.anchorAt,
+			expectedAt = timer.expectedAt,
+			windowEndAt = timer.windowEndAt,
+		}
+		delayedTimers[key] = state
+	end
+	return state
+end
+
+local function applyDelayState(timer, context, ability, now)
+	if timer.mode ~= "time" or not timer.nextAt or not timer.anchorAt or not timer.windowEndAt then
+		return true
+	end
+
+	local windowEndAt = timer.windowEndAt
+	if now <= windowEndAt then
+		timer.status = timer.remaining and timer.remaining <= 0 and "due" or "countdown"
+		return true
+	end
+
+	local hiddenAfter = windowEndAt + (C.TIMER_DELAYED_VISIBLE_SECONDS or 8)
+	local state = ensureDelayState(timer, context, ability)
+	if not state.delayedAt then
+		state.delayedAt = now
+		logDelayEvent("prediction_timer_delayed", state, timer, context, now, {
+			delaySeconds = math.max(0, now - windowEndAt),
+		})
+	end
+
+	if now <= hiddenAfter then
+		timer.status = "delayed"
+		timer.delayedBy = math.max(0, now - windowEndAt)
+		timer.remaining = 0
+		return true
+	end
+
+	if not state.hiddenAt then
+		state.hiddenAt = now
+		logDelayEvent("prediction_timer_delay_hidden", state, timer, context, now, {
+			hiddenAt = now,
+			delaySeconds = math.max(0, now - windowEndAt),
+		})
+	end
+	return false
+end
+
 local function timerPriority(timer)
 	local priority = 0
 	if timer.seenThisPull then
@@ -177,9 +297,6 @@ end
 local function addTimer(ability, pullAbility, context, nextAt, mode, scheduledKeys)
 	local now = Util.now()
 	local remaining = nextAt and (nextAt - now) or nil
-	if remaining and remaining < -8 then
-		return
-	end
 
 	local duration = ability.minInterval
 		or ability.minFirstOffset
@@ -204,6 +321,13 @@ local function addTimer(ability, pullAbility, context, nextAt, mode, scheduledKe
 		nextAt = nextAt,
 		remaining = remaining,
 		duration = duration,
+		pullId = ability.predictionPullId,
+		anchorAt = ability.predictionAnchorAt,
+		expectedAt = ability.predictionExpectedAt or nextAt,
+		windowEndAt = ability.predictionWindowEndAt or nextAt,
+		status = remaining and remaining <= 0 and "due" or "countdown",
+		predictionRuleType = ability.predictionRuleType,
+		segmentKey = ability.predictionSegmentKey,
 		provisional = ability.provisional == true,
 		encounterAssociated = ability.encounterAssociated == true,
 		sourceName = ability.associatedSourceName,
@@ -212,6 +336,11 @@ local function addTimer(ability, pullAbility, context, nextAt, mode, scheduledKe
 		hpPct = ability.avgHpPct,
 		bossName = context and context.name,
 	}
+
+	resolveDelayedTimerAt(context, ability, timer.pullId, timer.anchorAt, now)
+	if not applyDelayState(timer, context, ability, now) then
+		return
+	end
 
 	if scheduledKeys then
 		local identity = timerIdentity(context, ability)
@@ -283,6 +412,8 @@ local function liveTimeAbility(pullAbility)
 		classification = "time_interval",
 		confidence = math.min(0.82, 0.25 + pullAbility.intervalSamples * 0.12),
 		minInterval = pullAbility.minInterval,
+		maxInterval = pullAbility.maxInterval,
+		spellKey = pullAbility.spellKey,
 		avgHpPct = pullAbility.avgHpPct,
 		encounterAssociated = pullAbility.encounterAssociated == true,
 		associatedSourceName = pullAbility.associatedSourceName,
@@ -290,12 +421,27 @@ local function liveTimeAbility(pullAbility)
 	}
 end
 
-local function segmentSeen(pullAbility, segmentKey)
+local function markPredictionWindow(model, bossState, anchorAt, expectedAt, windowEndAt, ruleType, segmentKey)
+	model.predictionPullId = bossState and bossState.pullId
+	model.predictionAnchorAt = anchorAt
+	model.predictionExpectedAt = expectedAt
+	model.predictionWindowEndAt = windowEndAt or expectedAt
+	model.predictionRuleType = ruleType
+	model.predictionSegmentKey = segmentKey
+end
+
+local function segmentSeen(pullAbility, segmentKey, activeSegment)
 	if not pullAbility or not segmentKey then
 		return false
 	end
 	local segment = pullAbility.segmentStats and pullAbility.segmentStats[segmentKey] or nil
-	return segment and (segment.activationCount or 0) > 0
+	if not segment or (segment.activationCount or 0) <= 0 then
+		return false
+	end
+	if activeSegment and activeSegment.startedAt and segment.lastSegmentStartedAt then
+		return math.abs(segment.lastSegmentStartedAt - activeSegment.startedAt) <= 0.01
+	end
+	return true
 end
 
 local function bestDisplayRule(ability, forced)
@@ -360,6 +506,7 @@ local function addLearnedAbilityPrediction(context, bossState, ability, pullAbil
 	if not model then
 		return
 	end
+	resolveDelayedTimerAt(context, model, bossState and bossState.pullId, pullAbility and pullAbility.lastActivationAt, now)
 
 	local rule = model.rule
 	local nextAt = nil
@@ -369,14 +516,39 @@ local function addLearnedAbilityPrediction(context, bossState, ability, pullAbil
 		local interval = rule.minInterval or model.minInterval
 		if interval then
 			if pullAbility and pullAbility.lastActivationAt then
-				nextAt = pullAbility.lastActivationAt + interval
+				local anchorAt = pullAbility.lastActivationAt
+				nextAt = anchorAt + interval
+				markPredictionWindow(
+					model,
+					bossState,
+					anchorAt,
+					nextAt,
+					anchorAt + (rule.maxInterval or model.maxInterval or interval),
+					rule.type
+				)
 			elseif model.minFirstOffset and context.startedAtSession then
 				nextAt = context.startedAtSession + model.minFirstOffset
+				markPredictionWindow(
+					model,
+					bossState,
+					context.startedAtSession,
+					nextAt,
+					context.startedAtSession + (model.maxFirstOffset or model.minFirstOffset),
+					"first_offset"
+				)
 			end
 		end
 	elseif rule.type == "first_offset" then
 		if (not pullAbility or (pullAbility.activationCount or 0) == 0) and rule.minFirstOffset and context.startedAtSession then
 			nextAt = context.startedAtSession + rule.minFirstOffset
+			markPredictionWindow(
+				model,
+				bossState,
+				context.startedAtSession,
+				nextAt,
+				context.startedAtSession + (rule.maxFirstOffset or rule.minFirstOffset),
+				rule.type
+			)
 		end
 	elseif rule.type == "hp_gate" then
 		if not pullAbility or (pullAbility.activationCount or 0) == 0 then
@@ -389,15 +561,24 @@ local function addLearnedAbilityPrediction(context, bossState, ability, pullAbil
 		local segmentKey = bossState and bossState.currentSegmentKey
 		local activeSegment = bossState and bossState.segments and bossState.segments[segmentKey] or nil
 		local learnedSegment = segmentKey and model.segmentStats and model.segmentStats[segmentKey] or nil
-		if activeSegment and learnedSegment and not segmentSeen(pullAbility, segmentKey) then
+		if activeSegment and learnedSegment and not segmentSeen(pullAbility, segmentKey, activeSegment) then
 			local offset = learnedSegment.avgPhaseOffset or rule.avgPhaseOffset
 			if offset then
 				nextAt = activeSegment.startedAt + offset
+				markPredictionWindow(
+					model,
+					bossState,
+					activeSegment.startedAt,
+					nextAt,
+					activeSegment.startedAt + (learnedSegment.maxPhaseOffset or offset),
+					rule.type,
+					segmentKey
+				)
 			end
 		end
 	end
 
-	if nextAt and nextAt >= now - 8 then
+	if nextAt then
 		addTimer(model, pullAbility, context, nextAt, mode, scheduledKeys)
 	end
 end
@@ -450,9 +631,15 @@ local function addLiveBossPredictions(context, bossState, minConfidence, now, pu
 		local ability = liveTimeAbility(pullAbility)
 		if ability and ability.confidence >= minConfidence and pullAbility.lastActivationAt then
 			local nextAt = pullAbility.lastActivationAt + ability.minInterval
-			if nextAt >= now - 8 then
-				addTimer(ability, pullAbility, context, nextAt, "time", scheduledKeys)
-			end
+			markPredictionWindow(
+				ability,
+				bossState,
+				pullAbility.lastActivationAt,
+				nextAt,
+				pullAbility.lastActivationAt + (ability.maxInterval or ability.minInterval),
+				"time_interval"
+			)
+			addTimer(ability, pullAbility, context, nextAt, "time", scheduledKeys)
 		end
 	end
 end
@@ -469,8 +656,10 @@ local function buildPredictions()
 
 	local pull = addon.Capture.EncounterState.getCurrent()
 	if not pull or not pull.zone then
+		clearDelayedTimers()
 		return predictions
 	end
+	pruneDelayedTimersForPull(pull.id)
 
 	local contexts = addon.Capture.EncounterState.getActiveBossContexts()
 	if not contexts then
@@ -534,10 +723,12 @@ end
 
 function PredictionEngine.start()
 	clearPredictions()
+	clearDelayedTimers()
 	lastUpdateAt = 0
 end
 
 function PredictionEngine.reset()
 	clearPredictions()
+	clearDelayedTimers()
 	lastUpdateAt = 0
 end

@@ -2,7 +2,7 @@
 
 This document captures the agreed design and current implementation contract for
 persistent encounter evidence and player-to-player synchronization. Version
-1.7.1 includes the local evidence store, the shared packed `EvidenceCodec`,
+1.8.0 includes the local evidence store, the shared packed `EvidenceCodec`,
 completed-segment commit path, evidence rebuild path, interpretation-engine rebuild
 detection, difficulty-aware ability availability, and accepted player-to-player
 sync transport.
@@ -26,9 +26,9 @@ calculation engine produced the current final timer models. When
 `rebuildRequired`, the addon rebuilds final models from permanent evidence after
 startup modules are ready.
 
-Diagnostics under `BossTrackerDB.debug` may contain pull events and HP samples,
-but those records are debug-only, bounded for manual inspection, and must not
-become the sync or rebuild source.
+Diagnostics under `BossTrackerDB.debug` may contain pull events, HP samples,
+and prediction-delay records, but those records are debug-only, bounded for
+manual inspection, and must not become the sync or rebuild source.
 
 The current learning path is:
 
@@ -157,7 +157,7 @@ instances = {
           [killHash] = {
             h = "content-hash",
             t = 1234567890,
-            v = "1.7.1",
+            v = "1.8.0",
             p = "K|...~A|...~S|...~V|...~T|...",
           },
         },
@@ -235,9 +235,16 @@ spells = {
 Events are compact tuples, not raw combat-log tables:
 
 ```lua
--- t10, eventCode, ownerActorId, sourceActorId, destActorId, spellDictId, hp10, flags
-{ 240, "CS", 1, 1, 0, 1, 720, 0 }
+-- t10, eventCode, ownerActorId, sourceActorId, destActorId, spellDictId, hp10, flags, anonymousPlayerTargetId
+{ 240, "CS", 1, 1, 0, 1, 720, 0, nil }
 ```
+
+Event flags are additive: `1` means self-target, `2` means encounter-associated
+source, and `4` means the destination was a player-controlled unit. The player
+target flag intentionally does not store player names or GUIDs; it only lets
+local rebuilds reproduce player-aura phase facts. When multiple player targets
+overlap, the optional anonymous player target id distinguishes only target
+slots inside one kill and is not stable across kills or players.
 
 Recommended event codes:
 
@@ -363,7 +370,8 @@ Each kill needs a deterministic `killHash` built from stable facts:
 - encounter actor model keys plus observed actor keys or GUID hashes
 - rounded duration
 - ordered ability event fingerprint for every stored event tuple, based on event
-  time, event code, actor model keys, observed SpellIDs, HP, and flags
+  time, event code, actor model keys, observed SpellIDs, HP, flags, and anonymous
+  player target slots
 - kill end reason
 
 The hash must not depend on local numeric actor or spell dictionary ordering.

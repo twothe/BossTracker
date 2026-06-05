@@ -131,6 +131,11 @@ local function ensureSegmentStats(ability, segment)
 			minInterval = nil,
 			maxInterval = nil,
 			avgInterval = nil,
+			phaseOffsetSamples = 0,
+			minPhaseOffset = nil,
+			maxPhaseOffset = nil,
+			avgPhaseOffset = nil,
+			phaseInstanceCount = 0,
 			observedGapSamples = 0,
 			minObservedGap = nil,
 			maxObservedGap = nil,
@@ -203,14 +208,31 @@ function RuleLearner.noteActivation(bossState, activation, segment)
 
 	local segmentStats = ensureSegmentStats(ability, segment)
 	local previousSegmentActivationAt = segmentStats.lastActivationAt
+	local segmentStartedAt = segment and segment.startedAt or nil
+	local newSegmentInstance = segmentStartedAt
+		and (
+			not segmentStats.lastSegmentStartedAt
+			or math.abs(segmentStats.lastSegmentStartedAt - segmentStartedAt) > 0.01
+		)
 	segmentStats.activationCount = segmentStats.activationCount + 1
 	segmentStats.lastActivationAt = activation.t
+	if newSegmentInstance then
+		segmentStats.phaseInstanceCount = (segmentStats.phaseInstanceCount or 0) + 1
+		local phaseOffset = activation.t - segmentStartedAt
+		segmentStats.avgPhaseOffset, segmentStats.phaseOffsetSamples = updateAverage(
+			segmentStats.avgPhaseOffset,
+			segmentStats.phaseOffsetSamples,
+			phaseOffset
+		)
+		updateMinMax(segmentStats, "minPhaseOffset", "maxPhaseOffset", phaseOffset)
+	end
+	segmentStats.lastSegmentStartedAt = segmentStartedAt or segmentStats.lastSegmentStartedAt
 	if not segmentStats.firstActivationAt then
 		segmentStats.firstActivationAt = activation.t
 		segmentStats.firstBossOffset = activation.t - (bossState.startedAtSession or activation.t)
 		segmentStats.firstPhaseOffset = activation.t - (segment and segment.startedAt or bossState.startedAtSession or activation.t)
 	end
-	if previousSegmentActivationAt then
+	if previousSegmentActivationAt and not newSegmentInstance then
 		local interval = activation.t - previousSegmentActivationAt
 		noteObservedGap(segmentStats, interval)
 		noteInterval(segmentStats, interval)
@@ -271,10 +293,17 @@ function RuleLearner.refreshRules(ability)
 	local phaseOffsetSampleCount = 0
 	local phaseOnce = true
 	for _, segment in pairs(ability.segmentStats or {}) do
-		if segment.key ~= "pull" and (segment.avgPhaseOffset or segment.firstPhaseOffset) then
-			phaseOffsetAverage, phaseOffsetSampleCount = updateAverage(phaseOffsetAverage, phaseOffsetSampleCount, segment.avgPhaseOffset or segment.firstPhaseOffset)
-			phaseSamples = phaseSamples + 1
-			if (segment.activationCount or 0) > (segment.seenCount or 1) then
+		local hasPhaseOffset = segment.avgPhaseOffset ~= nil or segment.firstPhaseOffset ~= nil
+		local segmentPhaseSamples = segment.phaseOffsetSamples or (hasPhaseOffset and 1 or 0)
+		if segment.key ~= "pull" and segmentPhaseSamples and segmentPhaseSamples > 0 then
+			phaseOffsetAverage, phaseOffsetSampleCount = mergeAverage(
+				phaseOffsetAverage,
+				phaseOffsetSampleCount,
+				segment.avgPhaseOffset or segment.firstPhaseOffset,
+				segmentPhaseSamples
+			)
+			phaseSamples = phaseSamples + segmentPhaseSamples
+			if (segment.activationCount or 0) > math.max(segmentPhaseSamples, segment.seenCount or 1) then
 				phaseOnce = false
 			end
 		end
@@ -408,17 +437,21 @@ function RuleLearner.mergePullAbility(learnedAbility, pullAbility)
 				seenCount = 0,
 				activationCount = 0,
 				intervalSamples = 0,
+				phaseOffsetSamples = 0,
 				observedGapSamples = 0,
 			}
 			learnedAbility.segmentStats[segmentKey] = targetSegment
 		end
-		targetSegment.seenCount = (targetSegment.seenCount or 0) + 1
+		local phaseInstanceCount = math.max(1, tonumber(pullSegment.phaseInstanceCount) or 0)
+		targetSegment.seenCount = (targetSegment.seenCount or 0) + phaseInstanceCount
 		targetSegment.activationCount = (targetSegment.activationCount or 0) + (pullSegment.activationCount or 0)
-		targetSegment.avgPhaseOffset, targetSegment.phaseOffsetSamples = updateAverage(
+		targetSegment.avgPhaseOffset, targetSegment.phaseOffsetSamples = mergeAverage(
 			targetSegment.avgPhaseOffset,
 			targetSegment.phaseOffsetSamples,
-			pullSegment.firstPhaseOffset
+			pullSegment.avgPhaseOffset or pullSegment.firstPhaseOffset,
+			pullSegment.phaseOffsetSamples or (pullSegment.firstPhaseOffset and 1 or 0)
 		)
+		mergeMinMax(targetSegment, "minPhaseOffset", "maxPhaseOffset", pullSegment, "minPhaseOffset", "maxPhaseOffset")
 		targetSegment.avgBossOffset, targetSegment.bossOffsetSamples = updateAverage(
 			targetSegment.avgBossOffset,
 			targetSegment.bossOffsetSamples,

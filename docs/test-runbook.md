@@ -23,11 +23,14 @@ BossTracker stores alpha diagnostics in `BossTrackerDB` because the addon cannot
 - If the group wipes or leaves combat while a qualified boss is still above low HP, observed ability timings may still update learned timer models. HP is logged as evidence, not used as a display gate.
 - After a wipe, the next pull may already show low-confidence timers for abilities that had at least one usable time estimate.
 - During a long first pull, a repeated boss ability may appear as a provisional timer as soon as the addon has measured a usable interval in that same fight.
+- Boss self-buffs and boss-applied player debuffs can create phase context. If an ability happens only while that aura state is active, later pulls should anchor the timer to the aura transition rather than only to pull start or HP.
+- If a learned timed ability misses its expected window, the bar should briefly show `Overdue`, then leave the active timer list until the next real activation restarts the timer from observed evidence.
 - Targeting a learned boss during unrelated trash combat should not open timers until that boss is actually engaged through combat-log activity, boss frames, or a matching unit that is affecting combat.
 - Cast-time abilities should use the observed recast interval, not the cast duration. If a spell visibly appears once but has separate cast, damage, or aura ids, the timer list should show one ability bar.
 - Channeled abilities should use activation-to-activation timing, not channel duration or tick spacing. A Whirlwind-style ability with a self aura and repeated damage ticks should count as one occurrence per activation.
 - HP-transition abilities should not become normal cooldowns only because the same spell appears at two different phase thresholds.
 - Repeated add-summon casts may be learned under the active boss when there is exactly one boss-frame owner. The debug log records `encounter_spell_associated`, and the timer may show the add source, for example `Lupine Horror: Summon Lupine Delusions`.
+- Delayed timer diagnostics are stored only in bounded debug events such as `prediction_timer_delayed`, `prediction_timer_delay_hidden`, and `prediction_timer_delay_resolved`. They are interpretation diagnostics over raw evidence, not permanent sync evidence.
 - Council and companion bosses may be learned only after the whole pull ends, because the addon needs the complete pull context to distinguish them from adds.
 - If the timer UI or warnings block play or behave badly, run `/bt panic`. Capture and debug recording continue.
 - If you want to restore the timer UI, run `/bt resume`.
