@@ -2,8 +2,8 @@
 
 This document captures the agreed design and current implementation contract for
 persistent encounter evidence and player-to-player synchronization. Version
-1.7.0 includes the local evidence store, the shared packed `EvidenceCodec`,
-kill-only commit path, evidence rebuild path, interpretation-engine rebuild
+1.7.1 includes the local evidence store, the shared packed `EvidenceCodec`,
+completed-segment commit path, evidence rebuild path, interpretation-engine rebuild
 detection, difficulty-aware ability availability, and accepted player-to-player
 sync transport.
 
@@ -16,8 +16,8 @@ rules, confidence, and suppression state. It is treated as a rebuildable cache,
 not as synchronization input.
 
 The persistent source of truth for rebuild and sync is
-`BossTrackerDB.evidence`. It stores compact per-kill evidence only for
-completed boss segments and can replay those kills through the local learning
+`BossTrackerDB.evidence`. It stores compact per-segment evidence only for
+completed boss segments and can replay those segments through the local learning
 pipeline.
 
 `BossTrackerDB.learnedMeta.interpretationEngineVersion` records which
@@ -136,8 +136,9 @@ BossTrackerDB.evidence = {
 }
 ```
 
-Permanent evidence lives under `instances` and contains only completed kill
-segments. Stored kills are packed records; callers must decode them through
+Permanent evidence lives under `instances` and contains only completed boss
+segments. Stored records are packed kill-block records for historical API
+compatibility; callers must decode them through
 `Core/EvidenceStore.lua` and `Core/EvidenceCodec.lua` instead of reading
 expanded event tables directly:
 
@@ -156,7 +157,7 @@ instances = {
           [killHash] = {
             h = "content-hash",
             t = 1234567890,
-            v = "1.7.0",
+            v = "1.7.1",
             p = "K|...~A|...~S|...~V|...~T|...",
           },
         },
@@ -256,11 +257,12 @@ unbounded time series.
 
 ## Permanent Commit Rules
 
-Only completed boss kill evidence enters `instances`.
+Only completed boss evidence enters `instances`.
 
 Commit to permanent evidence when:
 
-- The segment has a confirmed `unit_died` end, and
+- The segment has a confirmed `unit_died` end or a `low_hp_completion` fallback
+  end where the client saw the boss reach the completion HP threshold, and
 - The segment has boss identity evidence through boss frame, worldboss
   classification, council membership, or another future explicit completion
   signal, and
@@ -268,18 +270,18 @@ Commit to permanent evidence when:
 
 Do not commit permanently when:
 
-- The pull ends through wipe, reset, logout, idle, or out-of-combat without a
-  kill.
+- The pull ends through wipe, reset, logout, idle, or out-of-combat without
+  death or low-HP completion evidence.
 - The segment is a high-HP partial.
 - The source is raid fallback elite trash without boss-frame, worldboss, or
   council evidence.
 - Required identity or timing fields are missing.
 
-Council and multi-actor encounters need special handling. A group kill should
-be committed only when the group component is fully kill-confirmed or when a
-future encounter-end rule can prove completion. Individual killed actors may be
-retained as actor-level kill evidence, but group-level availability and timing
-must not be inferred from an incomplete group.
+Council and multi-actor encounters need special handling. A group component
+should be committed only when every member has death or low-HP completion
+evidence, or when a future encounter-end rule can prove completion. Individual
+completed actors may be retained as actor-level evidence, but group-level
+availability and timing must not be inferred from an incomplete group.
 
 ## Incomplete Store
 
@@ -293,7 +295,7 @@ Rules:
 - Never exported by default sync.
 - Never used to compute long-term ability `minDifficultyOrdinal`.
 - May support provisional timers when current runtime evidence agrees.
-- Replaced or neutralized by later completed kill evidence.
+- Replaced or neutralized by later completed evidence.
 
 This protects against wipe-only phase data. For example, if a new phase spell
 immediately kills the raid, that observation remains incomplete until a kill
@@ -305,7 +307,7 @@ shows the later phase context.
 
 The rebuild process should:
 
-1. Read all permanent kills.
+1. Read all permanent completion records.
 2. Convert compact evidence into synthetic pull records.
 3. Run the current learning modules or a pure learner equivalent over those
    records.
@@ -336,7 +338,7 @@ classes:
 
 The wire payload is schema-specific and compact:
 
-- one top-level header line plus one packed `P` block per completed kill.
+- one top-level header line plus one packed `P` block per completed record.
 - each `P` block uses the same packed kill string stored locally.
 - inside a kill block, actor and spell references use numeric IDs local to that
   block.
@@ -395,11 +397,11 @@ When caps are reached, drop the lowest-value records first:
 2. duplicate or near-duplicate kills
 3. oldest low-information kills for bosses with many newer kills
 
-Permanent kill evidence should be smaller than debug runs. The goal is enough
+Permanent completion evidence should be smaller than debug runs. The goal is enough
 facts to recalculate, not a full combat-log archive.
 
 The actor cap is intentionally above the first simple boss cases. The 2026-06-05
-simulator review found add-heavy completed kills with up to 45 actor records; the
+simulator review found add-heavy completed segments with up to 45 actor records; the
 current `C.MAX_EVIDENCE_ACTORS_PER_KILL` value of 64 keeps those kills in
 permanent evidence without removing the hard cap.
 
@@ -424,10 +426,10 @@ permanent evidence without removing the hard cap.
   events.
 - Keep the capture path allocation-conscious.
 
-### Phase 3: Kill-Only Commit
+### Phase 3: Completed-Segment Commit
 
-- Commit only confirmed kill segments to permanent evidence.
-- Send non-kill attempts to `incomplete`.
+- Commit only confirmed completed segments to permanent evidence.
+- Send non-completion attempts to `incomplete`.
 - Add tests proving partial attempts do not enter permanent evidence.
 - Add tests proving raid fallback trash does not enter permanent evidence.
 
@@ -473,7 +475,7 @@ Minimum checks before considering the evidence layer complete:
   - council grouping is preserved when fully kill-confirmed.
   - encounter-owned add abilities retain source ownership.
   - interrupt pressure stays routine-suppressed.
-  - partial attempts do not enter permanent evidence.
+  - high-HP partial attempts do not enter permanent evidence.
   - permanent evidence remains bounded.
   - difficulty availability filters abilities correctly.
 
@@ -484,7 +486,7 @@ Minimum checks before considering the evidence layer complete:
   timing by difficulty if evidence proves this is needed.
 - Some encounters end through scripted roleplay instead of normal `UNIT_DIED`.
   Those need explicit completion evidence before they can enter permanent
-  kill evidence.
+  evidence.
 - Councils with staggered deaths need careful group completion handling. The
   first version should be conservative and avoid group-level permanent commits
   unless completion is clear.

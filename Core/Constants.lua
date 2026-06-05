@@ -5,11 +5,15 @@ local addon = _G.BossTracker
 local C = {}
 addon.Core.Constants = C
 
-C.VERSION = "1.7.0"
+C.VERSION = "1.7.1"
 C.SCHEMA_VERSION = 7
 C.INTERPRETATION_ENGINE_VERSION = 2
 C.LEARNED_BACKUP_SCHEMA_VERSION = 1
 C.EVIDENCE_SCHEMA_VERSION = 2
+C.EVIDENCE_COMPLETION_REASONS = {
+	unit_died = true,
+	low_hp_completion = true,
+}
 
 C.DEFAULT_CONFIG = {
 	enabled = true,

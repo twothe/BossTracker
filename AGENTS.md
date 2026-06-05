@@ -9,9 +9,9 @@
 - Keep alpha diagnostics bounded in SavedVariables. Every debug collection must have a hard cap and must remain useful after a manual dungeon or raid test followed by `/reload`.
 - Treat player combat as a coarse capture window only. Boss learning and timer state must be scoped to per-source boss contexts so long trash combat, late boss pulls, and simultaneous bosses do not collapse into one encounter.
 - Keep capture broader than durable learning. Persist raw context summaries for diagnosis, but promote only qualified finished boss contexts into timer models so repeated trash and adds do not pollute the learned database.
-- Keep permanent evidence stricter than learned runtime state. Only confirmed kill segments belong in persistent rebuild/sync evidence; wipes, resets, high-HP partials, and ambiguous attempts must stay in the bounded incomplete store or diagnostics.
+- Keep permanent evidence stricter than learned runtime state. Only confirmed completed boss segments belong in persistent rebuild/sync evidence; valid completion is either `unit_died` or the `low_hp_completion` fallback for clients that miss death evidence. Wipes, resets, high-HP partials, and ambiguous attempts must stay in the bounded incomplete store or diagnostics.
 - Keep calculated final models tied to `C.INTERPRETATION_ENGINE_VERSION`. When interpretation logic changes, bump that version so `BossTrackerDB.learned` is rebuilt from permanent evidence; if no permanent evidence exists, stale calculated models must not be silently treated as current.
-- Sync only permanent completed-kill evidence after player approval. Imported sync data must merge into the normal evidence store and rebuild locally; never accept calculated rules, UI settings, warnings, character backups, diagnostics, or incomplete attempts from other players. Inbound transfers must be tied to an accepted/requested session, and duplicate detection must use locally recomputed content hashes rather than sender-provided identifiers.
+- Sync only permanent completed encounter evidence after player approval. Imported sync data must merge into the normal evidence store and rebuild locally; never accept calculated rules, UI settings, warnings, character backups, diagnostics, or incomplete attempts from other players. Inbound transfers must be tied to an accepted/requested session, and duplicate detection must use locally recomputed content hashes rather than sender-provided identifiers.
 - Treat Ascension instance difficulty as additive ability availability. Boss models are shared across difficulties; each learned ability records the lowest difficulty where kill evidence observed it, and higher difficulties may inherit lower-difficulty abilities.
 - Treat blank 5-player instance difficulty facts with `difficultyIndex=1`, `maxPlayers=5`, and non-dynamic state as normal difficulty. Do not infer higher Ascension tiers from blank raid difficulty indexes until live evidence proves the mapping.
 - Do not promote non-boss-frame/non-worldboss fallback contexts without death or low-HP confirmation. Long elite trash with many casts is still trash unless there is strong boss evidence.
@@ -82,7 +82,7 @@ Current architecture:
 4. PhaseSegmenter creates HP/gap-based segments.
 5. RuleLearner maintains competing prediction rules per ability.
 6. RelevanceScorer suppresses routine noise.
-7. EvidenceCodec packs and unpacks confirmed-kill evidence for SavedVariables and sync.
+7. EvidenceCodec packs and unpacks confirmed completed encounter evidence for SavedVariables and sync.
 8. EvidenceStore persists packed kill evidence and decodes it for local rebuilds.
 9. ModelStore persists phase-aware encounter models.
 10. Config keeps player overrides separate from learned model data.
@@ -94,6 +94,7 @@ Current architecture:
 - `README.md`: player-facing addon overview, installation, basic usage, commands, and troubleshooting.
 - `docs/design-notes.md`: architecture notes, learning boundaries, pattern references, and observed Ascension encounter behavior.
 - `docs/evidence-sync-plan.md`: implementation plan and current contract for packed persistent kill evidence, rebuildable learned models, difficulty-aware ability availability, and evidence sync transport.
+- `docs/evidence-retention-draft.md`: draft design notes for long-term permanent evidence retention, difficulty witness preservation, and bias-resistant eviction.
 - `docs/simulator-test-system.md`: target architecture, workflow, and invariants for the AzerothCore-based encounter simulator.
 - `docs/test-runbook.md`: manual alpha testing workflow and slash commands.
 - `tests/replay_scenarios.lua`: headless Lua replay tests for core learning and prediction scenarios.

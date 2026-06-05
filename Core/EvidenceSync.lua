@@ -482,7 +482,7 @@ local function showRequestPopup(request)
 		return false
 	end
 	StaticPopupDialogs.BOSSTRACKER_EVIDENCE_SYNC_REQUEST = {
-		text = "%s wants to exchange BossTracker kill evidence with you.\n\nTheir evidence kills: %s\n\nAccept and merge completed kills into both local evidence stores?",
+		text = "%s wants to exchange BossTracker completed encounter evidence with you.\n\nTheir evidence records: %s\n\nAccept and merge completed records into both local evidence stores?",
 		button1 = "Accept",
 		button2 = "Decline",
 		OnAccept = function(_, data)

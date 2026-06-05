@@ -87,7 +87,7 @@ Most players only need `/bt config`, `/bt preview`, and `/bt panic`.
 - Fight bosses normally. You do not need to target the boss all the time.
 - If a boss is wiped at low health, the pull can still help BossTracker learn.
 - If a timer looks wrong after a patch or unusual pull, let the addon observe more attempts.
-- Use `/bt sync target` or `/bt sync group` to exchange completed-kill evidence with another BossTracker user. Sync does not copy their calculated timer settings.
+- Use `/bt sync target` or `/bt sync group` to exchange completed encounter evidence with another BossTracker user. Sync does not copy their calculated timer settings.
 - If bad data was clearly learned from trash or a broken run, delete that boss in `/bt config`.
 - If everything looks contaminated, use `/bt clearlearned` and start fresh.
 

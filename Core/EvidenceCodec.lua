@@ -371,6 +371,12 @@ function EvidenceCodec.hashKill(instance, boss, kill)
 	)
 end
 
+local function isEvidenceCompletionReason(reason)
+	return type(reason) == "string"
+		and C.EVIDENCE_COMPLETION_REASONS
+		and C.EVIDENCE_COMPLETION_REASONS[reason] == true
+end
+
 function EvidenceCodec.encodeKillBlock(instance, boss, kill, forcedHash)
 	if type(instance) ~= "table" or type(boss) ~= "table" or type(kill) ~= "table" then
 		return nil, "missing kill context"
@@ -585,7 +591,8 @@ function EvidenceCodec.validDecodedKill(decoded)
 	if type(kill) ~= "table" or type(kill.hash) ~= "string" or kill.hash == "" then
 		return false
 	end
-	if kill.endReason ~= "unit_died" then
+	local endReason = kill.endReason or "unit_died"
+	if not isEvidenceCompletionReason(endReason) then
 		return false
 	end
 	if #(kill.actors or {}) == 0 or #(kill.spells or {}) == 0 or #(kill.events or {}) == 0 then
@@ -598,12 +605,24 @@ function EvidenceCodec.validDecodedKill(decoded)
 	end
 
 	local actorIds = {}
+	local hasLowHpCompletionActor = false
+	local hasBossIdentityActor = false
+	local lowHpThreshold10 = (tonumber(C.BOSS_COMPLETION_HP_THRESHOLD) or 5) * 10
 	for index = 1, #kill.actors do
 		local actor = kill.actors[index]
 		if type(actor) ~= "table" or tonumber(actor.id) == nil or type(actor.key) ~= "string" or actor.key == "" then
 			return false
 		end
 		actorIds[tonumber(actor.id)] = true
+		if actor.bossFrame == true or actor.class == "worldboss" then
+			hasBossIdentityActor = true
+		end
+		if tonumber(actor.endHp10) and tonumber(actor.endHp10) <= lowHpThreshold10 then
+			hasLowHpCompletionActor = true
+		end
+	end
+	if endReason == "low_hp_completion" and (not hasLowHpCompletionActor or not hasBossIdentityActor) then
+		return false
 	end
 	local spellIds = {}
 	for index = 1, #kill.spells do

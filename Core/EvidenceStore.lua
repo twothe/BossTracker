@@ -437,17 +437,71 @@ function EvidenceStore.recordContext(pull, context)
 	ensureActorFromContext(draft, context, relativeT10)
 end
 
-local function componentKilled(component)
-	for index = 1, #component do
-		local entry = component[index]
-		local bossState = entry and entry.bossState
-		local context = entry and entry.context
-		local endReason = context and context.endReason or bossState and bossState.endReason
-		if endReason ~= "unit_died" then
-			return false
+local function isEvidenceCompletionReason(reason)
+	return type(reason) == "string"
+		and C.EVIDENCE_COMPLETION_REASONS
+		and C.EVIDENCE_COMPLETION_REASONS[reason] == true
+end
+
+local function decisionHasReason(decision, reason)
+	if type(decision) ~= "table" or type(reason) ~= "string" then
+		return false
+	end
+	for index = 1, #(decision.reasons or {}) do
+		if decision.reasons[index] == reason then
+			return true
 		end
 	end
-	return #component > 0
+	local reasonText = decision.reasonText
+	if type(reasonText) ~= "string" or reasonText == "" then
+		return false
+	end
+	return string.find("," .. reasonText .. ",", "," .. reason .. ",", 1, true) ~= nil
+end
+
+local function decisionHasBossIdentityEvidence(decision)
+	return type(decision) == "table"
+		and (
+			decision.bossUnitSignal == true
+			or decision.councilSignal == true
+			or decisionHasReason(decision, "worldboss_classification")
+			or decisionHasReason(decision, "boss_unit_frame")
+			or decisionHasReason(decision, "seven_rel_council")
+		)
+end
+
+local function entryCompletionReason(entry)
+	local bossState = entry and entry.bossState
+	local context = entry and entry.context
+	local endReason = context and context.endReason or bossState and bossState.endReason
+	if endReason == "unit_died" then
+		return endReason
+	end
+	local decision = entry and entry.decision
+	local endHpPct = tonumber(decision and decision.endHpPct)
+	local lowHpCompletion = decisionHasReason(decision, "low_hp_completion")
+		or (endHpPct and endHpPct <= C.BOSS_COMPLETION_HP_THRESHOLD)
+	if lowHpCompletion and decisionHasBossIdentityEvidence(decision) then
+		return "low_hp_completion"
+	end
+	return nil
+end
+
+local function componentCompletionReason(component)
+	if type(component) ~= "table" then
+		return nil
+	end
+	local completionReason = "unit_died"
+	for index = 1, #component do
+		local memberReason = entryCompletionReason(component[index])
+		if not memberReason then
+			return nil
+		end
+		if memberReason ~= "unit_died" then
+			completionReason = memberReason
+		end
+	end
+	return #component > 0 and completionReason or nil
 end
 
 local function componentActorIds(draft, component)
@@ -591,7 +645,8 @@ end
 
 local function commitComponent(draft, component)
 	local evidence = store()
-	if not evidence or not Codec or not Codec.encodeStoredKill or draft.truncated or not componentKilled(component) then
+	local completionReason = componentCompletionReason(component or {})
+	if not evidence or not Codec or not Codec.encodeStoredKill or draft.truncated or not completionReason then
 		return false
 	end
 
@@ -609,7 +664,7 @@ local function commitComponent(draft, component)
 		actors,
 		spells,
 		draft.duration10,
-		"unit_died"
+		completionReason
 	)
 	if not hash then
 		return false
@@ -625,7 +680,7 @@ local function commitComponent(draft, component)
 		capturedAt = Util.wallTime(),
 		addonVersion = C.VERSION,
 		duration10 = draft.duration10,
-		endReason = "unit_died",
+		endReason = completionReason,
 		zone = copyTable(draft.zone),
 		difficulty = copyTable(draft.difficulty),
 		actors = actors,
@@ -879,7 +934,7 @@ local function spellById(kill)
 	return spells
 end
 
-local function contextForActor(actor)
+local function contextForActor(actor, endReason)
 	if type(actor) ~= "table" then
 		return nil
 	end
@@ -890,7 +945,7 @@ local function contextForActor(actor)
 		startedAtSession = (tonumber(actor.first10) or 0) / 10,
 		endedAtSession = (tonumber(actor.last10) or 0) / 10,
 		duration = ((tonumber(actor.last10) or 0) - (tonumber(actor.first10) or 0)) / 10,
-		endReason = "unit_died",
+		endReason = endReason or "unit_died",
 		unitClassification = actor.class,
 		lastUnitSource = actor.bossFrame and "boss_unit" or actor.targetSeen and "target" or actor.focusSeen and "focus" or nil,
 		lastUnitToken = actor.bossUnitToken or actor.bossFrame and "boss1" or actor.targetSeen and "target" or actor.focusSeen and "focus" or nil,
@@ -907,18 +962,19 @@ local function replayKill(instance, boss, kill, pullId)
 	local actors = actorById(kill)
 	local spells = spellById(kill)
 	local zone = zoneForKill(instance, kill)
+	local endReason = isEvidenceCompletionReason(kill.endReason) and kill.endReason or "unit_died"
 	local pull = {
 		id = pullId,
 		startedAtSession = 0,
 		endedAtSession = (tonumber(kill.duration10) or 0) / 10,
 		duration = (tonumber(kill.duration10) or 0) / 10,
-		endReason = "unit_died",
+		endReason = endReason,
 		zone = zone,
 		bossContexts = {},
 		activeBossContexts = {},
 	}
 	for _, actor in pairs(actors) do
-		local context = contextForActor(actor)
+		local context = contextForActor(actor, endReason)
 		if context and context.actorKey then
 			pull.bossContexts[context.actorKey] = context
 		end
@@ -975,7 +1031,7 @@ local function replayKill(instance, boss, kill, pullId)
 	if not pullState then
 		return 0
 	end
-	local _, components = addon.Learning.EncounterModel.scorePull(pullState, pull, "unit_died")
+	local _, components = addon.Learning.EncounterModel.scorePull(pullState, pull, endReason)
 	local promoted = 0
 	for index = 1, #components do
 		if addon.Core.ModelStore.promoteComponent(pullState, components[index]) then

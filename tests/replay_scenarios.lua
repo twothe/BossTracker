@@ -1315,6 +1315,7 @@ local function scenarioDisplaylessFallbackEliteTrashSuppressed()
 	Harness.assertTrue(model ~= nil, "Confirmed low-HP fallback trash may be retained for diagnostics")
 	Harness.assertTrue(model.autoSuppressed == true, "Displayless fallback trash must not remain an active encounter model")
 	Harness.assertTrue(model.suppressionReason == "fallback_context_without_displayable_abilities", "Displayless fallback suppression should explain the learned model state")
+	Harness.assertTrue(addon.Core.EvidenceStore.countPermanentKills() == 0, "Low-HP fallback trash without boss identity must not enter permanent evidence")
 end
 
 local function scenarioRaidEliteTrashRequiresBossSignal()
@@ -1524,7 +1525,7 @@ local function firstDecodedEvidenceKill()
 	return nil, nil
 end
 
-local function scenarioEvidenceStoresOnlyCompletedKills()
+local function scenarioEvidenceStoresCompletedBossEvidence()
 	Harness.resetState("Replay Evidence Kill")
 	local boss = "Evidence Keeper"
 	local guid = Harness.makeGuid(boss, 900)
@@ -1532,8 +1533,8 @@ local function scenarioEvidenceStoresOnlyCompletedKills()
 	Harness.emitSpell({ t = 20, sourceName = boss, sourceGUID = guid, spellName = "Measured Strike", hp = 70 })
 	Harness.finishPull(42, "unit_died")
 
-	Harness.assertTrue(addon.Core.EvidenceStore.countPermanentKills() == 1, "Completed boss kills should enter permanent evidence")
-	Harness.assertTrue(addon.Core.EvidenceStore.countIncomplete() == 0, "Completed boss kills should not enter incomplete evidence")
+	Harness.assertTrue(addon.Core.EvidenceStore.countPermanentKills() == 1, "UNIT_DIED completed bosses should enter permanent evidence")
+	Harness.assertTrue(addon.Core.EvidenceStore.countIncomplete() == 0, "UNIT_DIED completed bosses should not enter incomplete evidence")
 	local decoded, storedKill = firstDecodedEvidenceKill()
 	Harness.assertTrue(type(storedKill) == "table" and type(storedKill.p) == "string", "Permanent evidence kills should be stored as packed strings")
 	Harness.assertTrue(storedKill.events == nil and storedKill.actors == nil and storedKill.spells == nil, "Packed stored kills should not retain expanded event tables")
@@ -1546,6 +1547,29 @@ local function scenarioEvidenceStoresOnlyCompletedKills()
 
 	Harness.assertTrue(addon.Core.EvidenceStore.countPermanentKills() == 0, "Incomplete attempts must not enter permanent evidence")
 	Harness.assertTrue(addon.Core.EvidenceStore.countIncomplete() == 1, "Incomplete attempts should remain bounded separately")
+
+	Harness.resetState("Replay Evidence Low HP Completion")
+	Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = guid, spellName = "Measured Strike", hp = 100 })
+	Harness.emitSpell({ t = 20, sourceName = boss, sourceGUID = guid, spellName = "Measured Strike", hp = 3 })
+	Harness.finishPull(30, "out_of_combat")
+
+	Harness.assertTrue(addon.Core.EvidenceStore.countPermanentKills() == 1, "Low-HP completed bosses should enter permanent evidence")
+	Harness.assertTrue(addon.Core.EvidenceStore.countIncomplete() == 0, "Low-HP completed bosses should not remain incomplete")
+	decoded = firstDecodedEvidenceKill()
+	Harness.assertTrue(decoded.kill.endReason == "low_hp_completion", "Low-HP completion should be stored as the evidence completion reason")
+	Harness.assertTrue(addon.Core.EvidenceCodec.validDecodedKill(decoded) == true, "Low-HP completion evidence should pass import validation")
+	decoded.kill.actors[1].class = "elite"
+	decoded.kill.actors[1].bossFrame = nil
+	Harness.assertTrue(addon.Core.EvidenceCodec.validDecodedKill(decoded) == false, "Low-HP completion evidence without boss identity facts should be rejected")
+	decoded = firstDecodedEvidenceKill()
+	decoded.kill.actors[1].endHp10 = 700
+	Harness.assertTrue(addon.Core.EvidenceCodec.validDecodedKill(decoded) == false, "Low-HP completion evidence without low-HP actor facts should be rejected")
+
+	addon.db.learned = { zones = {} }
+	addon.Core.EvidenceStore.rebuildLearned()
+	local bossKey = addon.Core.Util.bossKey(boss, guid)
+	local rebuilt = Harness.ability(Harness.encounter(bossKey), bossKey, "Measured Strike")
+	Harness.assertTrue(rebuilt ~= nil, "Low-HP permanent evidence should rebuild a learned boss model")
 end
 
 local function scenarioEvidenceKeepsTechnicalSpellIdsForSameName()
@@ -2035,7 +2059,7 @@ local scenarios = {
 	scenarioShortHighHpPartialIgnored,
 	scenarioUnitDiedDefersWhileBossFrameAlive,
 	scenarioUnitDiedUsesGuidBeforeName,
-	scenarioEvidenceStoresOnlyCompletedKills,
+	scenarioEvidenceStoresCompletedBossEvidence,
 	scenarioEvidenceKeepsTechnicalSpellIdsForSameName,
 	scenarioEvidenceHashUsesAllEventFacts,
 	scenarioEvidenceCountsAreSegmentLocal,
