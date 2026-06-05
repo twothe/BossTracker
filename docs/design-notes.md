@@ -44,6 +44,7 @@ The addon records hostile NPC spell evidence broadly because manual dungeon test
 - Fallback learning without boss frames remains possible, but it uses a higher confidence requirement than direct boss-frame learning.
 - Boss HP is evidence, not a hard learning gate. A qualified boss context can update timer models even when the group wipes or resets early; low HP only improves completion evidence when the client misses `UNIT_DIED`.
 - Persistent rebuild evidence is stricter than runtime learning. Only confirmed kill segments are stored in `BossTrackerDB.evidence.instances`; wipes, resets, high-HP partials, and ambiguous attempts remain in the bounded `incomplete` evidence store or in diagnostics.
+- Calculated final models record `learnedMeta.interpretationEngineVersion`. When `C.INTERPRETATION_ENGINE_VERSION` changes, the addon rebuilds `BossTrackerDB.learned` from permanent evidence after startup; if no evidence exists, stale calculated models are reset instead of being treated as current truth.
 - Evidence sync exchanges only permanent completed-kill evidence after player approval. Imported evidence is merged into `BossTrackerDB.evidence` and rebuilt locally; calculated rules, UI settings, warning settings, character backups, and incomplete attempts are not accepted from other players.
 - Ascension difficulty is modeled at ability availability level. Normal, heroic, mythic, and ascended share the same boss model; each ability records the lowest difficulty where completed kill evidence observed it, and higher difficulties inherit lower-difficulty abilities.
 - A timer may be shown from the first usable estimate. Single-sample predictions are intentionally low-confidence and should be refined, hidden, or suppressed automatically as more pulls are observed.
@@ -79,9 +80,11 @@ This keeps diagnostics useful without letting normal trash packs teach the addon
 BossTracker is organized as a small encounter engine with a simple timer UI:
 
 - `Capture/CombatLog.lua` and `Capture/EncounterState.lua` collect bounded evidence and maintain active hostile-source contexts.
-- `Core/Difficulty.lua` normalizes Ascension difficulty facts and filters ability availability by the current difficulty.
-- `Core/EvidenceStore.lua` persists compact confirmed-kill evidence and can rebuild calculated learned models from that evidence.
-- `Core/EvidenceSync.lua` serializes permanent evidence into a compact wire format, chunks addon messages, prompts before import, deduplicates kills by content, and triggers a local rebuild.
+- `Core/Difficulty.lua` normalizes Ascension difficulty facts and filters ability availability by the current difficulty. Live Gnomeregan data showed blank 5-player normal facts (`difficultyIndex=1`, `maxPlayers=5`, non-dynamic), which are treated as normal; blank raid indexes remain unknown until their Ascension tier mapping is proven.
+- `Core/EvidenceCodec.lua` owns the packed kill-evidence string format shared by SavedVariables and sync.
+- `Core/EvidenceStore.lua` persists packed confirmed-kill evidence, decodes it for rebuild, and merges imported kill blocks after local validation.
+- `Core/EvidenceSync.lua` transports packed permanent evidence blocks, chunks addon messages, prompts before import, and triggers a local rebuild.
+- `UI/ConfigFrame.lua` shows observed ability difficulty markers (`N H M A`) in the learned ability list. These markers are observed evidence, not inherited availability.
 - `Learning/OccurrenceBuilder.lua` turns noisy combat-log lifecycles into one activation per visible mechanic.
 - `Learning/EncounterModel.lua` maintains the current pull model, qualified boss actors, and council-style encounter components.
 - `Learning/PhaseSegmenter.lua` creates phase segments from HP bucket crossings and long activation gaps.

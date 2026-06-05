@@ -5,6 +5,7 @@
 local addon = _G.BossTracker
 local C = addon.Core.Constants
 local Util = addon.Core.Util
+local Codec = addon.Core.EvidenceCodec
 
 local EvidenceStore = {}
 addon.Core.EvidenceStore = EvidenceStore
@@ -67,6 +68,9 @@ local function removeOldestKey(tbl, timeField)
 	local selectedTime
 	for key, value in pairs(tbl or {}) do
 		local candidateTime = type(value) == "table" and tonumber(value[timeField or "lastSeenAt"]) or nil
+		if not candidateTime and timeField == "capturedAt" and Codec and Codec.storedKillTime then
+			candidateTime = Codec.storedKillTime(value)
+		end
 		if not selectedKey or not candidateTime or not selectedTime or candidateTime < selectedTime then
 			selectedKey = key
 			selectedTime = candidateTime
@@ -97,15 +101,6 @@ local function hp10(value)
 		value = 100
 	end
 	return math.floor(value * 10 + 0.5)
-end
-
-local function hashString(value)
-	local hash = 5381
-	value = tostring(value or "")
-	for index = 1, #value do
-		hash = ((hash * 33) + string.byte(value, index)) % 4294967296
-	end
-	return string.format("%08x", hash)
 end
 
 local function appendLimited(array, value, maxEntries)
@@ -169,6 +164,13 @@ function EvidenceStore.ensureDb(db)
 	if type(db) ~= "table" then
 		return nil
 	end
+	if not Codec then
+		db.evidence = type(db.evidence) == "table" and db.evidence or newEvidenceStore()
+		db.evidence.revision = tonumber(db.evidence.revision) or 0
+		db.evidence.instances = type(db.evidence.instances) == "table" and db.evidence.instances or {}
+		db.evidence.incomplete = type(db.evidence.incomplete) == "table" and db.evidence.incomplete or {}
+		return db.evidence
+	end
 	if type(db.evidence) ~= "table" or tonumber(db.evidence.schemaVersion) ~= C.EVIDENCE_SCHEMA_VERSION then
 		db.evidence = newEvidenceStore()
 	end
@@ -182,6 +184,10 @@ end
 
 local function store()
 	return EvidenceStore.ensureDb(addon.db)
+end
+
+function EvidenceStore.isAvailable()
+	return Codec ~= nil
 end
 
 local function ensureDraft(pull)
@@ -301,7 +307,8 @@ local function ensureActorFromContext(draft, context, t10Value)
 end
 
 local function ensureSpell(draft, record)
-	local spellKey = record and record.spellKey
+	local displayKey = record and record.spellKey
+	local spellKey = record and record.spellId and ("spell:" .. tostring(record.spellId)) or displayKey
 	if not draft or not spellKey then
 		return nil
 	end
@@ -315,12 +322,14 @@ local function ensureSpell(draft, record)
 		spell = {
 			id = draft.spellCount,
 			key = spellKey,
+			displayKey = displayKey,
 			name = record.spellName,
 			spellIds = {},
 		}
 		draft.spellByKey[spellKey] = spell
 		draft.spells[spell.id] = spell
 	end
+	spell.displayKey = displayKey or spell.displayKey
 	spell.name = record.spellName or spell.name
 	if record.spellId then
 		local spellId = tonumber(record.spellId) or record.spellId
@@ -460,10 +469,12 @@ local function filteredKillTables(draft, ownerIds)
 	local actorIds = {}
 	local spellIds = {}
 	local events = {}
+	local eventCounts = {}
 	for index = 1, #draft.events do
 		local event = draft.events[index]
 		if ownerIds[event[3]] then
 			events[#events + 1] = copyTable(event)
+			eventCounts[event[2]] = (eventCounts[event[2]] or 0) + 1
 			actorIds[event[3]] = true
 			actorIds[event[4]] = true
 			if event[5] and event[5] > 0 then
@@ -496,34 +507,21 @@ local function filteredKillTables(draft, ownerIds)
 		return (left.id or 0) < (right.id or 0)
 	end)
 
-	return actors, spells, events
+	return actors, spells, events, eventCounts
 end
 
-local function killHashForEvidence(instanceKey, encounterKey, difficultyKey, events)
-	local parts = {
-		tostring(instanceKey),
-		tostring(encounterKey),
-		tostring(difficultyKey),
-		tostring(#events),
-	}
-	for index = 1, math.min(#events, 80) do
-		local event = events[index]
-		parts[#parts + 1] = table.concat({
-			tostring(event[1]),
-			tostring(event[2]),
-			tostring(event[3]),
-			tostring(event[6]),
-			tostring(event[7] or ""),
-		}, ",")
+local function killHashForEvidence(instanceKey, encounterKey, difficultyKey, events, actors, spells, duration10, endReason)
+	if not Codec or not Codec.hashKillData then
+		return nil
 	end
-	return hashString(table.concat(parts, "|"))
+	return Codec.hashKillData(instanceKey, encounterKey, difficultyKey, actors, spells, events, duration10, endReason)
 end
 
-function EvidenceStore.killHashForEvidence(instanceKey, encounterKey, difficultyKey, events)
+function EvidenceStore.killHashForEvidence(instanceKey, encounterKey, difficultyKey, events, actors, spells, duration10, endReason)
 	if not instanceKey or not encounterKey or type(events) ~= "table" or #events == 0 then
 		return nil
 	end
-	return killHashForEvidence(instanceKey, encounterKey, difficultyKey, events)
+	return killHashForEvidence(instanceKey, encounterKey, difficultyKey, events, actors, spells, duration10, endReason)
 end
 
 local function ensureInstance(evidence, zone)
@@ -565,26 +563,64 @@ local function ensureBoss(instance, encounterKey, encounterName)
 	return boss
 end
 
+local function logWarn(message, data)
+	if addon.Core.Logger and addon.Core.Logger.warn then
+		addon.Core.Logger.warn("EvidenceStore", message, data)
+	end
+end
+
+local function bossHasEquivalentKill(instance, boss, hash)
+	if not boss or not hash then
+		return false
+	end
+	if boss.kills and boss.kills[hash] then
+		return true, hash
+	end
+	if not Codec or not Codec.decodeStoredKill or not Codec.hashKill then
+		return false
+	end
+	for storedHash, storedKill in pairs(boss.kills or {}) do
+		local decoded = Codec.decodeStoredKill(instance, boss, storedKill)
+		local canonicalHash = decoded and decoded.kill and Codec.hashKill(decoded.instance or instance, decoded.boss or boss, decoded.kill) or nil
+		if canonicalHash == hash then
+			return true, storedHash
+		end
+	end
+	return false
+end
+
 local function commitComponent(draft, component)
 	local evidence = store()
-	if not evidence or draft.truncated or not componentKilled(component) then
+	if not evidence or not Codec or not Codec.encodeStoredKill or draft.truncated or not componentKilled(component) then
 		return false
 	end
 
 	local ownerIds = componentActorIds(draft, component)
-	local actors, spells, events = filteredKillTables(draft, ownerIds)
+	local actors, spells, events, eventCounts = filteredKillTables(draft, ownerIds)
 	if #events == 0 then
 		return false
 	end
 
-	local hash = killHashForEvidence(draft.zone and draft.zone.key, component.encounterKey, draft.difficulty and draft.difficulty.key, events)
+	local hash = killHashForEvidence(
+		draft.zone and draft.zone.key,
+		component.encounterKey,
+		draft.difficulty and draft.difficulty.key,
+		events,
+		actors,
+		spells,
+		draft.duration10,
+		"unit_died"
+	)
+	if not hash then
+		return false
+	end
 	local instance = ensureInstance(evidence, draft.zone)
 	local boss = ensureBoss(instance, component.encounterKey, component.encounterName)
-	if boss.kills[hash] then
+	if bossHasEquivalentKill(instance, boss, hash) then
 		return false
 	end
 
-	boss.kills[hash] = {
+	local kill = {
 		hash = hash,
 		capturedAt = Util.wallTime(),
 		addonVersion = C.VERSION,
@@ -595,8 +631,18 @@ local function commitComponent(draft, component)
 		actors = actors,
 		spells = spells,
 		events = events,
-		eventCounts = copyTable(draft.eventCounts),
+		eventCounts = eventCounts,
 	}
+	local storedKill, storeError = Codec.encodeStoredKill(instance, boss, kill, hash)
+	if not storedKill then
+		logWarn("Rejected permanent evidence kill because packing failed", {
+			error = storeError,
+			instanceKey = instance.key,
+			bossKey = boss.key,
+		})
+		return false
+	end
+	boss.kills[hash] = storedKill
 	evidence.revision = (tonumber(evidence.revision) or 0) + 1
 	EvidenceStore.bound(evidence)
 	return true
@@ -672,6 +718,123 @@ function EvidenceStore.bound(evidence)
 	while #evidence.incomplete > C.MAX_EVIDENCE_INCOMPLETE_ATTEMPTS do
 		table.remove(evidence.incomplete, 1)
 	end
+end
+
+local function storeDecodedKill(decoded)
+	if not Codec or not Codec.validDecodedKill or not Codec.encodeStoredKill then
+		return false, "rejected", "evidence codec is unavailable"
+	end
+	if not Codec.validDecodedKill(decoded) then
+		return false, "rejected", "invalid kill evidence"
+	end
+	local evidence = store()
+	if not evidence then
+		return false, "rejected", "evidence store is not available"
+	end
+	local incomingInstance = decoded.instance
+	local incomingBoss = decoded.boss
+	local incomingKill = decoded.kill
+	local zone = copyTable(incomingKill.zone or {})
+	zone.key = zone.key or incomingInstance.key
+	zone.name = zone.name or incomingInstance.name
+	zone.mapId = zone.mapId or incomingInstance.mapId
+	zone.instanceType = zone.instanceType or incomingInstance.instanceType
+
+	local instance = ensureInstance(evidence, zone)
+	instance.createdAt = instance.createdAt or incomingInstance.createdAt or Util.wallTime()
+	instance.name = incomingInstance.name or instance.name
+	instance.mapId = incomingInstance.mapId or instance.mapId
+	instance.instanceType = incomingInstance.instanceType or instance.instanceType
+
+	local boss = ensureBoss(instance, incomingBoss.key, incomingBoss.name)
+	boss.createdAt = boss.createdAt or incomingBoss.createdAt or Util.wallTime()
+
+	local hash = Codec.hashKill(instance, boss, incomingKill)
+	if not hash then
+		return false, "rejected", "missing canonical kill hash"
+	end
+	if bossHasEquivalentKill(instance, boss, hash) then
+		return false, "duplicate", hash
+	end
+
+	incomingKill.hash = hash
+	local storedKill, storeError = Codec.encodeStoredKill(instance, boss, incomingKill, hash)
+	if not storedKill then
+		return false, "rejected", storeError or "failed to pack kill evidence"
+	end
+	boss.kills[hash] = storedKill
+	evidence.revision = (tonumber(evidence.revision) or 0) + 1
+	EvidenceStore.bound(evidence)
+	return true, "imported", hash
+end
+
+function EvidenceStore.importKillBlock(block)
+	if not Codec or not Codec.decodeKillBlock then
+		return {
+			status = "rejected",
+			error = "evidence codec is unavailable",
+		}
+	end
+	local decoded, decodeError = Codec.decodeKillBlock(block)
+	if not decoded then
+		return {
+			status = "rejected",
+			error = decodeError or "invalid kill block",
+		}
+	end
+	local imported, status, detail = storeDecodedKill(decoded)
+	return {
+		status = status,
+		hash = status ~= "rejected" and detail or nil,
+		error = status == "rejected" and detail or nil,
+		imported = imported == true,
+	}
+end
+
+function EvidenceStore.decodeStoredKill(instance, boss, storedKill)
+	if not Codec or not Codec.decodeStoredKill then
+		return nil, "evidence codec is unavailable"
+	end
+	return Codec.decodeStoredKill(instance, boss, storedKill)
+end
+
+function EvidenceStore.collectKillBlocks()
+	local evidence = store()
+	local blocks = {}
+	if not evidence or not Codec or not Codec.storedKillBlock then
+		return blocks
+	end
+	for _, instance in pairs(evidence.instances or {}) do
+		for _, boss in pairs(instance.bosses or {}) do
+			for _, kill in pairs(boss.kills or {}) do
+				local block, hash, capturedAt, blockError = Codec.storedKillBlock(instance, boss, kill)
+				if block then
+					blocks[#blocks + 1] = {
+						block = block,
+						hash = hash,
+						capturedAt = capturedAt,
+						instanceKey = instance.key,
+						bossKey = boss.key,
+					}
+				else
+					logWarn("Skipped corrupt stored evidence kill during export", {
+						instanceKey = instance.key,
+						bossKey = boss.key,
+						error = blockError,
+					})
+				end
+			end
+		end
+	end
+	table.sort(blocks, function(left, right)
+		local leftTime = tonumber(left.capturedAt) or 0
+		local rightTime = tonumber(right.capturedAt) or 0
+		if leftTime == rightTime then
+			return tostring(left.hash) < tostring(right.hash)
+		end
+		return leftTime > rightTime
+	end)
+	return blocks
 end
 
 local function sortedKeys(tbl)
@@ -794,7 +957,7 @@ local function replayKill(instance, boss, kill, pullId)
 				destIsHostileNpc = dest ~= nil,
 				spellId = spell.spellIds and spell.spellIds[1] or nil,
 				spellName = spell.name,
-				spellKey = spell.key,
+				spellKey = spell.displayKey or spell.key,
 				hpPct = event[7] and event[7] / 10 or nil,
 				bossContext = ownerContext,
 				bossKey = owner.modelKey,
@@ -825,6 +988,9 @@ local function replayKill(instance, boss, kill, pullId)
 end
 
 function EvidenceStore.rebuildLearned()
+	if not Codec then
+		return 0
+	end
 	local evidence = store()
 	if not evidence then
 		return 0
@@ -839,7 +1005,17 @@ function EvidenceStore.rebuildLearned()
 			local boss = instance.bosses[bossKey]
 			for _, killHashKey in ipairs(sortedKeys(boss and boss.kills)) do
 				pullId = pullId + 1
-				promoted = promoted + replayKill(instance, boss, boss.kills[killHashKey], pullId)
+				local decoded, decodeError = EvidenceStore.decodeStoredKill(instance, boss, boss.kills[killHashKey])
+				if decoded and decoded.kill then
+					promoted = promoted + replayKill(decoded.instance or instance, decoded.boss or boss, decoded.kill, pullId)
+				else
+					logWarn("Skipped corrupt stored evidence kill during rebuild", {
+						instanceKey = instance and instance.key,
+						bossKey = boss and boss.key,
+						killHash = killHashKey,
+						error = decodeError,
+					})
+				end
 			end
 		end
 	end
@@ -886,5 +1062,11 @@ end
 function EvidenceStore.start()
 	activeDrafts = {}
 	suspended = false
+	if not Codec then
+		suspended = true
+		if addon.Core.Logger and addon.Core.Logger.chat then
+			addon.Core.Logger.chat("BossTracker update needs a full client restart before compact evidence storage is available.")
+		end
+	end
 	EvidenceStore.ensureDb(addon.db)
 end

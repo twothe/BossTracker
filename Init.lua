@@ -56,6 +56,9 @@ local function boot()
 	})
 
 	startModules()
+	if addon.Core.SavedVariables.rebuildLearnedIfNeeded then
+		addon.Core.SavedVariables.rebuildLearnedIfNeeded()
+	end
 	addon.Core.SavedVariables.showLearnedBackupConflictPrompt()
 	addon.Core.Logger.chat("v" .. addon.Core.Constants.VERSION .. " loaded. /bt status")
 end

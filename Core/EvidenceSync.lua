@@ -29,42 +29,6 @@ local function wallTime()
 	return Util.wallTime()
 end
 
-local function countKeys(tbl)
-	local count = 0
-	if type(tbl) ~= "table" then
-		return count
-	end
-	for _ in pairs(tbl) do
-		count = count + 1
-	end
-	return count
-end
-
-local function sortedPairs(tbl, sorter)
-	local values = {}
-	for key, value in pairs(tbl or {}) do
-		values[#values + 1] = {
-			key = key,
-			value = value,
-		}
-	end
-	table.sort(values, sorter or function(left, right)
-		return tostring(left.key) < tostring(right.key)
-	end)
-	return values
-end
-
-local function copyTable(value)
-	if type(value) ~= "table" then
-		return value
-	end
-	local copy = {}
-	for key, child in pairs(value) do
-		copy[key] = copyTable(child)
-	end
-	return copy
-end
-
 local function playerName()
 	if type(UnitName) == "function" then
 		local name = UnitName("player")
@@ -170,22 +134,6 @@ local function unescapeField(value)
 	end))
 end
 
-local function fieldNumber(value)
-	value = tonumber(value)
-	if value == nil then
-		return ""
-	end
-	return tostring(value)
-end
-
-local function fieldBool(value)
-	return value == true and "1" or ""
-end
-
-local function parseBool(value)
-	return tostring(value or "") == "1"
-end
-
 local function line(recordType, ...)
 	local fields = { recordType }
 	for index = 1, select("#", ...) do
@@ -232,290 +180,38 @@ local function unpackLine(recordLine)
 	return fields
 end
 
-local function packList(values)
-	local packed = {}
-	for index = 1, #(values or {}) do
-		packed[#packed + 1] = escapeField(values[index])
-	end
-	return table.concat(packed, ",")
-end
-
-local function unpackList(value)
-	local unpacked = {}
-	if type(value) ~= "string" or value == "" then
-		return unpacked
-	end
-	for _, entry in ipairs(split(value, ",")) do
-		local decoded = unescapeField(entry)
-		unpacked[#unpacked + 1] = tonumber(decoded) or decoded
-	end
-	return unpacked
-end
-
-local function packHp(samples)
-	local packed = {}
-	for index = 1, math.min(#(samples or {}), C.MAX_EVIDENCE_HP_SAMPLES_PER_ACTOR) do
-		local sample = samples[index]
-		packed[#packed + 1] = fieldNumber(sample and sample[1]) .. "," .. fieldNumber(sample and sample[2])
-	end
-	return table.concat(packed, ";")
-end
-
-local function unpackHp(value)
-	local samples = {}
-	if type(value) ~= "string" or value == "" then
-		return samples
-	end
-	for _, entry in ipairs(split(value, ";")) do
-		if #samples >= C.MAX_EVIDENCE_HP_SAMPLES_PER_ACTOR then
-			break
-		end
-		local parts = split(entry, ",")
-		local t10 = tonumber(parts[1])
-		local hp10 = tonumber(parts[2])
-		if t10 and hp10 then
-			samples[#samples + 1] = { t10, hp10 }
-		end
-	end
-	return samples
-end
-
-local function packEventCounts(counts)
-	local packed = {}
-	for _, entry in ipairs(sortedPairs(counts)) do
-		if tonumber(entry.value) and tonumber(entry.value) > 0 then
-			packed[#packed + 1] = escapeField(entry.key) .. ":" .. fieldNumber(entry.value)
-		end
-	end
-	return table.concat(packed, ",")
-end
-
-local function unpackEventCounts(value)
-	local counts = {}
-	if type(value) ~= "string" or value == "" then
-		return counts
-	end
-	for _, entry in ipairs(split(value, ",")) do
-		local parts = splitN(entry, ":", 2)
-		local key = unescapeField(parts[1])
-		local count = tonumber(parts[2])
-		if key ~= "" and count and count > 0 then
-			counts[key] = count
-		end
-	end
-	return counts
-end
-
-local function packEvents(events)
-	local packed = {}
-	for index = 1, math.min(#(events or {}), C.MAX_EVIDENCE_EVENTS_PER_KILL) do
-		local event = events[index]
-		packed[#packed + 1] = table.concat({
-			fieldNumber(event and event[1]),
-			escapeField(event and event[2]),
-			fieldNumber(event and event[3]),
-			fieldNumber(event and event[4]),
-			fieldNumber(event and event[5]),
-			fieldNumber(event and event[6]),
-			fieldNumber(event and event[7]),
-			fieldNumber(event and event[8]),
-		}, ",")
-	end
-	return table.concat(packed, ";")
-end
-
-local function unpackEvents(value)
-	local events = {}
-	if type(value) ~= "string" or value == "" then
-		return events
-	end
-	for _, entry in ipairs(split(value, ";")) do
-		if #events >= C.MAX_EVIDENCE_EVENTS_PER_KILL then
-			break
-		end
-		local parts = split(entry, ",")
-		local event = {
-			tonumber(parts[1]) or 0,
-			unescapeField(parts[2]),
-			tonumber(parts[3]) or 0,
-			tonumber(parts[4]) or 0,
-			tonumber(parts[5]) or 0,
-			tonumber(parts[6]) or 0,
-			tonumber(parts[7]),
-			tonumber(parts[8]) or 0,
-		}
-		if event[2] ~= "" and event[3] > 0 and event[4] > 0 and event[6] > 0 then
-			events[#events + 1] = event
-		end
-	end
-	return events
-end
-
-local function addInstanceLine(lines, instance)
-	lines[#lines + 1] = line(
-		"I",
-		instance.key,
-		instance.name,
-		instance.mapId,
-		instance.instanceType,
-		instance.createdAt,
-		instance.lastSeenAt
-	)
-end
-
-local function addBossLine(lines, instance, boss)
-	lines[#lines + 1] = line(
-		"B",
-		instance.key,
-		boss.key,
-		boss.name,
-		boss.createdAt,
-		boss.lastSeenAt
-	)
-end
-
-local function addKillLines(instance, boss, kill)
-	local lines = {}
-	local zone = kill.zone or {}
-	local difficulty = kill.difficulty or {}
-	lines[#lines + 1] = line(
-		"K",
-		instance.key,
-		boss.key,
-		kill.hash,
-		kill.capturedAt,
-		kill.addonVersion,
-		kill.duration10,
-		kill.endReason,
-		zone.zoneName,
-		zone.subZoneName,
-		difficulty.key,
-		difficulty.ordinal,
-		difficulty.label,
-		fieldBool(difficulty.known == true),
-		difficulty.rawIndex,
-		difficulty.rawName,
-		difficulty.maxPlayers,
-		difficulty.dynamicDifficulty,
-		fieldBool(difficulty.isDynamic == true)
-	)
-
-	table.sort(kill.actors or {}, function(left, right)
-		return (tonumber(left.id) or 0) < (tonumber(right.id) or 0)
-	end)
-	for index = 1, #(kill.actors or {}) do
-		local actor = kill.actors[index]
-		lines[#lines + 1] = line(
-			"A",
-			kill.hash,
-			actor.id,
-			actor.key,
-			actor.modelKey,
-			actor.name,
-			actor.guidHash,
-			actor.first10,
-			actor.last10,
-			actor.class,
-			fieldBool(actor.bossFrame == true),
-			actor.bossUnitToken,
-			fieldBool(actor.targetSeen == true),
-			fieldBool(actor.focusSeen == true),
-			actor.startHp10,
-			actor.endHp10,
-			packHp(actor.hp)
-		)
-	end
-
-	table.sort(kill.spells or {}, function(left, right)
-		return (tonumber(left.id) or 0) < (tonumber(right.id) or 0)
-	end)
-	for index = 1, #(kill.spells or {}) do
-		local spell = kill.spells[index]
-		lines[#lines + 1] = line("S", kill.hash, spell.id, spell.key, spell.name, packList(spell.spellIds))
-	end
-
-	lines[#lines + 1] = line("V", kill.hash, packEventCounts(kill.eventCounts))
-	lines[#lines + 1] = line("T", kill.hash, packEvents(kill.events))
-	return lines
-end
-
-local function collectKills(evidence)
-	local kills = {}
-	for _, instance in pairs(evidence and evidence.instances or {}) do
-		for _, boss in pairs(instance.bosses or {}) do
-			for _, kill in pairs(boss.kills or {}) do
-				kills[#kills + 1] = {
-					instance = instance,
-					boss = boss,
-					kill = kill,
-				}
-			end
-		end
-	end
-	table.sort(kills, function(left, right)
-		local leftTime = tonumber(left.kill and left.kill.capturedAt) or 0
-		local rightTime = tonumber(right.kill and right.kill.capturedAt) or 0
-		if leftTime == rightTime then
-			return tostring(left.kill and left.kill.hash) < tostring(right.kill and right.kill.hash)
-		end
-		return leftTime > rightTime
-	end)
-	return kills
-end
-
 function EvidenceSync.exportPayload(maxKills)
 	local evidence = addon.Core.EvidenceStore and addon.Core.EvidenceStore.ensureDb(addon.db) or nil
-	if not evidence then
+	local storeApi = addon.Core.EvidenceStore
+	if not evidence or not storeApi or type(storeApi.collectKillBlocks) ~= "function" then
 		return nil, "evidence store is not available"
 	end
+	if storeApi.isAvailable and not storeApi.isAvailable() then
+		return nil, "evidence codec is unavailable"
+	end
 
-	local killItems = collectKills(evidence)
+	local killBlocks = storeApi.collectKillBlocks()
 	local lines = { "" }
-	local seenInstances = {}
-	local seenBosses = {}
 	local payloadLength = 0
 	local exported = 0
 	local skippedTooLarge = 0
 	local maxExportedKills = math.min(tonumber(maxKills) or C.MAX_SYNC_KILLS_PER_EXPORT, C.MAX_SYNC_KILLS_PER_EXPORT)
 	local maxPayloadBytes = C.MAX_SYNC_PAYLOAD_BYTES - 256
 
-	for index = 1, #killItems do
+	for index = 1, #killBlocks do
 		if exported >= maxExportedKills then
 			break
 		end
-		local item = killItems[index]
-		local blockLines = {}
-		local instance = item.instance
-		local boss = item.boss
-		local kill = item.kill
-		if instance and boss and kill then
-			if not seenInstances[instance.key] then
-				addInstanceLine(blockLines, instance)
-			end
-			local bossMarker = tostring(instance.key) .. "\n" .. tostring(boss.key)
-			if not seenBosses[bossMarker] then
-				addBossLine(blockLines, instance, boss)
-			end
-			local killLines = addKillLines(instance, boss, kill)
-			for lineIndex = 1, #killLines do
-				blockLines[#blockLines + 1] = killLines[lineIndex]
-			end
-
-			local block = table.concat(blockLines, "\n")
-			local additionalLength = #block + 1
-			if #block > maxPayloadBytes then
-				skippedTooLarge = skippedTooLarge + 1
-			elseif payloadLength + additionalLength <= maxPayloadBytes then
-				for lineIndex = 1, #blockLines do
-					lines[#lines + 1] = blockLines[lineIndex]
-				end
-				seenInstances[instance.key] = true
-				seenBosses[bossMarker] = true
-				payloadLength = payloadLength + additionalLength
-				exported = exported + 1
-			else
-				break
-			end
+		local blockLine = line("P", killBlocks[index].block)
+		local additionalLength = #blockLine + 1
+		if #blockLine > maxPayloadBytes then
+			skippedTooLarge = skippedTooLarge + 1
+		elseif payloadLength + additionalLength <= maxPayloadBytes then
+			lines[#lines + 1] = blockLine
+			payloadLength = payloadLength + additionalLength
+			exported = exported + 1
+		else
+			break
 		end
 	end
 
@@ -525,54 +221,16 @@ function EvidenceSync.exportPayload(maxKills)
 		C.VERSION,
 		evidence.revision or 0,
 		exported,
-		#killItems,
+		#killBlocks,
 		skippedTooLarge,
 		wallTime()
 	)
 	return table.concat(lines, RECORD_SEPARATOR), {
 		exported = exported,
-		total = #killItems,
+		total = #killBlocks,
 		skippedTooLarge = skippedTooLarge,
-		truncated = exported < #killItems,
+		truncated = exported < #killBlocks,
 	}
-end
-
-local function ensureImportedInstance(parsed, instanceKey, name, mapId, instanceType, createdAt, lastSeenAt)
-	local instance = parsed.instances[instanceKey]
-	if not instance then
-		instance = {
-			key = instanceKey,
-			name = name or "Unknown Instance",
-			mapId = tonumber(mapId) or mapId,
-			instanceType = instanceType ~= "" and instanceType or nil,
-			bosses = {},
-			createdAt = tonumber(createdAt) or wallTime(),
-			lastSeenAt = tonumber(lastSeenAt) or wallTime(),
-		}
-		parsed.instances[instanceKey] = instance
-	end
-	instance.name = name and name ~= "" and name or instance.name
-	instance.mapId = tonumber(mapId) or mapId or instance.mapId
-	instance.instanceType = instanceType ~= "" and instanceType or instance.instanceType
-	instance.bosses = type(instance.bosses) == "table" and instance.bosses or {}
-	return instance
-end
-
-local function ensureImportedBoss(instance, bossKey, name, createdAt, lastSeenAt)
-	local boss = instance.bosses[bossKey]
-	if not boss then
-		boss = {
-			key = bossKey,
-			name = name or "Unknown Encounter",
-			kills = {},
-			createdAt = tonumber(createdAt) or wallTime(),
-			lastSeenAt = tonumber(lastSeenAt) or wallTime(),
-		}
-		instance.bosses[bossKey] = boss
-	end
-	boss.name = name and name ~= "" and name or boss.name
-	boss.kills = type(boss.kills) == "table" and boss.kills or {}
-	return boss
 end
 
 local function parsePayload(payload)
@@ -587,9 +245,7 @@ local function parsePayload(payload)
 		schemaVersion = nil,
 		version = nil,
 		revision = 0,
-		instances = {},
-		killsByHash = {},
-		killCount = 0,
+		blocks = {},
 	}
 	for _, rawLine in ipairs(split(payload, RECORD_SEPARATOR)) do
 		if rawLine ~= "" then
@@ -599,105 +255,9 @@ local function parsePayload(payload)
 				parsed.schemaVersion = tonumber(fields[2])
 				parsed.version = fields[3]
 				parsed.revision = tonumber(fields[4]) or 0
-			elseif recordType == "I" then
-				local instanceKey = fields[2]
-				if type(instanceKey) == "string" and instanceKey ~= "" then
-					ensureImportedInstance(parsed, instanceKey, fields[3], fields[4], fields[5], fields[6], fields[7])
-				end
-			elseif recordType == "B" then
-				local instanceKey = fields[2]
-				local bossKey = fields[3]
-				if instanceKey ~= "" and bossKey ~= "" then
-					local instance = ensureImportedInstance(parsed, instanceKey, instanceKey)
-					ensureImportedBoss(instance, bossKey, fields[4], fields[5], fields[6])
-				end
-			elseif recordType == "K" then
-				local instanceKey = fields[2]
-				local bossKey = fields[3]
-				local killHash = fields[4]
-				if instanceKey ~= "" and bossKey ~= "" and killHash ~= "" then
-					local instance = ensureImportedInstance(parsed, instanceKey, instanceKey)
-					local boss = ensureImportedBoss(instance, bossKey, bossKey)
-					local difficulty = {
-						key = fields[11] ~= "" and fields[11] or nil,
-						ordinal = tonumber(fields[12]),
-						label = fields[13] ~= "" and fields[13] or nil,
-						known = parseBool(fields[14]),
-						rawIndex = tonumber(fields[15]) or fields[15],
-						rawName = fields[16] ~= "" and fields[16] or nil,
-						maxPlayers = tonumber(fields[17]),
-						dynamicDifficulty = tonumber(fields[18]) or fields[18],
-						isDynamic = parseBool(fields[19]),
-					}
-					local kill = {
-						hash = killHash,
-						capturedAt = tonumber(fields[5]) or wallTime(),
-						addonVersion = fields[6] ~= "" and fields[6] or nil,
-						duration10 = tonumber(fields[7]) or 0,
-						endReason = fields[8] ~= "" and fields[8] or "unit_died",
-						zone = {
-							key = instance.key,
-							name = instance.name,
-							mapId = instance.mapId,
-							instanceType = instance.instanceType,
-							zoneName = fields[9] ~= "" and fields[9] or nil,
-							subZoneName = fields[10] ~= "" and fields[10] or nil,
-							difficultyIndex = difficulty.rawIndex,
-							difficultyName = difficulty.rawName,
-							maxPlayers = difficulty.maxPlayers,
-							dynamicDifficulty = difficulty.dynamicDifficulty,
-							isDynamic = difficulty.isDynamic,
-						},
-						difficulty = difficulty,
-						actors = {},
-						spells = {},
-						events = {},
-						eventCounts = {},
-					}
-					boss.kills[killHash] = kill
-					parsed.killsByHash[killHash] = kill
-					parsed.killCount = parsed.killCount + 1
-				end
-			elseif recordType == "A" then
-				local kill = parsed.killsByHash[fields[2]]
-				if kill and #kill.actors < C.MAX_EVIDENCE_ACTORS_PER_KILL then
-					kill.actors[#kill.actors + 1] = {
-						id = tonumber(fields[3]) or 0,
-						key = fields[4],
-						modelKey = fields[5],
-						name = fields[6] ~= "" and fields[6] or "Unknown Actor",
-						guidHash = fields[7] ~= "" and fields[7] or nil,
-						first10 = tonumber(fields[8]) or 0,
-						last10 = tonumber(fields[9]) or 0,
-						class = fields[10] ~= "" and fields[10] or nil,
-						bossFrame = parseBool(fields[11]) or nil,
-						bossUnitToken = fields[12] ~= "" and fields[12] or nil,
-						targetSeen = parseBool(fields[13]) or nil,
-						focusSeen = parseBool(fields[14]) or nil,
-						startHp10 = tonumber(fields[15]),
-						endHp10 = tonumber(fields[16]),
-						hp = unpackHp(fields[17]),
-					}
-				end
-			elseif recordType == "S" then
-				local kill = parsed.killsByHash[fields[2]]
-				if kill and #kill.spells < C.MAX_EVIDENCE_SPELLS_PER_KILL then
-					kill.spells[#kill.spells + 1] = {
-						id = tonumber(fields[3]) or 0,
-						key = fields[4],
-						name = fields[5] ~= "" and fields[5] or nil,
-						spellIds = unpackList(fields[6]),
-					}
-				end
-			elseif recordType == "V" then
-				local kill = parsed.killsByHash[fields[2]]
-				if kill then
-					kill.eventCounts = unpackEventCounts(fields[3])
-				end
-			elseif recordType == "T" then
-				local kill = parsed.killsByHash[fields[2]]
-				if kill then
-					kill.events = unpackEvents(fields[3])
+			elseif recordType == "P" then
+				if fields[2] ~= "" and #parsed.blocks < C.MAX_SYNC_KILLS_PER_EXPORT then
+					parsed.blocks[#parsed.blocks + 1] = fields[2]
 				end
 			end
 		end
@@ -707,102 +267,6 @@ local function parsePayload(payload)
 		return nil, "unsupported evidence schema"
 	end
 	return parsed
-end
-
-local function validKill(kill)
-	if type(kill) ~= "table" or type(kill.hash) ~= "string" or kill.hash == "" then
-		return false
-	end
-	if kill.endReason ~= "unit_died" then
-		return false
-	end
-	if #(kill.actors or {}) == 0 or #(kill.spells or {}) == 0 or #(kill.events or {}) == 0 then
-		return false
-	end
-	if #kill.actors > C.MAX_EVIDENCE_ACTORS_PER_KILL
-		or #kill.spells > C.MAX_EVIDENCE_SPELLS_PER_KILL
-		or #kill.events > C.MAX_EVIDENCE_EVENTS_PER_KILL then
-		return false
-	end
-
-	local actorIds = {}
-	for index = 1, #kill.actors do
-		local actor = kill.actors[index]
-		if type(actor) ~= "table" or tonumber(actor.id) == nil or type(actor.key) ~= "string" or actor.key == "" then
-			return false
-		end
-		actorIds[tonumber(actor.id)] = true
-	end
-	local spellIds = {}
-	for index = 1, #kill.spells do
-		local spell = kill.spells[index]
-		if type(spell) ~= "table" or tonumber(spell.id) == nil or type(spell.key) ~= "string" or spell.key == "" then
-			return false
-		end
-		spellIds[tonumber(spell.id)] = true
-	end
-	for index = 1, #kill.events do
-		local event = kill.events[index]
-		if type(event) ~= "table"
-			or not actorIds[tonumber(event[3])]
-			or not actorIds[tonumber(event[4])]
-			or (tonumber(event[5]) or 0) > 0 and not actorIds[tonumber(event[5])]
-			or not spellIds[tonumber(event[6])] then
-			return false
-		end
-	end
-	return true
-end
-
-local function canonicalKillHash(instance, boss, kill)
-	local store = addon.Core.EvidenceStore
-	if not store or type(store.killHashForEvidence) ~= "function" then
-		return nil
-	end
-	return store.killHashForEvidence(
-		instance and instance.key,
-		boss and boss.key,
-		kill and kill.difficulty and kill.difficulty.key,
-		kill and kill.events
-	)
-end
-
-local function ensureLocalInstance(evidence, incoming)
-	local instance = evidence.instances[incoming.key]
-	if not instance then
-		instance = {
-			key = incoming.key,
-			name = incoming.name or "Unknown Instance",
-			mapId = incoming.mapId,
-			instanceType = incoming.instanceType,
-			bosses = {},
-			createdAt = incoming.createdAt or wallTime(),
-		}
-		evidence.instances[incoming.key] = instance
-	end
-	instance.name = incoming.name or instance.name
-	instance.mapId = incoming.mapId or instance.mapId
-	instance.instanceType = incoming.instanceType or instance.instanceType
-	instance.lastSeenAt = wallTime()
-	instance.bosses = type(instance.bosses) == "table" and instance.bosses or {}
-	return instance
-end
-
-local function ensureLocalBoss(instance, incoming)
-	local boss = instance.bosses[incoming.key]
-	if not boss then
-		boss = {
-			key = incoming.key,
-			name = incoming.name or "Unknown Encounter",
-			kills = {},
-			createdAt = incoming.createdAt or wallTime(),
-		}
-		instance.bosses[incoming.key] = boss
-	end
-	boss.name = incoming.name or boss.name
-	boss.lastSeenAt = wallTime()
-	boss.kills = type(boss.kills) == "table" and boss.kills or {}
-	return boss
 end
 
 local function refreshAfterImport()
@@ -825,7 +289,11 @@ function EvidenceSync.importPayload(payload, sender)
 	if not parsed then
 		return nil, parseError
 	end
-	local evidence = addon.Core.EvidenceStore and addon.Core.EvidenceStore.ensureDb(addon.db) or nil
+	local storeApi = addon.Core.EvidenceStore
+	if not storeApi or type(storeApi.ensureDb) ~= "function" or type(storeApi.importKillBlock) ~= "function" then
+		return nil, "evidence store is not available"
+	end
+	local evidence = storeApi.ensureDb(addon.db)
 	if not evidence then
 		return nil, "evidence store is not available"
 	end
@@ -833,40 +301,24 @@ function EvidenceSync.importPayload(payload, sender)
 	local imported = 0
 	local duplicates = 0
 	local rejected = 0
-	for _, instanceEntry in ipairs(sortedPairs(parsed.instances)) do
-		local incomingInstance = instanceEntry.value
-		local localInstance = ensureLocalInstance(evidence, incomingInstance)
-		for _, bossEntry in ipairs(sortedPairs(incomingInstance.bosses)) do
-			local incomingBoss = bossEntry.value
-			local localBoss = ensureLocalBoss(localInstance, incomingBoss)
-			for _, killEntry in ipairs(sortedPairs(incomingBoss.kills)) do
-				local incomingKill = killEntry.value
-				if not validKill(incomingKill) then
-					rejected = rejected + 1
-				else
-					local hash = canonicalKillHash(incomingInstance, incomingBoss, incomingKill)
-					if not hash then
-						rejected = rejected + 1
-					elseif localBoss.kills[hash] then
-						duplicates = duplicates + 1
-					else
-						incomingKill.hash = hash
-						localBoss.kills[hash] = copyTable(incomingKill)
-						imported = imported + 1
-					end
-				end
-			end
+	for index = 1, #(parsed.blocks or {}) do
+		local result = storeApi.importKillBlock(parsed.blocks[index])
+		if result and result.status == "imported" then
+			imported = imported + 1
+		elseif result and result.status == "duplicate" then
+			duplicates = duplicates + 1
+		else
+			rejected = rejected + 1
 		end
 	end
 
 	local promoted = 0
 	if imported > 0 then
-		evidence.revision = (tonumber(evidence.revision) or 0) + imported
-		if addon.Core.EvidenceStore and addon.Core.EvidenceStore.bound then
-			addon.Core.EvidenceStore.bound(evidence)
+		if storeApi.bound then
+			storeApi.bound(evidence)
 		end
-		if addon.Core.EvidenceStore and addon.Core.EvidenceStore.rebuildLearned then
-			promoted = addon.Core.EvidenceStore.rebuildLearned()
+		if storeApi.rebuildLearned then
+			promoted = storeApi.rebuildLearned()
 		end
 		refreshAfterImport()
 	end
@@ -1288,7 +740,7 @@ local function requestSync(target)
 	local rawTarget = tostring(target or "")
 	local lowerTarget = string.lower(rawTarget)
 	if lowerTarget == "" then
-		chat("usage: /bt sync target|player|group|raid")
+		chat("usage: /bt sync target, player, group, raid")
 		return false
 	end
 

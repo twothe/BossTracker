@@ -176,6 +176,7 @@ local function loadAddon()
 		"Core/RingBuffer.lua",
 		"Core/Util.lua",
 		"Core/Difficulty.lua",
+		"Core/EvidenceCodec.lua",
 		"Core/EvidenceStore.lua",
 		"Core/EvidenceSync.lua",
 		"Core/SavedVariables.lua",
@@ -196,6 +197,7 @@ local function loadAddon()
 		"Runtime/TimerScheduler.lua",
 		"Runtime/WarningEngine.lua",
 		"Capture/CombatLog.lua",
+		"UI/SlashCommand.lua",
 	}
 	for index = 1, #files do
 		assert(loadfile(files[index]))()
@@ -261,6 +263,8 @@ function Harness.resetState(name)
 	addon.Learning.AbilityLearner.start()
 	addon.Runtime.PredictionEngine.start()
 	addon.Runtime.TimerScheduler.start()
+	addon.UI.SlashCommand.start()
+	addon.Core.SavedVariables.rebuildLearnedIfNeeded()
 end
 
 function Harness.frame(name)
@@ -277,6 +281,14 @@ end
 
 function Harness.clearAddonMessages()
 	sentAddonMessages = {}
+end
+
+function Harness.clearChatMessages()
+	DEFAULT_CHAT_FRAME.messages = {}
+end
+
+function Harness.chatMessages()
+	return DEFAULT_CHAT_FRAME.messages
 end
 
 function Harness.registeredAddonPrefix(prefix)

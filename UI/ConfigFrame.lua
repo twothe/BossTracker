@@ -220,6 +220,13 @@ local function abilityTimingText(ability)
 	return "learning"
 end
 
+local function abilityDifficultyText(ability)
+	if addon.Core.Difficulty and addon.Core.Difficulty.abilityObservedDifficultySummary then
+		return addon.Core.Difficulty.abilityObservedDifficultySummary(ability)
+	end
+	return "-", "No difficulty evidence"
+end
+
 local function abilityDisplayName(ability)
 	if ability
 		and ability.encounterAssociated
@@ -357,11 +364,11 @@ local function applyAbilityIcon(row, ability)
 		row.icon:SetTexture(texture)
 		row.icon:Show()
 		row.name:SetPoint("LEFT", row.icon, "RIGHT", 5, 0)
-		row.name:SetWidth(146)
+		row.name:SetWidth(150)
 	else
 		row.icon:Hide()
 		row.name:SetPoint("LEFT", row, "LEFT", 7, 0)
-		row.name:SetWidth(164)
+		row.name:SetWidth(168)
 	end
 end
 
@@ -454,11 +461,14 @@ local function updateAbilityRows()
 		row.entry = entry
 		if entry then
 			local ability = entry.ability
+			local difficultyText = abilityDifficultyText(ability)
 			row.name:SetText(entry.label)
 			row.info:SetText(abilityTimingText(ability))
+			row.difficulty:SetText(difficultyText)
 			row:SetBackdropColor(entry.active and 0.065 or 0.035, entry.active and 0.075 or 0.04, entry.active and 0.085 or 0.045, 0.94)
 			row.name:SetTextColor(entry.active and 0.92 or 0.48, entry.active and 0.90 or 0.48, entry.active and 0.82 or 0.46)
 			row.info:SetTextColor(entry.active and 0.62 or 0.42, entry.active and 0.70 or 0.42, entry.active and 0.78 or 0.42)
+			row.difficulty:SetTextColor(entry.active and 0.86 or 0.46, entry.active and 0.78 or 0.44, entry.active and 0.58 or 0.38)
 			row:SetBackdropBorderColor(entry.active and 0.40 or 0.22, entry.active and 0.34 or 0.20, entry.active and 0.23 or 0.18, 0.95)
 			applyAbilityIcon(row, ability)
 			setSegmentButtonActive(row.autoButton, entry.displayMode == "auto")
@@ -660,6 +670,8 @@ local function showAbilitySpellTooltip(owner, entry)
 	GameTooltip:SetText(abilityDisplayName(ability))
 	if GameTooltip.AddLine then
 		GameTooltip:AddLine(abilityTimingText(ability), 0.82, 0.82, 0.72, true)
+		local _, difficultyTooltip = abilityDifficultyText(ability)
+		GameTooltip:AddLine(difficultyTooltip, 0.70, 0.78, 0.86, true)
 		GameTooltip:AddLine("No spell tooltip is available for this ability.", 0.58, 0.62, 0.66, true)
 	end
 	GameTooltip:Show()
@@ -812,8 +824,13 @@ local function createAbilityRow(parent, index)
 	row.info:SetPoint("LEFT", row.name, "RIGHT", 5, 0)
 	row.info:SetWidth(78)
 
+	row.difficulty = createLabel(row, "", "GameFontNormalSmall")
+	row.difficulty:SetWidth(46)
+	row.difficulty:SetPoint("LEFT", row.info, "RIGHT", 5, 0)
+	row.difficulty:SetJustifyH("CENTER")
+
 	row.autoButton = createButton(row, "Auto", 36, 18)
-	row.autoButton:SetPoint("LEFT", row.info, "RIGHT", 4, 0)
+	row.autoButton:SetPoint("LEFT", row.difficulty, "RIGHT", 4, 0)
 	row.autoButton:SetScript("OnClick", function() setDisplayMode(row, "auto") end)
 
 	row.showButton = createButton(row, "Show", 40, 18)
@@ -880,7 +897,7 @@ local function ensureFrame()
 	end
 
 	frame = CreateFrame("Frame", "BossTrackerConfigFrame", UIParent)
-	frame:SetWidth(760)
+	frame:SetWidth(840)
 	frame:SetHeight(610)
 	frame:SetPoint("CENTER", UIParent, "CENTER", 0, 20)
 	frame:SetFrameStrata("DIALOG")

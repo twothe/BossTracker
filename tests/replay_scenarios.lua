@@ -599,6 +599,8 @@ local function scenarioSavedVariablesLateCharacterBackupRestoresAfterEmptyCharac
 		learnedBackup = {
 			backupSchemaVersion = C.LEARNED_BACKUP_SCHEMA_VERSION,
 			dataSchemaVersion = C.SCHEMA_VERSION,
+			interpretationEngineVersion = C.INTERPRETATION_ENGINE_VERSION,
+			interpretationEngineUpdatedAt = 400,
 			dataId = "late-backup-data",
 			revision = 4,
 			sourceCreatedAt = 100,
@@ -645,6 +647,8 @@ local function scenarioSavedVariablesSchemaResetTombstoneDoesNotBlockLaterBackup
 		learnedMeta = {
 			backupSchemaVersion = C.LEARNED_BACKUP_SCHEMA_VERSION,
 			dataSchemaVersion = C.SCHEMA_VERSION,
+			interpretationEngineVersion = C.INTERPRETATION_ENGINE_VERSION,
+			interpretationEngineUpdatedAt = 100,
 			dataId = "buggy-reset-data",
 			revision = 0,
 			createdAt = 100,
@@ -665,6 +669,8 @@ local function scenarioSavedVariablesSchemaResetTombstoneDoesNotBlockLaterBackup
 		learnedBackup = {
 			backupSchemaVersion = C.LEARNED_BACKUP_SCHEMA_VERSION,
 			dataSchemaVersion = C.SCHEMA_VERSION,
+			interpretationEngineVersion = C.INTERPRETATION_ENGINE_VERSION,
+			interpretationEngineUpdatedAt = 500,
 			dataId = "buggy-reset-data",
 			revision = 5,
 			sourceCreatedAt = 100,
@@ -730,6 +736,8 @@ local function scenarioSavedVariablesNewerCharacterBackupPromptsAndCanKeepAccoun
 		learnedMeta = {
 			backupSchemaVersion = C.LEARNED_BACKUP_SCHEMA_VERSION,
 			dataSchemaVersion = C.SCHEMA_VERSION,
+			interpretationEngineVersion = C.INTERPRETATION_ENGINE_VERSION,
+			interpretationEngineUpdatedAt = 100,
 			dataId = "shared-data",
 			revision = 1,
 			createdAt = 100,
@@ -741,6 +749,8 @@ local function scenarioSavedVariablesNewerCharacterBackupPromptsAndCanKeepAccoun
 		learnedBackup = {
 			backupSchemaVersion = C.LEARNED_BACKUP_SCHEMA_VERSION,
 			dataSchemaVersion = C.SCHEMA_VERSION,
+			interpretationEngineVersion = C.INTERPRETATION_ENGINE_VERSION,
+			interpretationEngineUpdatedAt = 200,
 			dataId = "shared-data",
 			revision = 2,
 			sourceCreatedAt = 100,
@@ -794,6 +804,8 @@ local function scenarioSavedVariablesNewerCharacterBackupCanRestore()
 		learnedMeta = {
 			backupSchemaVersion = C.LEARNED_BACKUP_SCHEMA_VERSION,
 			dataSchemaVersion = C.SCHEMA_VERSION,
+			interpretationEngineVersion = C.INTERPRETATION_ENGINE_VERSION,
+			interpretationEngineUpdatedAt = 100,
 			dataId = "shared-restore-data",
 			revision = 1,
 			createdAt = 100,
@@ -805,6 +817,8 @@ local function scenarioSavedVariablesNewerCharacterBackupCanRestore()
 		learnedBackup = {
 			backupSchemaVersion = C.LEARNED_BACKUP_SCHEMA_VERSION,
 			dataSchemaVersion = C.SCHEMA_VERSION,
+			interpretationEngineVersion = C.INTERPRETATION_ENGINE_VERSION,
+			interpretationEngineUpdatedAt = 200,
 			dataId = "shared-restore-data",
 			revision = 2,
 			sourceCreatedAt = 100,
@@ -851,6 +865,8 @@ local function scenarioSavedVariablesExplicitClearBlocksCharacterRestore()
 		learnedMeta = {
 			backupSchemaVersion = C.LEARNED_BACKUP_SCHEMA_VERSION,
 			dataSchemaVersion = C.SCHEMA_VERSION,
+			interpretationEngineVersion = C.INTERPRETATION_ENGINE_VERSION,
+			interpretationEngineUpdatedAt = 200,
 			dataId = "cleared-data",
 			revision = 0,
 			createdAt = 100,
@@ -864,6 +880,8 @@ local function scenarioSavedVariablesExplicitClearBlocksCharacterRestore()
 		learnedBackup = {
 			backupSchemaVersion = C.LEARNED_BACKUP_SCHEMA_VERSION,
 			dataSchemaVersion = C.SCHEMA_VERSION,
+			interpretationEngineVersion = C.INTERPRETATION_ENGINE_VERSION,
+			interpretationEngineUpdatedAt = 300,
 			dataId = "cleared-data",
 			revision = 3,
 			sourceCreatedAt = 100,
@@ -957,6 +975,21 @@ local function scenarioConfiguredWarningPlaysSound()
 	local expected = addon.Core.Config.getWarningSoundInfo("soft_bell")
 	Harness.assertTrue(sound and sound.path == expected.path, "Configured warning sound should play with the warning")
 	Harness.assertTrue(sound.channel == "Master", "Warning sounds should use the master channel")
+end
+
+local function scenarioSlashHelpAvoidsRawPipeSeparators()
+	Harness.resetState("Replay Slash Help")
+	Harness.clearChatMessages()
+	SlashCmdList.BOSSTRACKER("help")
+
+	local foundSyncHelp = false
+	for _, message in ipairs(Harness.chatMessages()) do
+		if string.find(message, "/bt sync target, player, group, raid", 1, true) then
+			foundSyncHelp = true
+		end
+		Harness.assertTrue(string.find(message, "target|player|group|raid", 1, true) == nil, "Slash help must not print raw pipe separators because WoW chat treats pipes as escape markers")
+	end
+	Harness.assertTrue(foundSyncHelp == true, "Slash help should show the sync target choices")
 end
 
 local function scenarioPredictionDeduplicatesSameModelAbility()
@@ -1478,6 +1511,19 @@ local function scenarioUnitDiedUsesGuidBeforeName()
 	Harness.assertTrue(secondContext.active == true, "UNIT_DIED must not close other active units with the same name")
 end
 
+local function firstDecodedEvidenceKill()
+	for _, instance in pairs(addon.db.evidence.instances or {}) do
+		for _, evidenceBoss in pairs(instance.bosses or {}) do
+			for _, storedKill in pairs(evidenceBoss.kills or {}) do
+				local decoded, decodeError = addon.Core.EvidenceStore.decodeStoredKill(instance, evidenceBoss, storedKill)
+				Harness.assertTrue(decoded ~= nil, "Stored evidence kill should decode: " .. tostring(decodeError))
+				return decoded, storedKill
+			end
+		end
+	end
+	return nil, nil
+end
+
 local function scenarioEvidenceStoresOnlyCompletedKills()
 	Harness.resetState("Replay Evidence Kill")
 	local boss = "Evidence Keeper"
@@ -1488,6 +1534,10 @@ local function scenarioEvidenceStoresOnlyCompletedKills()
 
 	Harness.assertTrue(addon.Core.EvidenceStore.countPermanentKills() == 1, "Completed boss kills should enter permanent evidence")
 	Harness.assertTrue(addon.Core.EvidenceStore.countIncomplete() == 0, "Completed boss kills should not enter incomplete evidence")
+	local decoded, storedKill = firstDecodedEvidenceKill()
+	Harness.assertTrue(type(storedKill) == "table" and type(storedKill.p) == "string", "Permanent evidence kills should be stored as packed strings")
+	Harness.assertTrue(storedKill.events == nil and storedKill.actors == nil and storedKill.spells == nil, "Packed stored kills should not retain expanded event tables")
+	Harness.assertTrue(#(decoded.kill.events or {}) == 2, "Packed stored kills should decode back to raw event tuples")
 
 	Harness.resetState("Replay Evidence Partial")
 	Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = guid, spellName = "Measured Strike", hp = 100 })
@@ -1496,6 +1546,128 @@ local function scenarioEvidenceStoresOnlyCompletedKills()
 
 	Harness.assertTrue(addon.Core.EvidenceStore.countPermanentKills() == 0, "Incomplete attempts must not enter permanent evidence")
 	Harness.assertTrue(addon.Core.EvidenceStore.countIncomplete() == 1, "Incomplete attempts should remain bounded separately")
+end
+
+local function scenarioEvidenceKeepsTechnicalSpellIdsForSameName()
+	Harness.resetState("Replay Same Name Spell Evidence")
+	local boss = "Same Name Sentinel"
+	local guid = Harness.makeGuid(boss, 908)
+	Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = guid, spellName = "Shared Label", spellId = 81001, hp = 100 })
+	Harness.emitSpell({ t = 18, sourceName = boss, sourceGUID = guid, spellName = "Shared Label", spellId = 81002, eventType = "SPELL_AURA_APPLIED", hp = 74 })
+	Harness.emitSpell({ t = 36, sourceName = boss, sourceGUID = guid, spellName = "Shared Label", spellId = 81001, hp = 48 })
+	Harness.finishPull(50, "unit_died")
+
+	local decoded = firstDecodedEvidenceKill()
+	Harness.assertTrue(decoded ~= nil, "Fixture should produce decodable permanent evidence")
+	local spellIds = {}
+	local displayKeys = {}
+	for index = 1, #(decoded.kill.spells or {}) do
+		local spell = decoded.kill.spells[index]
+		displayKeys[spell.displayKey] = true
+		for idIndex = 1, #(spell.spellIds or {}) do
+			spellIds[spell.spellIds[idIndex]] = true
+		end
+	end
+	Harness.assertTrue(#(decoded.kill.spells or {}) == 2, "Same visible spell names with different spell ids should remain separate technical evidence entries")
+	Harness.assertTrue(spellIds[81001] and spellIds[81002], "Technical spell ids should be preserved in packed evidence")
+	Harness.assertTrue(displayKeys["name:shared_label"] == true, "Packed technical spell evidence should keep the visible timer key")
+
+	addon.Core.EvidenceStore.rebuildLearned()
+	local bossKey = addon.Core.Util.bossKey(boss, guid)
+	local rebuilt = Harness.ability(Harness.encounter(bossKey), bossKey, "Shared Label")
+	Harness.assertTrue(rebuilt ~= nil, "Rebuild should still produce the visible same-name ability")
+end
+
+local function scenarioEvidenceHashUsesAllEventFacts()
+	local actors = {
+		{
+			id = 1,
+			key = "actor:hash_sentinel",
+			modelKey = "boss:hash_sentinel",
+			name = "Hash Sentinel",
+		},
+	}
+	local spells = {
+		{
+			id = 1,
+			key = "spell:91001",
+			displayKey = "name:hash_slam",
+			name = "Hash Slam",
+			spellIds = { 91001 },
+		},
+	}
+	local firstEvents = {}
+	local secondEvents = {}
+	for index = 1, 161 do
+		firstEvents[index] = { index, "CS", 1, 1, 0, 1, 1000 - index, 0 }
+		secondEvents[index] = { index, "CS", 1, 1, 0, 1, 1000 - index, 0 }
+	end
+	secondEvents[161] = { 161, "CS", 1, 1, 0, 1, 1, 0 }
+
+	local firstHash = addon.Core.EvidenceStore.killHashForEvidence("zone:hash_lab", "boss:hash_sentinel", "tier:normal", firstEvents, actors, spells, 2000, "unit_died")
+	local secondHash = addon.Core.EvidenceStore.killHashForEvidence("zone:hash_lab", "boss:hash_sentinel", "tier:normal", secondEvents, actors, spells, 2000, "unit_died")
+	Harness.assertTrue(firstHash ~= nil and secondHash ~= nil and firstHash ~= secondHash, "Evidence content hashes must include late event facts beyond the first 160 events")
+end
+
+local function scenarioEvidenceCountsAreSegmentLocal()
+	Harness.resetState("Replay Evidence Split Counts")
+	local firstBoss = "Split Count Alpha"
+	local secondBoss = "Split Count Beta"
+	local firstGuid = Harness.makeGuid(firstBoss, 909)
+	local secondGuid = Harness.makeGuid(secondBoss, 910)
+
+	Harness.emitSpell({ t = 0, sourceName = firstBoss, sourceGUID = firstGuid, spellName = "Alpha Strike", hp = 100 })
+	Harness.emitSpell({ t = 20, sourceName = firstBoss, sourceGUID = firstGuid, spellName = "Alpha Strike", hp = 68 })
+	emitUnitDied(22, firstGuid, firstBoss)
+	Harness.emitSpell({ t = 60, sourceName = secondBoss, sourceGUID = secondGuid, spellName = "Beta Ward", eventType = "SPELL_AURA_APPLIED", hp = 100 })
+	Harness.emitSpell({ t = 80, sourceName = secondBoss, sourceGUID = secondGuid, spellName = "Beta Ward", eventType = "SPELL_AURA_APPLIED", hp = 64 })
+	Harness.finishPull(100, "unit_died")
+
+	Harness.assertTrue(addon.Core.EvidenceStore.countPermanentKills() == 2, "Separated killed boss segments should each enter permanent evidence")
+	local seenAlpha = false
+	local seenBeta = false
+	for _, instance in pairs(addon.db.evidence.instances or {}) do
+		for _, evidenceBoss in pairs(instance.bosses or {}) do
+			for _, storedKill in pairs(evidenceBoss.kills or {}) do
+				local decoded, decodeError = addon.Core.EvidenceStore.decodeStoredKill(instance, evidenceBoss, storedKill)
+				Harness.assertTrue(decoded ~= nil, "Split-count evidence should decode: " .. tostring(decodeError))
+				local counts = decoded.kill.eventCounts or {}
+				if decoded.boss.name == firstBoss then
+					seenAlpha = true
+					Harness.assertTrue(counts.CS == 2 and counts.AA == nil, "First boss kill should store only its cast-success event counts")
+				elseif decoded.boss.name == secondBoss then
+					seenBeta = true
+					Harness.assertTrue(counts.AA == 2 and counts.CS == nil, "Second boss kill should store only its aura event counts")
+				end
+			end
+		end
+	end
+	Harness.assertTrue(seenAlpha and seenBeta, "Both split-count bosses should have decodable evidence")
+end
+
+local function scenarioEvidenceStoresAddHeavyKillsWithinCap()
+	Harness.resetState("Replay Evidence Add Heavy")
+	local boss = "Add Heavy Sentinel"
+	local guid = Harness.makeGuid(boss, 911)
+	local pull, context = Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = guid, spellName = "Command Swarm", hp = 100 })
+	for index = 1, 24 do
+		Harness.emitAssociatedSpell({
+			t = index,
+			pull = pull,
+			ownerContext = context,
+			sourceName = "Swarm Add " .. tostring(index),
+			sourceId = 920 + index,
+			spellName = "Swarm Pressure",
+			hp = 100 - index,
+		})
+	end
+	Harness.emitSpell({ t = 45, sourceName = boss, sourceGUID = guid, spellName = "Command Swarm", hp = 20 })
+	Harness.finishPull(60, "unit_died")
+
+	Harness.assertTrue(addon.Core.EvidenceStore.countPermanentKills() == 1, "Add-heavy killed encounters should still enter permanent evidence within the actor cap")
+	Harness.assertTrue(addon.Core.EvidenceStore.countIncomplete() == 0, "Add-heavy killed encounters inside the cap should not be marked incomplete")
+	local decoded = firstDecodedEvidenceKill()
+	Harness.assertTrue(decoded ~= nil and #(decoded.kill.actors or {}) > 18, "Permanent evidence should retain add actor facts beyond the old actor cap")
 end
 
 local function scenarioEvidenceRebuildsLearnedModel()
@@ -1516,6 +1688,63 @@ local function scenarioEvidenceRebuildsLearnedModel()
 	local rebuilt = Harness.ability(Harness.encounter(bossKey), bossKey, "Clockwork Slam")
 	Harness.assertTrue(rebuilt ~= nil, "Evidence rebuild should recreate the learned ability")
 	Harness.assertNear(rebuilt.minInterval, 24, 0.01, "Evidence rebuild should preserve interval evidence")
+end
+
+local function scenarioEvidenceEngineVersionRebuildsFinalData()
+	Harness.resetState("Replay Evidence Engine Version")
+	local boss = "Engine Sentinel"
+	local guid = Harness.makeGuid(boss, 906)
+	Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = guid, spellName = "Version Slam", hp = 100 })
+	Harness.emitSpell({ t = 26, sourceName = boss, sourceGUID = guid, spellName = "Version Slam", hp = 68 })
+	Harness.finishPull(50, "unit_died")
+
+	local bossKey = addon.Core.Util.bossKey(boss, guid)
+	local ability = Harness.ability(Harness.encounter(bossKey), bossKey, "Version Slam")
+	Harness.assertTrue(ability ~= nil, "Fixture should learn the engine-version ability")
+	ability.minInterval = 999
+	ability.selectedRule = {
+		type = "time_interval",
+		minInterval = 999,
+		confidence = 0.95,
+	}
+	addon.db.learnedMeta.interpretationEngineVersion = addon.Core.Constants.INTERPRETATION_ENGINE_VERSION - 1
+	addon.db.learnedMeta.rebuildRequired = true
+	addon.db.learnedMeta.rebuildReason = "test_engine"
+
+	local rebuiltNow, promoted = addon.Core.SavedVariables.rebuildLearnedIfNeeded()
+	Harness.assertTrue(rebuiltNow == true and promoted >= 1, "Stale interpretation-engine metadata should trigger an evidence rebuild")
+	ability = Harness.ability(Harness.encounter(bossKey), bossKey, "Version Slam")
+	Harness.assertTrue(ability ~= nil, "Engine rebuild should recreate the learned ability")
+	Harness.assertNear(ability.minInterval, 26, 0.01, "Engine rebuild should replace stale final timer data from evidence")
+	Harness.assertTrue(addon.db.learnedMeta.interpretationEngineVersion == addon.Core.Constants.INTERPRETATION_ENGINE_VERSION, "Engine rebuild should mark learned data with the current interpretation engine version")
+	Harness.assertTrue(addon.db.learnedMeta.rebuildRequired == nil, "Engine rebuild should clear the rebuild-required marker")
+end
+
+local function scenarioMissingEvidenceEngineVersionRebuildsForFutureEngines()
+	Harness.resetState("Replay Missing Evidence Engine Version")
+	local boss = "Future Engine Sentinel"
+	local guid = Harness.makeGuid(boss, 907)
+	Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = guid, spellName = "Future Slam", hp = 100 })
+	Harness.emitSpell({ t = 28, sourceName = boss, sourceGUID = guid, spellName = "Future Slam", hp = 68 })
+	Harness.finishPull(50, "unit_died")
+
+	local bossKey = addon.Core.Util.bossKey(boss, guid)
+	local ability = Harness.ability(Harness.encounter(bossKey), bossKey, "Future Slam")
+	Harness.assertTrue(ability ~= nil, "Fixture should learn the future-engine ability")
+	ability.minInterval = 999
+	addon.db.learnedMeta.interpretationEngineVersion = nil
+
+	local originalEngineVersion = addon.Core.Constants.INTERPRETATION_ENGINE_VERSION
+	local futureEngineVersion = originalEngineVersion + 1
+	addon.Core.Constants.INTERPRETATION_ENGINE_VERSION = futureEngineVersion
+	local rebuiltNow, promoted = addon.Core.SavedVariables.rebuildLearnedIfNeeded()
+	addon.Core.Constants.INTERPRETATION_ENGINE_VERSION = originalEngineVersion
+
+	Harness.assertTrue(rebuiltNow == true and promoted >= 1, "Missing engine metadata should rebuild when the current engine is newer than the initial marker version")
+	ability = Harness.ability(Harness.encounter(bossKey), bossKey, "Future Slam")
+	Harness.assertTrue(ability ~= nil, "Missing-engine rebuild should recreate the learned ability")
+	Harness.assertNear(ability.minInterval, 28, 0.01, "Missing-engine rebuild should replace stale final data from evidence")
+	Harness.assertTrue(addon.db.learnedMeta.interpretationEngineVersion == futureEngineVersion, "Missing-engine rebuild should record the future interpretation engine version")
 end
 
 local function scenarioEvidenceSyncRoundTripRebuildsModel()
@@ -1544,12 +1773,9 @@ local function scenarioEvidenceSyncRoundTripRebuildsModel()
 	Harness.assertTrue(rebuilt.minDifficultyOrdinal == 1, "Imported sync evidence should preserve ability difficulty metadata")
 
 	local function firstEvidenceKillHash()
-		for _, instance in pairs(addon.db.evidence.instances or {}) do
-			for _, evidenceBoss in pairs(instance.bosses or {}) do
-				for _, kill in pairs(evidenceBoss.kills or {}) do
-					return kill.hash
-				end
-			end
+		local blocks = addon.Core.EvidenceStore.collectKillBlocks()
+		if blocks[1] then
+			return blocks[1].hash
 		end
 		return nil
 	end
@@ -1581,7 +1807,7 @@ local function scenarioEvidenceSyncRoundTripRebuildsModel()
 	Harness.assertTrue(sessionId ~= nil, "Target sync request should include a session id")
 
 	Harness.clearAddonMessages()
-	addon.Core.EvidenceSync.handleAddonMessage("CHAT_MSG_ADDON", addon.Core.Constants.SYNC_PREFIX, "A|" .. sessionId .. "|1.5.0", "WHISPER", "PeerSyncTarget")
+	addon.Core.EvidenceSync.handleAddonMessage("CHAT_MSG_ADDON", addon.Core.Constants.SYNC_PREFIX, "A|" .. sessionId .. "|" .. addon.Core.Constants.VERSION, "WHISPER", "PeerSyncTarget")
 	addon.Core.EvidenceSync.flushQueue()
 	messages = Harness.sentAddonMessages()
 	Harness.assertTrue(#messages >= 2, "Accepted sync should send a header and at least one payload chunk")
@@ -1605,11 +1831,11 @@ local function scenarioEvidenceSyncRoundTripRebuildsModel()
 	Harness.assertNear(rebuilt.minInterval, 30, 0.01, "Chunked sync receive should preserve interval evidence")
 
 	Harness.clearAddonMessages()
-	addon.Core.EvidenceSync.handleAddonMessage("CHAT_MSG_ADDON", addon.Core.Constants.SYNC_PREFIX, "R|peer-session|1.5.0|2|7", "WHISPER", "PeerSyncTarget")
+	addon.Core.EvidenceSync.handleAddonMessage("CHAT_MSG_ADDON", addon.Core.Constants.SYNC_PREFIX, "R|peer-session|" .. addon.Core.Constants.VERSION .. "|2|7", "WHISPER", "PeerSyncTarget")
 	addon.Core.EvidenceSync.acceptRequest("PeerSyncTarget", "peer-session")
 	addon.Core.EvidenceSync.flushQueue()
 	messages = Harness.sentAddonMessages()
-	Harness.assertTrue(messages[1] ~= nil and messages[1].message == "A|peer-session|1.5.0", "Accepting a sync request should acknowledge the sender")
+	Harness.assertTrue(messages[1] ~= nil and messages[1].message == "A|peer-session|" .. addon.Core.Constants.VERSION, "Accepting a sync request should acknowledge the sender")
 	local reciprocalHeader
 	for index = 1, #messages do
 		if string.sub(messages[index].message, 1, 2) == "H|" then
@@ -1705,6 +1931,64 @@ local function scenarioEvidenceDifficultyAbilityAvailability()
 	Harness.assertTrue(addon.Core.Difficulty.abilityAvailable(ascended) == true, "Ascended should show ascended abilities")
 end
 
+local function scenarioBlankFivePlayerDifficultyInfersNormalOnly()
+	Harness.resetState("Replay Blank Difficulty")
+	Harness.setInstanceInfo({
+		name = "Gnomeregan",
+		instanceType = "party",
+		difficultyName = "",
+		difficultyIndex = 1,
+		maxPlayers = 5,
+		dynamicDifficulty = 0,
+		isDynamic = false,
+		mapId = 90,
+	})
+
+	local normal = addon.Core.Difficulty.current()
+	Harness.assertTrue(normal.ordinal == 1, "Blank 5-player difficulty index 1 should be normal")
+	Harness.assertTrue(normal.key == "tier:normal", "Blank 5-player normal should use the normal tier key")
+
+	Harness.setInstanceInfo({
+		name = "Blackwing Lair",
+		instanceType = "raid",
+		difficultyName = "",
+		difficultyIndex = 4,
+		maxPlayers = 25,
+		dynamicDifficulty = 0,
+		isDynamic = false,
+		mapId = 469,
+	})
+
+	local ambiguousRaid = addon.Core.Difficulty.current()
+	Harness.assertTrue(ambiguousRaid.ordinal == nil, "Blank raid difficulty index must remain unknown")
+	Harness.assertTrue(ambiguousRaid.key ~= "tier:ascended", "Blank raid index must not be guessed as an Ascension tier")
+end
+
+local function scenarioObservedDifficultySummaryUsesSeenTiers()
+	local Difficulty = addon.Core.Difficulty
+	local text, tooltip = Difficulty.abilityObservedDifficultySummary({
+		seenDifficulties = {
+			["tier:normal"] = true,
+			["tier:ascended"] = true,
+		},
+	})
+	Harness.assertTrue(text == "N A", "Observed difficulty summary should list observed known tiers in order")
+	Harness.assertTrue(string.find(tooltip, "Normal", 1, true) ~= nil and string.find(tooltip, "Ascended", 1, true) ~= nil, "Observed difficulty tooltip should name known tiers")
+
+	text, tooltip = Difficulty.abilityObservedDifficultySummary({
+		minDifficultyOrdinal = 2,
+	})
+	Harness.assertTrue(text == "H", "Observed difficulty summary should fall back to the minimum known tier")
+	Harness.assertTrue(string.find(tooltip, "Heroic", 1, true) ~= nil, "Minimum-tier fallback tooltip should name the tier")
+
+	text = Difficulty.abilityObservedDifficultySummary({
+		seenDifficulties = {
+			["raw:1::5:0:0"] = true,
+		},
+	})
+	Harness.assertTrue(text == "?", "Observed difficulty summary should mark raw unknown difficulty evidence")
+end
+
 local scenarios = {
 	scenarioChannelLifecycle,
 	scenarioPhaseHpRules,
@@ -1736,6 +2020,7 @@ local scenarios = {
 	scenarioClearLearnedClearsConfigOverrides,
 	scenarioWarningRaidPermissionUsesWotlkApi,
 	scenarioConfiguredWarningPlaysSound,
+	scenarioSlashHelpAvoidsRawPipeSeparators,
 	scenarioPredictionDeduplicatesSameModelAbility,
 	scenarioGroupKeyDeduplicatesSameModelActors,
 	scenarioPrimaryBossUsesDynamicGroupVariantModel,
@@ -1751,9 +2036,17 @@ local scenarios = {
 	scenarioUnitDiedDefersWhileBossFrameAlive,
 	scenarioUnitDiedUsesGuidBeforeName,
 	scenarioEvidenceStoresOnlyCompletedKills,
+	scenarioEvidenceKeepsTechnicalSpellIdsForSameName,
+	scenarioEvidenceHashUsesAllEventFacts,
+	scenarioEvidenceCountsAreSegmentLocal,
+	scenarioEvidenceStoresAddHeavyKillsWithinCap,
 	scenarioEvidenceRebuildsLearnedModel,
+	scenarioEvidenceEngineVersionRebuildsFinalData,
+	scenarioMissingEvidenceEngineVersionRebuildsForFutureEngines,
 	scenarioEvidenceSyncRoundTripRebuildsModel,
 	scenarioEvidenceDifficultyAbilityAvailability,
+	scenarioBlankFivePlayerDifficultyInfersNormalOnly,
+	scenarioObservedDifficultySummaryUsesSeenTiers,
 }
 
 for index = 1, #scenarios do

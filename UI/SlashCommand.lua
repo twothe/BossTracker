@@ -19,7 +19,7 @@ local function help()
 	Util.print("/bt unlock, /bt lock, /bt resetui - fallback timer frame controls")
 	Util.print("/bt scale 1.0, /bt bigger, /bt smaller - fallback scale controls")
 	Util.print("/bt panic, /bt resume, /bt timers on/off - control timer visibility")
-	Util.print("/bt sync target|player|group|raid - request evidence exchange")
+	Util.print("/bt sync target, player, group, raid - request evidence exchange")
 	Util.print("/bt debug on/off, /bt clearlogs, /bt clearlearned - alpha diagnostics")
 end
 

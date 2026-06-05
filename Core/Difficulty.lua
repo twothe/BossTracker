@@ -22,6 +22,20 @@ local LABELS = {
 	[4] = "ascended",
 }
 
+local DISPLAY_LABELS = {
+	normal = "Normal",
+	heroic = "Heroic",
+	mythic = "Mythic",
+	ascended = "Ascended",
+}
+
+local SHORT_LABELS = {
+	normal = "N",
+	heroic = "H",
+	mythic = "M",
+	ascended = "A",
+}
+
 local function normalizeName(value)
 	value = string.lower(tostring(value or ""))
 	value = string.gsub(value, "[^%w]+", "_")
@@ -47,6 +61,27 @@ local function ordinalFromName(name)
 	return nil, normalized ~= "" and normalized or "unknown"
 end
 
+local function ordinalFromFacts(facts)
+	local ordinal, label = ordinalFromName(facts.rawName)
+	if ordinal then
+		return ordinal, label
+	end
+
+	if label ~= "unknown" then
+		return nil, label
+	end
+
+	if facts.instanceType == "party"
+		and facts.rawIndex == 1
+		and facts.maxPlayers == 5
+		and (facts.dynamicDifficulty == nil or facts.dynamicDifficulty == 0)
+		and facts.isDynamic ~= true then
+		return ORDER.normal, "normal"
+	end
+
+	return nil, label
+end
+
 local function difficultyKey(facts, ordinal, label)
 	if ordinal then
 		return "tier:" .. tostring(label or LABELS[ordinal] or ordinal)
@@ -69,8 +104,9 @@ function Difficulty.normalize(zoneInfo)
 		maxPlayers = tonumber(zoneInfo.maxPlayers),
 		dynamicDifficulty = tonumber(zoneInfo.dynamicDifficulty),
 		isDynamic = zoneInfo.isDynamic == true,
+		instanceType = zoneInfo.instanceType,
 	}
-	local ordinal, label = ordinalFromName(facts.rawName)
+	local ordinal, label = ordinalFromFacts(facts)
 	local normalized = {
 		ordinal = ordinal,
 		label = label,
@@ -126,6 +162,51 @@ end
 
 function Difficulty.labelForOrdinal(ordinal)
 	return LABELS[tonumber(ordinal)]
+end
+
+function Difficulty.abilityObservedDifficultySummary(ability)
+	if type(ability) ~= "table" then
+		return "-", "No difficulty evidence"
+	end
+
+	local seen = {}
+	local unknownSeen = false
+	if type(ability.seenDifficulties) == "table" then
+		for key in pairs(ability.seenDifficulties) do
+			local label = string.match(tostring(key or ""), "^tier:(%w+)$")
+			if label and SHORT_LABELS[label] then
+				seen[label] = true
+			else
+				unknownSeen = true
+			end
+		end
+	end
+
+	local minimumLabel = ability.minDifficultyLabel or LABELS[tonumber(ability.minDifficultyOrdinal)]
+	if minimumLabel and SHORT_LABELS[minimumLabel] then
+		seen[minimumLabel] = true
+	elseif ability.minDifficultyKey then
+		unknownSeen = true
+	end
+
+	local shortParts = {}
+	local labelParts = {}
+	for ordinal = 1, #LABELS do
+		local label = LABELS[ordinal]
+		if seen[label] then
+			shortParts[#shortParts + 1] = SHORT_LABELS[label]
+			labelParts[#labelParts + 1] = DISPLAY_LABELS[label] or label
+		end
+	end
+	if unknownSeen then
+		shortParts[#shortParts + 1] = "?"
+		labelParts[#labelParts + 1] = "Unknown"
+	end
+
+	if #shortParts == 0 then
+		return "-", "No difficulty evidence"
+	end
+	return table.concat(shortParts, " "), "Observed in: " .. table.concat(labelParts, ", ")
 end
 
 function Difficulty.start()

@@ -2,9 +2,10 @@
 
 This document captures the agreed design and current implementation contract for
 persistent encounter evidence and player-to-player synchronization. Version
-1.5.0 includes the local evidence store, kill-only commit path, evidence rebuild
-path, difficulty-aware ability availability, and accepted player-to-player sync
-transport.
+1.7.0 includes the local evidence store, the shared packed `EvidenceCodec`,
+kill-only commit path, evidence rebuild path, interpretation-engine rebuild
+detection, difficulty-aware ability availability, and accepted player-to-player
+sync transport.
 
 ## Current Baseline
 
@@ -18,6 +19,12 @@ The persistent source of truth for rebuild and sync is
 `BossTrackerDB.evidence`. It stores compact per-kill evidence only for
 completed boss segments and can replay those kills through the local learning
 pipeline.
+
+`BossTrackerDB.learnedMeta.interpretationEngineVersion` records which
+calculation engine produced the current final timer models. When
+`C.INTERPRETATION_ENGINE_VERSION` changes or a schema reset marks
+`rebuildRequired`, the addon rebuilds final models from permanent evidence after
+startup modules are ready.
 
 Diagnostics under `BossTrackerDB.debug` may contain pull events and HP samples,
 but those records are debug-only, bounded for manual inspection, and must not
@@ -38,10 +45,10 @@ The current learning path is:
 ## Simulation Evidence
 
 The plan was checked against the current replay and C++ simulator coverage on
-2026-06-04:
+2026-06-05:
 
 - `lua tests/replay_scenarios.lua`
-  - Result: `replay scenarios passed: 48`
+  - Result: `replay scenarios passed: 57`
 - `lua tests/cpp_module_replay.lua --all --quiet`
   - Result: `scripts=316 scenarios=1580 fallbacks=17 events=2258 schedules=2050 actions=1764`
 
@@ -110,13 +117,19 @@ If a difficulty cannot be normalized safely, its evidence must not be merged
 across difficulty ordinals. Unknown difficulties remain isolated until the
 normalizer can identify them.
 
+Live Gnomeregan data on Project Ascension returned a blank difficulty name with
+`difficultyIndex = 1`, `maxPlayers = 5`, `dynamicDifficulty = 0`, and
+`isDynamic = false`; this exact 5-player case is normalized as `normal`. Blank
+raid indexes are still treated as unknown because WotLK raid indexes can encode
+raid size/mode rather than Ascension's additive tiers.
+
 ## Persistent Data Model
 
 Use an account-wide store:
 
 ```lua
 BossTrackerDB.evidence = {
-  schemaVersion = 1,
+  schemaVersion = 2,
   revision = 0,
   instances = {},
   incomplete = {},
@@ -124,7 +137,9 @@ BossTrackerDB.evidence = {
 ```
 
 Permanent evidence lives under `instances` and contains only completed kill
-segments:
+segments. Stored kills are packed records; callers must decode them through
+`Core/EvidenceStore.lua` and `Core/EvidenceCodec.lua` instead of reading
+expanded event tables directly:
 
 ```lua
 instances = {
@@ -139,23 +154,10 @@ instances = {
         name = "Ragnaros",
         kills = {
           [killHash] = {
-            hash = "...",
-            capturedAt = 1234567890,
-            addonVersion = "1.5.0",
-            duration10 = 6120,
-            endReason = "unit_died",
-            difficulty = {
-              ordinal = 4,
-              rawIndex = 4,
-              rawName = "Ascended",
-              maxPlayers = 40,
-              dynamicDifficulty = 0,
-              isDynamic = false,
-            },
-            actors = {},
-            spells = {},
-            events = {},
-            eventCounts = {},
+            h = "content-hash",
+            t = 1234567890,
+            v = "1.7.0",
+            p = "K|...~A|...~S|...~V|...~T|...",
           },
         },
       },
@@ -203,21 +205,26 @@ actors = {
 }
 ```
 
-GUIDs should not be used as durable identity. A short hash is useful for
-deduplicating the same observed kill across players.
+GUIDs should not be used as durable identity. A compact content hash is useful
+for deduplicating the same observed kill across players, but the stored evidence
+itself remains the source of truth.
 
 ### Spells
 
-Visible spell names remain canonical. Spell IDs are retained as observed facts
-for icon lookup and diagnostics:
+Technical spell evidence is keyed by observed SpellID when available. The
+visible timer key is stored separately as `displayKey`, so same-name effects
+remain distinguishable in raw evidence while the final timer model can still
+merge them by visible mechanic name when the current interpreter decides that is
+correct.
 
 ```lua
 spells = {
   {
     id = 1,
-    key = "name:wrath_of_ragnaros",
+    key = "spell:20566",
+    displayKey = "name:wrath_of_ragnaros",
     name = "Wrath of Ragnaros",
-    spellIds = { 20566, 999001 },
+    spellIds = { 20566 },
   },
 }
 ```
@@ -227,8 +234,8 @@ spells = {
 Events are compact tuples, not raw combat-log tables:
 
 ```lua
--- t10, eventCode, sourceActorId, destActorId, spellId, hp10, flags
-{ 240, "CS", 1, 0, 1, 720, 0 }
+-- t10, eventCode, ownerActorId, sourceActorId, destActorId, spellDictId, hp10, flags
+{ 240, "CS", 1, 1, 0, 1, 720, 0 }
 ```
 
 Recommended event codes:
@@ -305,6 +312,7 @@ The rebuild process should:
 4. Recreate encounter models through `ModelStore`.
 5. Annotate abilities with difficulty availability derived from kill evidence.
 6. Refresh relevance scoring and display rules.
+7. Mark `learnedMeta.interpretationEngineVersion` as current.
 
 The first implementation should prefer reusing the current production learning
 modules so parity can be tested directly.
@@ -328,9 +336,10 @@ classes:
 
 The wire payload is schema-specific and compact:
 
-- one short line per instance, boss, kill, actor, spell dictionary, event-count
-  table, and event tuple table.
-- actor and spell references use numeric IDs inside each kill.
+- one top-level header line plus one packed `P` block per completed kill.
+- each `P` block uses the same packed kill string stored locally.
+- inside a kill block, actor and spell references use numeric IDs local to that
+  block.
 - events are packed as tuples and chunked below the addon-message size limit.
 - the receiver validates schema, payload length, transfer hash, caps, kill
   shape, actor references, spell references, authorization, and duplicate
@@ -349,10 +358,17 @@ Each kill needs a deterministic `killHash` built from stable facts:
 
 - instance key
 - difficulty raw facts and ordinal
-- encounter actor model keys
+- encounter actor model keys plus observed actor keys or GUID hashes
 - rounded duration
-- ordered ability event fingerprint
+- ordered ability event fingerprint for every stored event tuple, based on event
+  time, event code, actor model keys, observed SpellIDs, HP, and flags
 - kill end reason
+
+The hash must not depend on local numeric actor or spell dictionary ordering.
+Those numeric IDs are only compact references within one packed kill block.
+When comparing against older stored blocks, the receiver decodes existing kills
+and recomputes their current content hash so hash-algorithm tightening does not
+turn the same evidence into a duplicate row.
 
 On import or local commit:
 
@@ -382,11 +398,17 @@ When caps are reached, drop the lowest-value records first:
 Permanent kill evidence should be smaller than debug runs. The goal is enough
 facts to recalculate, not a full combat-log archive.
 
+The actor cap is intentionally above the first simple boss cases. The 2026-06-05
+simulator review found add-heavy completed kills with up to 45 actor records; the
+current `C.MAX_EVIDENCE_ACTORS_PER_KILL` value of 64 keeps those kills in
+permanent evidence without removing the hard cap.
+
 ## Implementation Phases
 
 ### Phase 1: Evidence Infrastructure
 
 - Add `Core/Difficulty.lua`.
+- Add `Core/EvidenceCodec.lua`.
 - Add `Core/EvidenceStore.lua`.
 - Add evidence schema defaults and bounds in `Core/SavedVariables.lua`.
 - Add constants for evidence caps.
@@ -414,8 +436,8 @@ facts to recalculate, not a full combat-log archive.
 - Add a model rebuild function from permanent evidence.
 - Prove parity against direct learning for existing replay scenarios.
 - Prove parity against representative C++ simulator scenarios.
-- Add a command or internal maintenance hook to rebuild learned models after
-  schema upgrades.
+- Add an internal maintenance hook to rebuild learned models after schema or
+  interpretation-engine upgrades.
 
 ### Phase 5: Difficulty-Aware Display
 
