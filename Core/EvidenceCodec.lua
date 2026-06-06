@@ -440,7 +440,9 @@ function EvidenceCodec.encodeKillBlock(instance, boss, kill, forcedHash)
 			fieldBool(actor.focusSeen == true),
 			actor.startHp10,
 			actor.endHp10,
-			packHp(actor.hp)
+			packHp(actor.hp),
+			actor.contextStart10,
+			actor.contextEnd10
 		)
 	end
 
@@ -559,6 +561,8 @@ function EvidenceCodec.decodeKillBlock(block)
 					startHp10 = tonumber(fields[14]),
 					endHp10 = tonumber(fields[15]),
 					hp = unpackHp(fields[16]),
+					contextStart10 = tonumber(fields[17]),
+					contextEnd10 = tonumber(fields[18]),
 				}
 			elseif recordType == "S" and decoded.kill and #decoded.kill.spells < C.MAX_EVIDENCE_SPELLS_PER_KILL then
 				decoded.kill.spells[#decoded.kill.spells + 1] = {

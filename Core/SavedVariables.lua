@@ -11,6 +11,8 @@ addon.Core.SavedVariables = SavedVariables
 local pendingLearnedBackupConflict
 local learnedBackupIsUsable
 local restoreRecoveryConfig
+local WARNING_LEAD_TIME_DEFAULT_MIGRATION = "warningLeadTimeDefault3"
+local OLD_DEFAULT_WARNING_LEAD_TIME = 5
 local RECOVERY_CONFIG_KEYS = {
 	enabled = true,
 	timersEnabled = true,
@@ -401,6 +403,35 @@ local function cleanupCombatLogSubeventAbilities(db)
 	return removedAbilities, removedEncounters
 end
 
+local function migrateWarningLeadTimeDefault(db)
+	if type(db) ~= "table" or type(db.config) ~= "table" then
+		return false
+	end
+	db.configMigrations = type(db.configMigrations) == "table" and db.configMigrations or {}
+	if db.configMigrations[WARNING_LEAD_TIME_DEFAULT_MIGRATION] == true then
+		return false
+	end
+
+	local targetLeadTime = tonumber(C.DEFAULT_CONFIG.warningLeadTime) or 3
+	local currentLeadTime = tonumber(db.config.warningLeadTime)
+	db.configMigrations[WARNING_LEAD_TIME_DEFAULT_MIGRATION] = true
+	if currentLeadTime ~= OLD_DEFAULT_WARNING_LEAD_TIME or targetLeadTime == OLD_DEFAULT_WARNING_LEAD_TIME then
+		return false
+	end
+
+	db.config.warningLeadTime = targetLeadTime
+	appendMigration(db, {
+		id = WARNING_LEAD_TIME_DEFAULT_MIGRATION,
+		from = C.SCHEMA_VERSION,
+		to = C.SCHEMA_VERSION,
+		at = wallTime(),
+		reason = "Updated stored alpha warning lead time from the old default to the current default.",
+		fromSeconds = OLD_DEFAULT_WARNING_LEAD_TIME,
+		toSeconds = targetLeadTime,
+	})
+	return true
+end
+
 local function boundLearnedData(learned)
 	if type(learned.zones) ~= "table" then
 		learned.zones = {}
@@ -647,6 +678,7 @@ function SavedVariables.init()
 	db.version = C.VERSION
 	db.config = type(db.config) == "table" and db.config or {}
 	copyDefaults(db.config, C.DEFAULT_CONFIG)
+	migrateWarningLeadTimeDefault(db)
 	db.learned = type(db.learned) == "table" and db.learned or { zones = {} }
 	db.learned.zones = type(db.learned.zones) == "table" and db.learned.zones or {}
 	if addon.Core.EvidenceStore and addon.Core.EvidenceStore.ensureDb then

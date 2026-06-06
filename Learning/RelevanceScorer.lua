@@ -11,6 +11,7 @@ addon.Learning.RelevanceScorer = RelevanceScorer
 
 local routineSpellIndex = {}
 local routineSpellIndexDirty = true
+local DISPLAY_FLOOR_EPSILON_SECONDS = 0.000001
 
 local function displayIntervalFloor()
 	local config = addon.Core and addon.Core.Config
@@ -18,6 +19,14 @@ local function displayIntervalFloor()
 		return config.getMinTimerDisplayInterval()
 	end
 	return C.MIN_TIMER_DISPLAY_INTERVAL_SECONDS
+end
+
+local function belowDisplayIntervalFloor(value)
+	value = tonumber(value)
+	if not value then
+		return false
+	end
+	return value < (displayIntervalFloor() - DISPLAY_FLOOR_EPSILON_SECONDS)
 end
 
 local function textContains(text, pattern)
@@ -156,11 +165,11 @@ local function frequentShortIntervalReason(ability)
 	local observedGapSamples = tonumber(ability.observedGapSamples) or 0
 	local minObservedGap = tonumber(ability.minObservedGap)
 
-	if activationCount >= 2 and intervalSamples >= 1 and minInterval and minInterval < displayIntervalFloor() then
+	if activationCount >= 2 and intervalSamples >= 1 and belowDisplayIntervalFloor(minInterval) then
 		return "short_interval_below_display_floor"
 	end
 
-	if activationCount >= 2 and observedGapSamples >= 1 and minObservedGap and minObservedGap < displayIntervalFloor() then
+	if activationCount >= 2 and observedGapSamples >= 1 and belowDisplayIntervalFloor(minObservedGap) then
 		return "short_activation_gap_below_display_floor"
 	end
 
@@ -258,6 +267,17 @@ local function bossSelfAuraPhaseStateReason(ability)
 	return "boss_self_aura_phase_state"
 end
 
+local function playerAuraPhaseStateReason(ability)
+	if type(ability) ~= "table"
+		or ability.encounterAssociated
+		or not isAuraOnlyAbility(ability)
+		or (tonumber(ability.playerAuraEventCount) or 0) <= 0
+		or (tonumber(ability.bossSelfAuraEventCount) or 0) > 0 then
+		return nil
+	end
+	return "player_aura_phase_state"
+end
+
 local function abilityHasRoutineRule(ability)
 	if type(ability) ~= "table" then
 		return false
@@ -317,6 +337,7 @@ function RelevanceScorer.routineReasonForAbility(ability)
 		or auraStackStateReason(ability)
 		or auraOnlySameHpRepeatReason(ability)
 		or bossSelfAuraPhaseStateReason(ability)
+		or playerAuraPhaseStateReason(ability)
 end
 
 function RelevanceScorer.applyRoutineCandidate(ability, candidate)

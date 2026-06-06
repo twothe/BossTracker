@@ -198,8 +198,11 @@ local function scenarioPlayerAuraPhaseRules()
 
 	local bossKey = addon.Core.Util.bossKey(boss, guid)
 	local model = Harness.encounter(bossKey)
+	local mark = Harness.ability(model, bossKey, "Frost Mark")
 	local pulse = Harness.ability(model, bossKey, "Frost Pulse")
 	local reset = Harness.ability(model, bossKey, "Arcane Reset")
+	Harness.assertTrue(mark ~= nil and mark.selectedRule and mark.selectedRule.type == "routine_noise", "Pure player aura phase state should be hidden by default")
+	Harness.assertTrue(mark.suppressionReason == "player_aura_phase_state", "Pure player aura state should explain its suppression reason")
 	Harness.assertTrue(pulse ~= nil and pulse.segmentStats and pulse.segmentStats[auraSegmentKey("aura", "player", "Frost Mark")] ~= nil, "First active player aura should create a player phase segment")
 	Harness.assertTrue(reset ~= nil and reset.segmentStats and reset.segmentStats[auraSegmentKey("aura_clear", "player", "Frost Mark")] ~= nil, "Last removed player aura should create a clear phase segment")
 end
@@ -507,6 +510,21 @@ local function scenarioTenSecondIntervalAllowed()
 	Harness.assertTrue(heavyStrike.autoSuppressed ~= true, "10s ability should not be auto-suppressed by the display floor")
 end
 
+local function scenarioDisplayFloorPrecisionBoundaryAllowed()
+	Harness.resetState("Replay Display Floor Precision")
+	local boss = "Precision Commander"
+	local guid = Harness.makeGuid(boss, 657)
+	local floor = addon.Core.Constants.MIN_TIMER_DISPLAY_INTERVAL_SECONDS
+	Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = guid, spellName = "Measured Strike", hp = 100 })
+	Harness.emitSpell({ t = floor - 0.000000000001, sourceName = boss, sourceGUID = guid, spellName = "Measured Strike", hp = 70 })
+	Harness.finishPull(28)
+
+	local model = Harness.encounter(addon.Core.Util.bossKey(boss, guid))
+	local measuredStrike = Harness.ability(model, addon.Core.Util.bossKey(boss, guid), "Measured Strike")
+	Harness.assertTrue(measuredStrike ~= nil, "Display-floor boundary ability should be learned")
+	Harness.assertTrue(measuredStrike.autoSuppressed ~= true, "Floating-point drift at the display floor must not suppress a 10s ability")
+end
+
 local function scenarioConfigMinimumDelayRefreshesRules()
 	Harness.resetState("Replay Config Minimum")
 	local boss = "Config Commander"
@@ -719,6 +737,42 @@ local function scenarioSavedVariablesCleanCombatLogSubeventAbilities()
 end
 
 local manualLearnedData
+
+local function scenarioSavedVariablesMigratesOldWarningLeadTimeDefault()
+	Harness.resetState("Replay SavedVariables Warning Lead Time Default")
+	local C = addon.Core.Constants
+
+	_G.BossTrackerDB = {
+		schemaVersion = C.SCHEMA_VERSION,
+		config = {
+			warningLeadTime = 5,
+			overrides = { zones = {} },
+		},
+		learned = { zones = {} },
+		learnedMeta = {
+			backupSchemaVersion = C.LEARNED_BACKUP_SCHEMA_VERSION,
+			dataSchemaVersion = C.SCHEMA_VERSION,
+			interpretationEngineVersion = C.INTERPRETATION_ENGINE_VERSION,
+			interpretationEngineUpdatedAt = 100,
+			dataId = "warning-lead-time-default",
+			revision = 0,
+			createdAt = 100,
+			updatedAt = 100,
+		},
+		debug = {},
+	}
+	_G.BossTrackerCharDB = {}
+	addon.Core.SavedVariables.init()
+
+	Harness.assertTrue(addon.db.config.warningLeadTime == C.DEFAULT_CONFIG.warningLeadTime, "Old stored warning default should migrate to the current default")
+	Harness.assertTrue(addon.db.configMigrations.warningLeadTimeDefault3 == true, "Warning default migration should be marked complete")
+	Harness.assertTrue(addon.db.migrations[#addon.db.migrations].id == "warningLeadTimeDefault3", "Warning default migration should leave a migration breadcrumb")
+
+	addon.db.config.warningLeadTime = 5
+	addon.Core.SavedVariables.init()
+
+	Harness.assertTrue(addon.db.config.warningLeadTime == 5, "Completed warning default migration should not override a later player value")
+end
 
 local function scenarioSavedVariablesRestoreFromCharacterBackup()
 	Harness.resetState("Replay SavedVariables Backup")
@@ -1480,6 +1534,44 @@ local function scenarioContainedSingleActorEncounterMergesIntoGroup()
 	Harness.assertTrue((group.pullCount or 0) >= 2, "Merged group should retain pull evidence from the single-actor phase")
 end
 
+local function scenarioPartyGroupVariantKeepsSingleActorEncounter()
+	Harness.resetState("Replay Razorfen Chain")
+	Harness.setInstanceInfo({
+		name = "Razorfen Kraul",
+		instanceType = "party",
+		maxPlayers = 5,
+		mapId = 47,
+		difficultyIndex = 1,
+		difficultyName = "",
+	})
+
+	local first = "Agathelos the Raging"
+	local second = "Blind Hunter"
+	local firstGuid = Harness.makeGuid(first, 784)
+	local secondGuid = Harness.makeGuid(second, 785)
+	local firstKey = addon.Core.Util.bossKey(first, firstGuid)
+	local secondKey = addon.Core.Util.bossKey(second, secondGuid)
+
+	Harness.emitSpell({ t = 0, sourceName = first, sourceGUID = firstGuid, spellName = "Rampage", hp = 92 })
+	Harness.emitSpell({ t = 14, sourceName = first, sourceGUID = firstGuid, spellName = "Rampage", hp = 54 })
+	Harness.finishPull(28, "unit_died")
+	Harness.assertTrue(Harness.encounter(firstKey) ~= nil, "Fixture should create a single-boss dungeon model first")
+
+	Harness.emitSpell({ t = 100, sourceName = first, sourceGUID = firstGuid, spellName = "Rampage", hp = 90 })
+	Harness.emitSpell({ t = 101, sourceName = second, sourceGUID = secondGuid, spellName = "Mortal Bite", hp = 96 })
+	Harness.emitSpell({ t = 116, sourceName = first, sourceGUID = firstGuid, spellName = "Rampage", hp = 42 })
+	Harness.emitSpell({ t = 117, sourceName = second, sourceGUID = secondGuid, spellName = "Mortal Bite", hp = 64 })
+	Harness.finishPull(140, "out_of_combat")
+
+	local keys = { firstKey, secondKey }
+	table.sort(keys)
+	local group = Harness.encounter("group:" .. table.concat(keys, "+"))
+	local single = Harness.encounter(firstKey)
+	Harness.assertTrue(group ~= nil, "Dungeon chain-pull should still keep the observed group variant")
+	Harness.assertTrue(group.actors[firstKey] ~= nil and group.actors[secondKey] ~= nil, "Group variant should contain both observed actors")
+	Harness.assertTrue(single ~= nil, "Dungeon group variant must not delete the exact single-boss model")
+end
+
 local function scenarioSingleSampleHpGateNotLiveTime()
 	Harness.resetState("Replay HP Gate")
 	local boss = "Phase Paladin"
@@ -1960,6 +2052,45 @@ local function scenarioEvidenceRebuildsLearnedModel()
 	Harness.assertNear(rebuilt.minInterval, 24, 0.01, "Evidence rebuild should preserve interval evidence")
 end
 
+local function scenarioEvidenceRebuildPreservesBossContextStart()
+	Harness.resetState("Replay Evidence Context Start")
+	local boss = "Delayed Opener"
+	local guid = Harness.makeGuid(boss, 903)
+	local bossKey = addon.Core.Util.bossKey(boss, guid)
+	Harness.setTime(0)
+	local openerContextSpellKey = addon.Core.Util.timerAbilityKey(nil, "Context Ping")
+	local pull = addon.Capture.EncounterState.noteSpellEvent({
+		t = 0,
+		combatTimestamp = 0,
+		eventType = "SPELL_CAST_SUCCESS",
+		sourceGUID = guid,
+		sourceName = boss,
+		sourceFlags = Harness.hostileFlags(),
+		sourceIsHostileNpc = true,
+		spellName = "Context Ping",
+		spellKey = openerContextSpellKey,
+		hpPct = 100,
+	})
+	local context = pull.bossContexts[addon.Core.Util.actorKey(boss, guid)]
+	Harness.markBossContext(context, 100)
+	Harness.emitSpell({ t = 7, sourceName = boss, sourceGUID = guid, spellName = "Late Warning", hp = 100 })
+	Harness.emitSpell({ t = 27, sourceName = boss, sourceGUID = guid, spellName = "Late Warning", hp = 62 })
+	Harness.finishPull(42, "unit_died")
+
+	local decoded = firstDecodedEvidenceKill()
+	Harness.assertTrue(decoded ~= nil, "Fixture should capture decodable evidence")
+	Harness.assertTrue(decoded.kill.actors[1].contextStart10 == 0, "Permanent evidence should store boss context start separately from the first spell event")
+	Harness.assertTrue(decoded.kill.actors[1].first10 == 70, "Permanent evidence should still preserve first observed event timing")
+
+	local direct = Harness.ability(Harness.encounter(bossKey), bossKey, "Late Warning")
+	Harness.assertNear(direct.avgFirstOffset, 7, 0.01, "Fixture should learn the live first offset from boss context start")
+	local promoted = addon.Core.EvidenceStore.rebuildLearned()
+	Harness.assertTrue(promoted >= 1, "Evidence rebuild should promote the context-start fixture")
+	local rebuilt = Harness.ability(Harness.encounter(bossKey), bossKey, "Late Warning")
+	Harness.assertTrue(rebuilt ~= nil, "Evidence rebuild should recreate the context-start ability")
+	Harness.assertNear(rebuilt.avgFirstOffset, 7, 0.01, "Evidence rebuild should preserve boss context start for first-offset timers")
+end
+
 local function scenarioEvidenceRebuildPreservesPlayerAuraPhase()
 	Harness.resetState("Replay Evidence Player Aura Phase")
 	local boss = "Evidence Aura Sentinel"
@@ -2311,6 +2442,7 @@ local scenarios = {
 	scenarioAuraStackStateBuffSuppressed,
 	scenarioSpellIconFallsBackToSpellInfo,
 	scenarioTenSecondIntervalAllowed,
+	scenarioDisplayFloorPrecisionBoundaryAllowed,
 	scenarioConfigMinimumDelayRefreshesRules,
 	scenarioKnownRoutineSpellSuppressesLiveProvisional,
 	scenarioKnownRoutineSpellSuppressesPersistentSparseModel,
@@ -2319,6 +2451,7 @@ local scenarios = {
 	scenarioCombatLogHandlerKeepsSpellNames,
 	scenarioHealOnlySpellCanBecomeTimer,
 	scenarioSavedVariablesCleanCombatLogSubeventAbilities,
+	scenarioSavedVariablesMigratesOldWarningLeadTimeDefault,
 	scenarioSavedVariablesRestoreFromCharacterBackup,
 	scenarioSavedVariablesLateCharacterBackupRestoresAfterEmptyCharacterLogin,
 	scenarioSavedVariablesSchemaResetTombstoneDoesNotBlockLaterBackup,
@@ -2336,6 +2469,7 @@ local scenarios = {
 	scenarioPrimaryBossUsesDynamicGroupVariantModel,
 	scenarioClosedPhaseActorStillGroupsAfterContextEviction,
 	scenarioContainedSingleActorEncounterMergesIntoGroup,
+	scenarioPartyGroupVariantKeepsSingleActorEncounter,
 	scenarioSingleSampleHpGateNotLiveTime,
 	scenarioTimedSingleCastDoesNotBecomeHpGateAfterTwoPulls,
 	scenarioUnconfirmedEliteTrashNotPromoted,
@@ -2351,6 +2485,7 @@ local scenarios = {
 	scenarioEvidenceCountsAreSegmentLocal,
 	scenarioEvidenceStoresAddHeavyKillsWithinCap,
 	scenarioEvidenceRebuildsLearnedModel,
+	scenarioEvidenceRebuildPreservesBossContextStart,
 	scenarioEvidenceRebuildPreservesPlayerAuraPhase,
 	scenarioEvidenceEngineVersionRebuildsFinalData,
 	scenarioMissingEvidenceEngineVersionRebuildsForFutureEngines,

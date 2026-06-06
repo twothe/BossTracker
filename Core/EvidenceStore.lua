@@ -288,10 +288,42 @@ local function ensureActor(draft, actorKey, modelKey, name, guid, t10Value, hp10
 	return actor
 end
 
+local function updateActorContextWindow(actor, contextStart10, contextEnd10)
+	if not actor then
+		return
+	end
+	if contextStart10 then
+		if not actor.contextStart10 or contextStart10 < actor.contextStart10 then
+			actor.contextStart10 = contextStart10
+		end
+	end
+	if contextEnd10 then
+		if not actor.contextEnd10 or contextEnd10 > actor.contextEnd10 then
+			actor.contextEnd10 = contextEnd10
+		end
+	end
+end
+
+local function contextRelativeT10(draft, value)
+	value = tonumber(value)
+	if not value then
+		return nil
+	end
+	return round10(value - (draft.startedAtSession or 0))
+end
+
 local function ensureActorFromContext(draft, context, t10Value)
 	if type(context) ~= "table" then
 		return nil
 	end
+	local contextStart10 = contextRelativeT10(
+		draft,
+		context.startedAtSession or context.firstSeenAt or context.lastSeenAtSession or context.endedAtSession
+	)
+	local contextEnd10 = contextRelativeT10(
+		draft,
+		context.endedAtSession or context.lastSeenAtSession
+	) or t10Value
 	local actor = ensureActor(
 		draft,
 		context.actorKey,
@@ -302,6 +334,7 @@ local function ensureActorFromContext(draft, context, t10Value)
 		hp10(context.lastHpPct)
 	)
 	if actor then
+		updateActorContextWindow(actor, contextStart10 or t10Value, contextEnd10)
 		actor.class = context.unitClassification or actor.class
 		actor.bossFrame = context.sawBossUnit == true or actor.bossFrame or nil
 		actor.bossUnitToken = context.bossUnitToken or actor.bossUnitToken
@@ -974,13 +1007,21 @@ local function contextForActor(actor, endReason)
 	if type(actor) ~= "table" then
 		return nil
 	end
+	local startedAt10 = tonumber(actor.contextStart10) or tonumber(actor.first10) or 0
+	local endedAt10 = tonumber(actor.contextEnd10) or tonumber(actor.last10) or startedAt10
+	if tonumber(actor.first10) and tonumber(actor.first10) < startedAt10 then
+		startedAt10 = tonumber(actor.first10)
+	end
+	if tonumber(actor.last10) and tonumber(actor.last10) > endedAt10 then
+		endedAt10 = tonumber(actor.last10)
+	end
 	return {
 		actorKey = actor.key,
 		modelKey = actor.modelKey,
 		name = actor.name,
-		startedAtSession = (tonumber(actor.first10) or 0) / 10,
-		endedAtSession = (tonumber(actor.last10) or 0) / 10,
-		duration = ((tonumber(actor.last10) or 0) - (tonumber(actor.first10) or 0)) / 10,
+		startedAtSession = startedAt10 / 10,
+		endedAtSession = endedAt10 / 10,
+		duration = (endedAt10 - startedAt10) / 10,
 		endReason = endReason or "unit_died",
 		unitClassification = actor.class,
 		lastUnitSource = actor.bossFrame and "boss_unit" or actor.targetSeen and "target" or actor.focusSeen and "focus" or nil,

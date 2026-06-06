@@ -359,8 +359,23 @@ local function bestGroupContainingActor(zone, actorKey)
 	return bestEncounter
 end
 
+local function zonePreservesSingleActorVariants(zone)
+	-- Fast dungeon chain-pulls can create a temporary group variant from
+	-- independent bosses. Keep exact single-boss models available there so the
+	-- active boss lookup remains precise; raid phase actors still normalize into
+	-- their group model.
+	if type(zone) ~= "table" then
+		return false
+	end
+	local maxPlayers = tonumber(zone.maxPlayers)
+	return zone.instanceType == "party" or (maxPlayers and maxPlayers <= 5 and zone.instanceType ~= "raid")
+end
+
 local function normalizeContainedSingleActorEncounters(zone)
 	if type(zone) ~= "table" or type(zone.encounters) ~= "table" then
+		return 0
+	end
+	if zonePreservesSingleActorVariants(zone) then
 		return 0
 	end
 

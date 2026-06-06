@@ -2,7 +2,7 @@
 
 This document captures the agreed design and current implementation contract for
 persistent encounter evidence and player-to-player synchronization. Version
-1.9.1 includes the local evidence store, the shared packed `EvidenceCodec`,
+1.9.6 includes the local evidence store, the shared packed `EvidenceCodec`,
 completed-segment commit path, evidence rebuild path, interpretation-engine rebuild
 detection, difficulty-aware ability availability, and accepted player-to-player
 sync transport.
@@ -141,6 +141,11 @@ segments. Stored records are packed kill-block records for historical API
 compatibility; callers must decode them through
 `Core/EvidenceStore.lua` and `Core/EvidenceCodec.lua` instead of reading
 expanded event tables directly:
+
+Actor records keep first/last stored spell-event times and boss-context
+start/end anchors as separate facts. Rebuild uses the context anchor for
+first-offset rules because boss frames can appear before the first recorded
+ability.
 
 ```lua
 instances = {
