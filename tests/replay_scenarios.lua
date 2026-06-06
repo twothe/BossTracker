@@ -14,6 +14,29 @@ local function auraSegmentKey(prefix, scope, spellName)
 	}, "_")
 end
 
+local function storedEvidenceKillCount(evidence)
+	local count = 0
+	for _, instance in pairs(type(evidence) == "table" and evidence.instances or {}) do
+		for _, boss in pairs(instance.bosses or {}) do
+			for _ in pairs(boss.kills or {}) do
+				count = count + 1
+			end
+		end
+	end
+	return count
+end
+
+local function copyTable(value)
+	if type(value) ~= "table" then
+		return value
+	end
+	local copy = {}
+	for key, child in pairs(value) do
+		copy[key] = copyTable(child)
+	end
+	return copy
+end
+
 local function scenarioChannelLifecycle()
 	Harness.resetState("Replay Herod")
 	local boss = "Herod"
@@ -53,7 +76,7 @@ local function scenarioPhaseHpRules()
 	local cleave = Harness.ability(model, addon.Core.Util.bossKey(boss, guid), "Cleave")
 	Harness.assertTrue(cleave ~= nil, "Cleave should be learned")
 	Harness.assertTrue(cleave.segmentStats.hp_65 ~= nil, "Cleave should be tied to the 65% phase segment")
-	Harness.assertTrue(cleave.selectedRule and (cleave.selectedRule.type == "hp_gate" or cleave.selectedRule.type == "phase_start_offset"), "Cleave should classify as HP or phase-start driven")
+	Harness.assertTrue(cleave.selectedRule and cleave.selectedRule.type == "first_offset", "Single observed HP phase evidence should stay a first-offset estimate until repeated phase evidence exists")
 end
 
 local function scenarioStableIntervalSurvivesDifferentPhaseSegments()
@@ -111,6 +134,22 @@ local function scenarioBossAuraPhaseRules()
 	Harness.assertTrue(buffet ~= nil, "Aura-phase ability should be learned")
 	Harness.assertTrue(buffet.segmentStats and buffet.segmentStats[segmentKey] ~= nil, "Boss self aura should create the active phase segment")
 	Harness.assertTrue(buffet.selectedRule and buffet.selectedRule.type == "phase_start_offset", "Boss aura phase should support a phase-start rule")
+end
+
+local function scenarioBossSelfAuraTransitionMarkerShowsHpGate()
+	Harness.resetState("Replay Boss Self Aura Transition")
+	local boss = "Serpent Priest"
+	local guid = Harness.makeGuid(boss, 212)
+	Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = guid, spellName = "Opening Bolt", hp = 100 })
+	Harness.emitSpell({ t = 20, sourceName = boss, sourceGUID = guid, spellName = "Serpent Form", hp = 50, eventType = "SPELL_AURA_APPLIED", selfTarget = true })
+	Harness.finishPull(45)
+
+	local bossKey = addon.Core.Util.bossKey(boss, guid)
+	local form = Harness.ability(Harness.encounter(bossKey), bossKey, "Serpent Form")
+	Harness.assertTrue(form ~= nil, "Boss self-aura transition marker should be learned")
+	Harness.assertTrue(form.autoSuppressed ~= true, "Boss self-aura transition marker should not be hidden as passive phase state")
+	Harness.assertTrue(form.selectedRule and form.selectedRule.type == "hp_gate", "Boss self-aura transition marker should display as an HP gate")
+	Harness.assertNear(form.selectedRule.hpPct, 50, 0.1, "Boss self-aura transition marker should retain the transition HP")
 end
 
 local function scenarioAssociatedAddSelfAuraDoesNotCreateBossPhase()
@@ -795,6 +834,7 @@ local function scenarioSavedVariablesRestoreFromCharacterBackup()
 	addon.Core.SavedVariables.syncLearnedBackup(true)
 	local backup = _G.BossTrackerCharDB.learnedBackup
 	Harness.assertTrue(backup ~= nil and backup.learned ~= nil, "Character backup should be written after learning")
+	Harness.assertTrue(storedEvidenceKillCount(backup.evidence) == 1, "Character backup should include permanent evidence")
 	Harness.assertTrue(backup.overrides.zones[zoneKey].encounters[encounterKey].abilities[abilityKey].display == "hide", "Character backup should include ability overrides")
 	Harness.assertTrue(backup.config.warningLeadTime == 9 and backup.config.timersEnabled == false, "Character backup should include player-facing timer settings")
 
@@ -805,9 +845,23 @@ local function scenarioSavedVariablesRestoreFromCharacterBackup()
 	addon.Core.SavedVariables.init()
 
 	Harness.assertTrue(addon.db.learned.zones[zoneKey].encounters[encounterKey] ~= nil, "Fresh account DB should restore learned data from character backup")
+	Harness.assertTrue(addon.Core.EvidenceStore.countPermanentKills() == 1, "Fresh account DB should restore permanent evidence from character backup")
 	Harness.assertTrue(addon.db.config.overrides.zones[zoneKey].encounters[encounterKey].abilities[abilityKey].display == "hide", "Fresh account DB should restore ability overrides from character backup")
 	Harness.assertTrue(addon.db.config.warningLeadTime == 9 and addon.db.config.timersEnabled == false, "Fresh account DB should restore player-facing timer settings from character backup")
 	Harness.assertTrue(addon.db.migrations[#addon.db.migrations].reason == "Restored learned data from per-character backup after account SavedVariables were empty.", "Restore should leave a migration breadcrumb")
+
+	local evidenceOnlyBackup = copyTable(backup)
+	evidenceOnlyBackup.learned = { zones = {} }
+	_G.BossTrackerDB = {}
+	_G.BossTrackerCharDB = {
+		learnedBackup = evidenceOnlyBackup,
+	}
+	addon.Core.SavedVariables.init()
+
+	Harness.assertTrue(addon.Core.EvidenceStore.countPermanentKills() == 1, "Evidence-only character backup should still restore permanent evidence")
+	Harness.assertTrue(addon.db.learnedMeta.rebuildRequired == true, "Evidence-only character backup should request a learned-data rebuild")
+	Harness.assertTrue(addon.Core.SavedVariables.rebuildLearnedIfNeeded() == true, "Evidence-only character backup should rebuild learned data from restored evidence")
+	Harness.assertTrue(addon.db.learned.zones[zoneKey].encounters[encounterKey] ~= nil, "Evidence-only character backup should recover the learned model after rebuild")
 end
 
 local function scenarioSavedVariablesLateCharacterBackupRestoresAfterEmptyCharacterLogin()
@@ -827,7 +881,7 @@ local function scenarioSavedVariablesLateCharacterBackupRestoresAfterEmptyCharac
 	_G.BossTrackerDB = emptyAccountDb
 	_G.BossTrackerCharDB = {
 		learnedBackup = {
-			backupSchemaVersion = C.LEARNED_BACKUP_SCHEMA_VERSION,
+			backupSchemaVersion = 1,
 			dataSchemaVersion = C.SCHEMA_VERSION,
 			interpretationEngineVersion = C.INTERPRETATION_ENGINE_VERSION,
 			interpretationEngineUpdatedAt = 400,
@@ -1910,6 +1964,76 @@ local function scenarioEvidenceStoresCompletedBossEvidence()
 	Harness.assertTrue(rebuilt ~= nil, "Low-HP permanent evidence should rebuild a learned boss model")
 end
 
+local function scenarioEvidenceCommitsWhenLearnerIsBlocked()
+	Harness.resetState("Replay Evidence Learner Blocked")
+	local originalNoteActivation = addon.Learning.RuleLearner.noteActivation
+	addon.Learning.RuleLearner.noteActivation = nil
+	addon.Learning.AbilityLearner.start()
+
+	local boss = "Blocked Evidence Keeper"
+	local guid = Harness.makeGuid(boss, 906)
+	Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = guid, spellName = "Blocked Pulse", hp = 100 })
+	Harness.emitSpell({ t = 20, sourceName = boss, sourceGUID = guid, spellName = "Blocked Pulse", hp = 70 })
+	addon.Learning.RuleLearner.noteActivation = originalNoteActivation
+	Harness.finishPull(42, "unit_died")
+	addon.Learning.AbilityLearner.start()
+
+	Harness.assertTrue(addon.Core.EvidenceStore.countPermanentKills() == 1, "EvidenceStore should commit strong completed boss evidence even when learned scoring is blocked")
+	Harness.assertTrue(storedEvidenceKillCount(addon.charDB.learnedBackup and addon.charDB.learnedBackup.evidence) == 1, "Character backup should receive evidence captured while learned scoring was blocked")
+end
+
+local function scenarioEvidenceSchemaMismatchArchivesExistingStore()
+	Harness.resetState("Replay Evidence Archive")
+	local C = addon.Core.Constants
+	_G.BossTrackerDB = {
+		schemaVersion = C.SCHEMA_VERSION,
+		config = { overrides = { zones = {} } },
+		learned = { zones = {} },
+		learnedMeta = {
+			backupSchemaVersion = C.LEARNED_BACKUP_SCHEMA_VERSION,
+			dataSchemaVersion = C.SCHEMA_VERSION,
+			interpretationEngineVersion = C.INTERPRETATION_ENGINE_VERSION,
+			dataId = "archive-evidence-data",
+			revision = 1,
+		},
+		evidence = {
+			schemaVersion = C.EVIDENCE_SCHEMA_VERSION - 1,
+			revision = 7,
+			instances = {
+				archive_zone = {
+					key = "archive_zone",
+					name = "Archive Zone",
+					bosses = {
+						archive_boss = {
+							key = "archive_boss",
+							name = "Archive Boss",
+							kills = {
+								archive_hash = {
+									h = "archive_hash",
+									t = 100,
+									p = "legacy-packed-kill",
+								},
+							},
+						},
+					},
+				},
+			},
+			incomplete = {
+				{ reason = "legacy_partial" },
+			},
+		},
+		debug = {},
+	}
+	_G.BossTrackerCharDB = {}
+	addon.Core.SavedVariables.init()
+
+	Harness.assertTrue(addon.db.evidence.schemaVersion == C.EVIDENCE_SCHEMA_VERSION, "Current evidence store should be reset to the supported schema")
+	Harness.assertTrue(type(addon.db.evidenceArchives) == "table" and #addon.db.evidenceArchives == 1, "Incompatible existing evidence should be archived instead of discarded")
+	Harness.assertTrue(addon.db.evidenceArchives[1].killCount == 1, "Evidence archive should preserve the permanent kill count")
+	addon.Core.SavedVariables.syncLearnedBackup(true)
+	Harness.assertTrue(type(addon.charDB.learnedBackup.evidenceArchives) == "table" and #addon.charDB.learnedBackup.evidenceArchives == 1, "Character backup should include archived evidence")
+end
+
 local function scenarioEvidenceKeepsTechnicalSpellIdsForSameName()
 	Harness.resetState("Replay Same Name Spell Evidence")
 	local boss = "Same Name Sentinel"
@@ -2426,6 +2550,7 @@ local scenarios = {
 	scenarioStableIntervalSurvivesDifferentPhaseSegments,
 	scenarioStableIntervalSurvivesRepeatedPhaseCoincidence,
 	scenarioBossAuraPhaseRules,
+	scenarioBossSelfAuraTransitionMarkerShowsHpGate,
 	scenarioAssociatedAddSelfAuraDoesNotCreateBossPhase,
 	scenarioReenteredBossAuraPhaseShowsTimerAgain,
 	scenarioRecurringBossAuraPhaseLearnsPhaseRule,
@@ -2480,6 +2605,8 @@ local scenarios = {
 	scenarioUnitDiedDefersWhileBossFrameAlive,
 	scenarioUnitDiedUsesGuidBeforeName,
 	scenarioEvidenceStoresCompletedBossEvidence,
+	scenarioEvidenceCommitsWhenLearnerIsBlocked,
+	scenarioEvidenceSchemaMismatchArchivesExistingStore,
 	scenarioEvidenceKeepsTechnicalSpellIdsForSameName,
 	scenarioEvidenceHashUsesAllEventFacts,
 	scenarioEvidenceCountsAreSegmentLocal,

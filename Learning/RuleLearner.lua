@@ -77,6 +77,54 @@ local function stableHpGate(ability)
 	return ability.maxHpPct - ability.minHpPct <= C.HP_GATE_SPREAD_PCT
 end
 
+local function isAuraOnlyAbility(ability)
+	local events = ability and ability.events
+	if type(events) ~= "table" then
+		return false
+	end
+
+	local sawAura = false
+	for eventType in pairs(events) do
+		if eventType == "SPELL_AURA_APPLIED"
+			or eventType == "SPELL_AURA_REFRESH"
+			or eventType == "SPELL_AURA_REMOVED"
+			or eventType == "SPELL_AURA_APPLIED_DOSE"
+			or eventType == "SPELL_AURA_REMOVED_DOSE" then
+			sawAura = true
+		else
+			return false
+		end
+	end
+	return sawAura
+end
+
+local function nearTransitionAuraHp(hpPct)
+	hpPct = tonumber(hpPct)
+	if not hpPct then
+		return false
+	end
+	local target = C.HP_TRANSITION_AURA_TARGET_PCT or 50.0
+	local tolerance = C.HP_TRANSITION_AURA_TOLERANCE_PCT or 3.0
+	return math.abs(hpPct - target) <= tolerance
+end
+
+local function bossSelfAuraTransitionMarker(ability)
+	if type(ability) ~= "table" or ability.encounterAssociated then
+		return false
+	end
+	if not isAuraOnlyAbility(ability) then
+		return false
+	end
+	if (tonumber(ability.bossSelfAuraEventCount) or 0) <= 0
+		or (tonumber(ability.playerAuraEventCount) or 0) > 0 then
+		return false
+	end
+	if (tonumber(ability.activationCount) or 0) > math.max(1, tonumber(ability.pullSeenCount) or 1) then
+		return false
+	end
+	return nearTransitionAuraHp(ability.avgHpPct)
+end
+
 local function isAuraEvent(eventType)
 	return eventType == "SPELL_AURA_APPLIED"
 		or eventType == "SPELL_AURA_REFRESH"
@@ -331,6 +379,9 @@ function RuleLearner.refreshRules(ability)
 	local phaseSamples = 0
 	local phaseOffsetAverage = nil
 	local phaseOffsetSampleCount = 0
+	local strongPhaseSamples = 0
+	local strongPhaseOffsetAverage = nil
+	local strongPhaseOffsetSampleCount = 0
 	local phaseOnce = true
 	local hasRepeatedPhaseSegment = false
 	local phaseSegmentCount = 0
@@ -348,6 +399,15 @@ function RuleLearner.refreshRules(ability)
 				segment.avgPhaseOffset or segment.firstPhaseOffset,
 				segmentPhaseSamples
 			)
+			if segment.reason == "boss_aura_applied" then
+				strongPhaseOffsetAverage, strongPhaseOffsetSampleCount = mergeAverage(
+					strongPhaseOffsetAverage,
+					strongPhaseOffsetSampleCount,
+					segment.avgPhaseOffset or segment.firstPhaseOffset,
+					segmentPhaseSamples
+				)
+				strongPhaseSamples = strongPhaseSamples + segmentPhaseSamples
+			end
 			phaseSamples = phaseSamples + segmentPhaseSamples
 			if (segment.activationCount or 0) > math.max(segmentPhaseSamples, segment.seenCount or 1) then
 				phaseOnce = false
@@ -396,19 +456,29 @@ function RuleLearner.refreshRules(ability)
 		end
 	end
 
-	if stableHpGate(ability) then
-		candidate(ability, "hp_gate", math.min(0.82, 0.28 + (ability.hpSamples or 0) * 0.08), {
+	-- A boss self-aura near the 50% transition point is stronger HP evidence
+	-- than a generic sparse HP sample because it marks the form change itself.
+	local selfAuraTransition = bossSelfAuraTransitionMarker(ability)
+	if stableHpGate(ability) or selfAuraTransition then
+		local confidence
+		if selfAuraTransition then
+			confidence = math.min(0.74, 0.42 + (ability.pullSeenCount or 1) * 0.08)
+		else
+			confidence = math.min(0.82, 0.28 + (ability.hpSamples or 0) * 0.08)
+		end
+		candidate(ability, "hp_gate", confidence, {
 			hpPct = ability.avgHpPct,
 			minHpPct = ability.minHpPct,
 			maxHpPct = ability.maxHpPct,
 			samples = ability.hpSamples,
+			reason = selfAuraTransition and "boss_self_aura_transition_marker" or nil,
 		})
 	end
 
-	if phaseSamples > 0 then
+	if phaseSamples >= (C.MIN_PHASE_RULE_SAMPLES or 2) or strongPhaseSamples > 0 then
 		candidate(ability, "phase_start_offset", math.min(0.78, 0.24 + phaseSamples * 0.08), {
-			avgPhaseOffset = phaseOffsetAverage,
-			samples = phaseOffsetSampleCount,
+			avgPhaseOffset = strongPhaseOffsetAverage or phaseOffsetAverage,
+			samples = strongPhaseOffsetSampleCount > 0 and strongPhaseOffsetSampleCount or phaseOffsetSampleCount,
 		})
 		if phaseOnce then
 			candidate(ability, "phase_once", math.min(0.70, 0.20 + phaseSamples * 0.07), {

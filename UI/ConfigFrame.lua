@@ -156,7 +156,7 @@ local function createListScrollBar(parent, offsetField)
 			return
 		end
 		local maxOffset = self.maxOffset or 0
-		local offset = clamp(maxOffset - math.floor((tonumber(value) or 0) + 0.5), 0, maxOffset)
+		local offset = clamp(math.floor((tonumber(value) or 0) + 0.5), 0, maxOffset)
 		if state[offsetField] ~= offset then
 			state[offsetField] = offset
 			refresh()
@@ -180,7 +180,7 @@ local function updateScrollBar(scrollBar, totalCount, visibleCount, offset)
 	scrollBar.maxOffset = maxOffset
 	scrollBar.suppressUpdate = true
 	scrollBar:SetMinMaxValues(0, maxOffset)
-	scrollBar:SetValue(maxOffset - clamp(offset or 0, 0, maxOffset))
+	scrollBar:SetValue(clamp(offset or 0, 0, maxOffset))
 	scrollBar.suppressUpdate = false
 	if maxOffset > 0 then
 		scrollBar:Show()

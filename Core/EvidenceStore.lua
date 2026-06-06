@@ -168,6 +168,44 @@ local function newEvidenceStore()
 	}
 end
 
+local function evidencePermanentKillCount(evidence)
+	local count = 0
+	if type(evidence) ~= "table" or type(evidence.instances) ~= "table" then
+		return count
+	end
+	for _, instance in pairs(evidence.instances) do
+		for _, boss in pairs(instance.bosses or {}) do
+			count = count + countKeys(boss.kills)
+		end
+	end
+	return count
+end
+
+local function archiveEvidenceStore(db, evidence, reason)
+	if type(db) ~= "table" or type(evidence) ~= "table" then
+		return
+	end
+	local killCount = evidencePermanentKillCount(evidence)
+	local incompleteCount = type(evidence.incomplete) == "table" and #evidence.incomplete or 0
+	if killCount == 0 and incompleteCount == 0 then
+		return
+	end
+	db.evidenceArchives = type(db.evidenceArchives) == "table" and db.evidenceArchives or {}
+	db.evidenceArchives[#db.evidenceArchives + 1] = {
+		archivedAt = Util.wallTime(),
+		reason = reason or "unknown",
+		schemaVersion = evidence.schemaVersion,
+		expectedSchemaVersion = C.EVIDENCE_SCHEMA_VERSION,
+		revision = evidence.revision,
+		killCount = killCount,
+		incompleteCount = incompleteCount,
+		evidence = copyTable(evidence),
+	}
+	while #db.evidenceArchives > C.MAX_EVIDENCE_ARCHIVES do
+		table.remove(db.evidenceArchives, 1)
+	end
+end
+
 function EvidenceStore.ensureDb(db)
 	db = db or addon.db
 	if type(db) ~= "table" then
@@ -181,6 +219,7 @@ function EvidenceStore.ensureDb(db)
 		return db.evidence
 	end
 	if type(db.evidence) ~= "table" or tonumber(db.evidence.schemaVersion) ~= C.EVIDENCE_SCHEMA_VERSION then
+		archiveEvidenceStore(db, db.evidence, "incompatible_evidence_schema")
 		db.evidence = newEvidenceStore()
 	end
 	db.evidence.schemaVersion = C.EVIDENCE_SCHEMA_VERSION
@@ -539,6 +578,42 @@ local function decisionHasBossIdentityEvidence(decision)
 		)
 end
 
+local function isBossUnitToken(unit)
+	return type(unit) == "string" and string.sub(unit, 1, 4) == "boss"
+end
+
+local function contextHasBossIdentityEvidence(context, bossState)
+	return type(context) == "table"
+		and (
+			context.unitClassification == "worldboss"
+			or context.sawBossUnit == true
+			or isBossUnitToken(context.bossUnitToken)
+			or isBossUnitToken(context.lastUnitToken)
+			or (
+				type(context.lastUnitSource) == "string"
+				and string.sub(context.lastUnitSource, 1, 9) == "boss_unit"
+			)
+		)
+		or type(bossState) == "table"
+		and (
+			bossState.unitClassification == "worldboss"
+			or bossState.sawBossUnit == true
+			or isBossUnitToken(bossState.bossUnitToken)
+			or isBossUnitToken(bossState.lastUnitToken)
+			or (
+				type(bossState.lastUnitSource) == "string"
+				and string.sub(bossState.lastUnitSource, 1, 9) == "boss_unit"
+			)
+		)
+end
+
+local function entryHasBossIdentityEvidence(entry)
+	if type(entry) ~= "table" then
+		return false
+	end
+	return contextHasBossIdentityEvidence(entry.context, entry.bossState)
+end
+
 local function entryCompletionReason(entry)
 	local bossState = entry and entry.bossState
 	local context = entry and entry.context
@@ -548,9 +623,11 @@ local function entryCompletionReason(entry)
 	end
 	local decision = entry and entry.decision
 	local endHpPct = tonumber(decision and decision.endHpPct)
+		or tonumber(context and context.lastHpPct)
+		or tonumber(bossState and bossState.lastHpPct)
 	local lowHpCompletion = decisionHasReason(decision, "low_hp_completion")
 		or (endHpPct and endHpPct <= C.BOSS_COMPLETION_HP_THRESHOLD)
-	if lowHpCompletion and decisionHasBossIdentityEvidence(decision) then
+	if lowHpCompletion and (decisionHasBossIdentityEvidence(decision) or entryHasBossIdentityEvidence(entry)) then
 		return "low_hp_completion"
 	end
 	return nil
@@ -571,6 +648,51 @@ local function componentCompletionReason(component)
 		end
 	end
 	return #component > 0 and completionReason or nil
+end
+
+local function fallbackBossStateFromContext(context)
+	if type(context) ~= "table" then
+		return nil
+	end
+	return {
+		actorKey = context.actorKey,
+		bossKey = context.modelKey,
+		bossName = context.name,
+		guid = context.guid,
+		startedAtSession = context.startedAtSession,
+		endedAtSession = context.endedAtSession,
+		endReason = context.endReason,
+		eventCount = context.eventCount,
+		occurrenceCount = context.occurrenceCount,
+		lastHpPct = context.lastHpPct,
+		unitClassification = context.unitClassification,
+		lastUnitSource = context.lastUnitSource,
+		lastUnitToken = context.lastUnitToken,
+		sawBossUnit = context.sawBossUnit,
+		bossUnitToken = context.bossUnitToken,
+	}
+end
+
+local function fallbackComponentsFromPull(pull, pullState)
+	local components = {}
+	for actorKey, context in pairs(pull and pull.bossContexts or {}) do
+		local bossState = pullState and pullState.bosses and pullState.bosses[actorKey] or fallbackBossStateFromContext(context)
+		local entry = {
+			actorKey = actorKey,
+			bossState = bossState,
+			context = context,
+		}
+		if bossState
+			and (tonumber(context and context.eventCount) or tonumber(bossState.eventCount) or 0) > 0
+			and entryHasBossIdentityEvidence(entry)
+			and entryCompletionReason(entry) then
+			local component = { entry }
+			component.encounterKey = bossState.bossKey or context.modelKey
+			component.encounterName = bossState.bossName or context.name
+			components[#components + 1] = component
+		end
+	end
+	return components
 end
 
 local function componentActorIds(draft, component)
@@ -803,9 +925,21 @@ function EvidenceStore.finishPull(pull, reason, pullState, components)
 		EvidenceStore.recordContext(pull, context)
 	end
 
+	local effectiveComponents = components or {}
+	if #effectiveComponents == 0 then
+		effectiveComponents = fallbackComponentsFromPull(pull, pullState)
+		if #effectiveComponents > 0 then
+			logWarn("Used conservative evidence fallback after learned component scoring produced no completed boss component", {
+				pullId = pull.id,
+				reason = reason,
+				componentCount = #effectiveComponents,
+			})
+		end
+	end
+
 	local committed = 0
-	for index = 1, #(components or {}) do
-		if commitComponent(draft, components[index]) then
+	for index = 1, #effectiveComponents do
+		if commitComponent(draft, effectiveComponents[index]) then
 			committed = committed + 1
 		end
 	end

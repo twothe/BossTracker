@@ -59,6 +59,9 @@ local function boot()
 	addon.Core.Logger.info("Init", "BossTracker boot", {
 		version = addon.Core.Constants.VERSION,
 	})
+	if addon.Core.SavedVariables.flushStartupNotices then
+		addon.Core.SavedVariables.flushStartupNotices()
+	end
 
 	startModules()
 	if addon.Core.SavedVariables.rebuildLearnedIfNeeded then

@@ -10,7 +10,9 @@ local SavedVariables = {}
 addon.Core.SavedVariables = SavedVariables
 local pendingLearnedBackupConflict
 local learnedBackupIsUsable
+local recoveryBackupIsUsable
 local restoreRecoveryConfig
+local pendingStartupNotices = {}
 local WARNING_LEAD_TIME_DEFAULT_MIGRATION = "warningLeadTimeDefault3"
 local OLD_DEFAULT_WARNING_LEAD_TIME = 5
 local RECOVERY_CONFIG_KEYS = {
@@ -62,6 +64,10 @@ local function appendMigration(db, migration)
 	trimArray(db.migrations, 20)
 end
 
+local function queueStartupNotice(message)
+	pendingStartupNotices[#pendingStartupNotices + 1] = message
+end
+
 local function countKeys(tbl)
 	local count = 0
 	if type(tbl) ~= "table" then
@@ -87,9 +93,8 @@ local function learnedHasData(learned)
 	return false
 end
 
-local function evidenceKillCount(db)
+local function evidencePermanentKillCount(evidence)
 	local count = 0
-	local evidence = type(db) == "table" and db.evidence or nil
 	if type(evidence) ~= "table" or type(evidence.instances) ~= "table" then
 		return count
 	end
@@ -99,6 +104,185 @@ local function evidenceKillCount(db)
 		end
 	end
 	return count
+end
+
+local function evidenceKillCount(db)
+	return evidencePermanentKillCount(type(db) == "table" and db.evidence or nil)
+end
+
+local function backupSchemaIsSupported(backupSchemaVersion)
+	local version = tonumber(backupSchemaVersion)
+	return version ~= nil
+		and version >= 1
+		and version <= C.LEARNED_BACKUP_SCHEMA_VERSION
+end
+
+local function evidenceBackupIsUsable(evidence)
+	return type(evidence) == "table"
+		and tonumber(evidence.schemaVersion) == C.EVIDENCE_SCHEMA_VERSION
+		and type(evidence.instances) == "table"
+end
+
+local function ensureEvidenceShape(evidence)
+	evidence = type(evidence) == "table" and evidence or {}
+	evidence.schemaVersion = C.EVIDENCE_SCHEMA_VERSION
+	evidence.revision = tonumber(evidence.revision) or 0
+	evidence.instances = type(evidence.instances) == "table" and evidence.instances or {}
+	evidence.incomplete = type(evidence.incomplete) == "table" and evidence.incomplete or {}
+	return evidence
+end
+
+local function olderTimestamp(left, right)
+	local leftNumber = tonumber(left)
+	local rightNumber = tonumber(right)
+	if not leftNumber then
+		return right
+	end
+	if not rightNumber then
+		return left
+	end
+	return rightNumber < leftNumber and right or left
+end
+
+local function newerTimestamp(left, right)
+	local leftNumber = tonumber(left)
+	local rightNumber = tonumber(right)
+	if not leftNumber then
+		return right
+	end
+	if not rightNumber then
+		return left
+	end
+	return rightNumber > leftNumber and right or left
+end
+
+local function copyIfMissing(target, source, key)
+	if target[key] == nil and source[key] ~= nil then
+		target[key] = copyTable(source[key])
+	end
+end
+
+local function mergeEvidenceMetadata(target, source)
+	if type(target) ~= "table" or type(source) ~= "table" then
+		return
+	end
+	copyIfMissing(target, source, "key")
+	copyIfMissing(target, source, "name")
+	copyIfMissing(target, source, "mapId")
+	copyIfMissing(target, source, "instanceType")
+	target.createdAt = olderTimestamp(target.createdAt, source.createdAt)
+	target.lastSeenAt = newerTimestamp(target.lastSeenAt, source.lastSeenAt)
+end
+
+local function storedKillHash(key, storedKill)
+	if type(storedKill) == "table" then
+		return storedKill.h or storedKill.hash or key
+	end
+	return key
+end
+
+local function hasStoredKill(kills, key, storedKill)
+	if type(kills) ~= "table" then
+		return false
+	end
+	if key ~= nil and kills[key] ~= nil then
+		return true
+	end
+	local hash = storedKillHash(key, storedKill)
+	if hash ~= nil and kills[hash] ~= nil then
+		return true
+	end
+	for _, existingKill in pairs(kills) do
+		if storedKillHash(nil, existingKill) == hash then
+			return true
+		end
+	end
+	return false
+end
+
+local function mergeEvidenceBackup(db, backup)
+	local source = type(backup) == "table" and backup.evidence or nil
+	if not evidenceBackupIsUsable(source) then
+		return 0, 0, 0
+	end
+
+	local target = ensureEvidenceShape(type(db) == "table" and db.evidence or nil)
+	db.evidence = target
+	local backupKills = evidencePermanentKillCount(source)
+	local imported = 0
+	local duplicates = 0
+
+	for sourceInstanceKey, sourceInstance in pairs(source.instances or {}) do
+		if type(sourceInstance) == "table" then
+			local instanceKey = sourceInstance.key or sourceInstanceKey
+			local targetInstance = target.instances[instanceKey]
+			if type(targetInstance) ~= "table" then
+				targetInstance = {
+					key = instanceKey,
+					bosses = {},
+				}
+				target.instances[instanceKey] = targetInstance
+			end
+			targetInstance.bosses = type(targetInstance.bosses) == "table" and targetInstance.bosses or {}
+			mergeEvidenceMetadata(targetInstance, sourceInstance)
+
+			for sourceBossKey, sourceBoss in pairs(sourceInstance.bosses or {}) do
+				if type(sourceBoss) == "table" then
+					local bossKey = sourceBoss.key or sourceBossKey
+					local targetBoss = targetInstance.bosses[bossKey]
+					if type(targetBoss) ~= "table" then
+						targetBoss = {
+							key = bossKey,
+							kills = {},
+						}
+						targetInstance.bosses[bossKey] = targetBoss
+					end
+					targetBoss.kills = type(targetBoss.kills) == "table" and targetBoss.kills or {}
+					mergeEvidenceMetadata(targetBoss, sourceBoss)
+
+					for sourceKillKey, sourceKill in pairs(sourceBoss.kills or {}) do
+						if not hasStoredKill(targetBoss.kills, sourceKillKey, sourceKill) then
+							local targetKillKey = storedKillHash(sourceKillKey, sourceKill)
+							targetBoss.kills[targetKillKey] = copyTable(sourceKill)
+							imported = imported + 1
+						else
+							duplicates = duplicates + 1
+						end
+					end
+				end
+			end
+		end
+	end
+
+	if #target.incomplete == 0 and type(source.incomplete) == "table" then
+		target.incomplete = copyTable(source.incomplete)
+	end
+	if imported > 0 then
+		target.revision = math.max(tonumber(target.revision) or 0, tonumber(source.revision) or 0) + imported
+	else
+		target.revision = math.max(tonumber(target.revision) or 0, tonumber(source.revision) or 0)
+	end
+	if addon.Core.EvidenceStore and addon.Core.EvidenceStore.bound then
+		addon.Core.EvidenceStore.bound(target)
+	end
+	return imported, duplicates, backupKills
+end
+
+local function mergeEvidenceArchives(db, backup)
+	local source = type(backup) == "table" and backup.evidenceArchives or nil
+	if type(source) ~= "table" or #source == 0 then
+		return 0
+	end
+	db.evidenceArchives = type(db.evidenceArchives) == "table" and db.evidenceArchives or {}
+	local imported = 0
+	for index = 1, #source do
+		db.evidenceArchives[#db.evidenceArchives + 1] = copyTable(source[index])
+		imported = imported + 1
+	end
+	while #db.evidenceArchives > (tonumber(C.MAX_EVIDENCE_ARCHIVES) or 3) do
+		table.remove(db.evidenceArchives, 1)
+	end
+	return imported
 end
 
 local function wallTime()
@@ -483,19 +667,32 @@ end
 learnedBackupIsUsable = function(charDB)
 	local backup = type(charDB) == "table" and charDB.learnedBackup or nil
 	return type(backup) == "table"
-		and tonumber(backup.backupSchemaVersion) == C.LEARNED_BACKUP_SCHEMA_VERSION
+		and backupSchemaIsSupported(backup.backupSchemaVersion)
 		and tonumber(backup.dataSchemaVersion) == C.SCHEMA_VERSION
 		and learnedHasData(backup.learned)
 end
 
+recoveryBackupIsUsable = function(charDB)
+	local backup = type(charDB) == "table" and charDB.learnedBackup or nil
+	return type(backup) == "table"
+		and backupSchemaIsSupported(backup.backupSchemaVersion)
+		and tonumber(backup.dataSchemaVersion) == C.SCHEMA_VERSION
+		and (
+			learnedHasData(backup.learned)
+			or evidencePermanentKillCount(backup.evidence) > 0
+		)
+end
+
 local function restoreLearnedBackup(db, charDB, previousSchemaVersion, reason)
-	if not learnedBackupIsUsable(charDB) then
+	if not recoveryBackupIsUsable(charDB) then
 		return false
 	end
 
 	local backup = charDB.learnedBackup
-	db.learned = copyTable(backup.learned)
+	db.learned = type(backup.learned) == "table" and copyTable(backup.learned) or { zones = {} }
 	restoreRecoveryConfig(db, backup)
+	local restoredEvidenceKills, duplicateEvidenceKills, backupEvidenceKills = mergeEvidenceBackup(db, backup)
+	local restoredEvidenceArchives = mergeEvidenceArchives(db, backup)
 	db.learnedMeta = {
 		backupSchemaVersion = C.LEARNED_BACKUP_SCHEMA_VERSION,
 		dataSchemaVersion = C.SCHEMA_VERSION,
@@ -507,7 +704,17 @@ local function restoreLearnedBackup(db, charDB, previousSchemaVersion, reason)
 		updatedAt = backup.sourceUpdatedAt or backup.updatedAt or wallTime(),
 		restoredAt = wallTime(),
 		restoredFromCharacterBackup = true,
+		restoredEvidenceKills = restoredEvidenceKills,
+		restoredEvidenceArchives = restoredEvidenceArchives,
 	}
+	if not learnedHasData(db.learned) and restoredEvidenceKills > 0 then
+		db.learnedMeta.rebuildRequired = true
+		db.learnedMeta.rebuildReason = "character_backup_evidence"
+	end
+	queueStartupNotice("restored account data from this character's backup because account SavedVariables were empty")
+	if backupEvidenceKills == 0 and learnedHasData(db.learned) then
+		queueStartupNotice("the restored character backup did not contain permanent evidence; future rebuilds can only use evidence captured after this restore")
+	end
 	appendMigration(db, {
 		from = previousSchemaVersion,
 		to = C.SCHEMA_VERSION,
@@ -516,6 +723,10 @@ local function restoreLearnedBackup(db, charDB, previousSchemaVersion, reason)
 		restoredZones = countKeys(db.learned and db.learned.zones),
 		backupRevision = tonumber(backup.revision) or 0,
 		backupUpdatedAt = backup.updatedAt,
+		backupEvidenceKills = backupEvidenceKills,
+		restoredEvidenceKills = restoredEvidenceKills,
+		duplicateEvidenceKills = duplicateEvidenceKills,
+		restoredEvidenceArchives = restoredEvidenceArchives,
 	})
 	return true
 end
@@ -570,7 +781,10 @@ local function writeLearnedBackup(allowEmpty, bumpRevision)
 	if pendingLearnedBackupConflict then
 		return
 	end
-	if not learnedHasData(db.learned) then
+	local hasLearnedData = learnedHasData(db.learned)
+	local hasEvidenceData = evidencePermanentKillCount(db.evidence) > 0
+	local hasArchivedEvidence = type(db.evidenceArchives) == "table" and #db.evidenceArchives > 0
+	if not hasLearnedData and not hasEvidenceData and not hasArchivedEvidence then
 		if allowEmpty then
 			charDB.learnedBackup = nil
 		end
@@ -588,7 +802,9 @@ local function writeLearnedBackup(allowEmpty, bumpRevision)
 		sourceCreatedAt = meta.createdAt,
 		sourceUpdatedAt = meta.updatedAt,
 		updatedAt = wallTime(),
-		learned = copyTable(db.learned),
+		learned = copyTable(type(db.learned) == "table" and db.learned or { zones = {} }),
+		evidence = evidenceBackupIsUsable(db.evidence) and copyTable(db.evidence) or nil,
+		evidenceArchives = type(db.evidenceArchives) == "table" and copyTable(db.evidenceArchives) or nil,
 		config = currentRecoveryConfig(),
 		overrides = copyTable(currentOverrides()),
 	}
@@ -745,6 +961,20 @@ function SavedVariables.showLearnedBackupConflictPrompt()
 	conflict.promptShown = true
 	StaticPopup_Show("BOSSTRACKER_LEARNED_BACKUP_CONFLICT", conflict.backupSummary, conflict.accountSummary)
 	return true
+end
+
+function SavedVariables.flushStartupNotices()
+	if #pendingStartupNotices == 0 then
+		return
+	end
+	for index = 1, #pendingStartupNotices do
+		if addon.Core.Logger and addon.Core.Logger.chat then
+			addon.Core.Logger.chat(pendingStartupNotices[index])
+		elseif DEFAULT_CHAT_FRAME then
+			DEFAULT_CHAT_FRAME:AddMessage("|cff4ec3ffBossTracker:|r " .. tostring(pendingStartupNotices[index]))
+		end
+	end
+	pendingStartupNotices = {}
 end
 
 function SavedVariables.restorePendingLearnedBackup()

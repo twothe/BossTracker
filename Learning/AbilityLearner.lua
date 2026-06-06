@@ -93,6 +93,9 @@ function AbilityLearner.observe(record, pull)
 	if not addon.db or not record or not pull or not record.spellKey then
 		return
 	end
+	if addon.Core.EvidenceStore and addon.Core.EvidenceStore.recordSpellEvent then
+		addon.Core.EvidenceStore.recordSpellEvent(pull, record)
+	end
 	if learningBlocked or not dependenciesReady() then
 		return
 	end
@@ -103,9 +106,6 @@ function AbilityLearner.observe(record, pull)
 	local bossState = addon.Learning.EncounterModel.ensureBossState(pullState, record, pull)
 	if not bossState then
 		return
-	end
-	if addon.Core.EvidenceStore and addon.Core.EvidenceStore.recordSpellEvent then
-		addon.Core.EvidenceStore.recordSpellEvent(pull, record)
 	end
 
 	bossState.eventCount = (bossState.eventCount or 0) + 1
@@ -164,9 +164,21 @@ end
 function AbilityLearner.finishPull(pull, reason)
 	local pullState = addon.Learning.EncounterModel.getCurrentPullState()
 	if not pullState or not pull or pullState.pullId ~= pull.id then
+		if pull and addon.Core.EvidenceStore and addon.Core.EvidenceStore.finishPull then
+			addon.Core.EvidenceStore.finishPull(pull, reason, nil, nil)
+			if addon.Core.SavedVariables and addon.Core.SavedVariables.boundLearnedData then
+				addon.Core.SavedVariables.boundLearnedData()
+			end
+		end
 		return
 	end
 	if learningBlocked or not dependenciesReady() then
+		if addon.Core.EvidenceStore and addon.Core.EvidenceStore.finishPull then
+			addon.Core.EvidenceStore.finishPull(pull, reason, pullState, nil)
+			if addon.Core.SavedVariables and addon.Core.SavedVariables.boundLearnedData then
+				addon.Core.SavedVariables.boundLearnedData()
+			end
+		end
 		addon.Learning.EncounterModel.clearPull()
 		return
 	end

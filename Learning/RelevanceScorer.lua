@@ -29,6 +29,16 @@ local function belowDisplayIntervalFloor(value)
 	return value < (displayIntervalFloor() - DISPLAY_FLOOR_EPSILON_SECONDS)
 end
 
+local function nearTransitionAuraHp(hpPct)
+	hpPct = tonumber(hpPct)
+	if not hpPct then
+		return false
+	end
+	local target = C.HP_TRANSITION_AURA_TARGET_PCT or 50.0
+	local tolerance = C.HP_TRANSITION_AURA_TOLERANCE_PCT or 3.0
+	return math.abs(hpPct - target) <= tolerance
+end
+
 local function textContains(text, pattern)
 	return type(text) == "string" and string.find(text, pattern, 1, true) ~= nil
 end
@@ -267,6 +277,23 @@ local function bossSelfAuraPhaseStateReason(ability)
 	return "boss_self_aura_phase_state"
 end
 
+local function bossSelfAuraTransitionMarker(ability)
+	if type(ability) ~= "table" or ability.encounterAssociated then
+		return false
+	end
+	if not isAuraOnlyAbility(ability) then
+		return false
+	end
+	if (tonumber(ability.bossSelfAuraEventCount) or 0) <= 0
+		or (tonumber(ability.playerAuraEventCount) or 0) > 0 then
+		return false
+	end
+	if (tonumber(ability.activationCount) or 0) > math.max(1, tonumber(ability.pullSeenCount) or 1) then
+		return false
+	end
+	return nearTransitionAuraHp(ability.avgHpPct)
+end
+
 local function playerAuraPhaseStateReason(ability)
 	if type(ability) ~= "table"
 		or ability.encounterAssociated
@@ -331,6 +358,9 @@ end
 
 function RelevanceScorer.routineReasonForAbility(ability)
 	if type(ability) ~= "table" then
+		return nil
+	end
+	if bossSelfAuraTransitionMarker(ability) then
 		return nil
 	end
 	return frequentShortIntervalReason(ability)
