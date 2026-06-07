@@ -132,7 +132,6 @@ BossTrackerDB.evidence = {
   schemaVersion = 2,
   revision = 0,
   instances = {},
-  incomplete = {},
 }
 ```
 
@@ -172,9 +171,10 @@ instances = {
 }
 ```
 
-`incomplete` is a separate bounded store. It may support provisional local
-display or future diagnostics, but it is not synced and does not produce
-long-term learned models.
+Incomplete attempts are session-local diagnostics in `Core/EvidenceStore.lua`.
+They may support provisional local display or future diagnostics during the
+current client session, but they are not stored in SavedVariables, synced, or
+used to produce long-term learned models.
 
 ## Kill Evidence Shape
 
@@ -297,13 +297,14 @@ availability and timing must not be inferred from an incomplete group.
 
 ## Incomplete Store
 
-`evidence.incomplete` is a bounded temporary store for attempts that are useful
+Incomplete attempts are a bounded in-memory store for attempts that are useful
 during the current session or near-future pulls but are not clean permanent
 evidence.
 
 Rules:
 
 - Hard cap by instance, boss, pull count, event count, and age.
+- Never written to account or character SavedVariables.
 - Never exported by default sync.
 - Never used to compute long-term ability `minDifficultyOrdinal`.
 - May support provisional timers when current runtime evidence agrees.
@@ -402,7 +403,7 @@ The store must have hard caps from the first implementation:
 - max spells per kill
 - max events per kill
 - max HP samples per actor
-- max incomplete attempts
+- max session-local incomplete attempts
 
 When caps are reached, drop the lowest-value records first:
 
@@ -442,7 +443,7 @@ permanent evidence without removing the hard cap.
 ### Phase 3: Completed-Segment Commit
 
 - Commit only confirmed completed segments to permanent evidence.
-- Send non-completion attempts to `incomplete`.
+- Send non-completion attempts to the session-local incomplete diagnostics.
 - Add tests proving partial attempts do not enter permanent evidence.
 - Add tests proving raid fallback trash does not enter permanent evidence.
 

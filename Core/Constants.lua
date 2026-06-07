@@ -5,7 +5,7 @@ local addon = _G.BossTracker
 local C = {}
 addon.Core.Constants = C
 
-C.VERSION = "1.9.9"
+C.VERSION = "1.9.11"
 C.SCHEMA_VERSION = 7
 C.INTERPRETATION_ENGINE_VERSION = 10
 C.LEARNED_BACKUP_SCHEMA_VERSION = 2
@@ -18,7 +18,7 @@ C.EVIDENCE_COMPLETION_REASONS = {
 C.DEFAULT_CONFIG = {
 	enabled = true,
 	timersEnabled = true,
-	debugEnabled = true,
+	debugEnabled = false,
 	uiLocked = false,
 	maxBars = 8,
 	minTimerDisplayInterval = 10,
@@ -26,7 +26,7 @@ C.DEFAULT_CONFIG = {
 	minTimerConfidence = 0.25,
 	minEncounterConfidence = 0.55,
 	minTimerSeconds = 1.0,
-	combatLogDebug = true,
+	combatLogDebug = false,
 	overrides = {
 		zones = {},
 	},
@@ -100,14 +100,14 @@ C.WARNING_SOUND_OPTIONS = {
 	},
 }
 
-C.MAX_DEBUG_RUNS = 5
-C.MAX_DEBUG_LOGS = 500
-C.MAX_DEBUG_ERRORS = 120
-C.MAX_DEBUG_EVENTS_PER_RUN = 4200
-C.MAX_DEBUG_PULLS_PER_RUN = 120
-C.MAX_DEBUG_CONTEXTS_PER_RUN = 360
-C.MAX_PULL_EVENTS = 300
-C.MAX_PULL_HP_SAMPLES = 160
+C.MAX_DEBUG_RUNS = 2
+C.MAX_DEBUG_LOGS = 120
+C.MAX_DEBUG_ERRORS = 40
+C.MAX_DEBUG_EVENTS_PER_RUN = 600
+C.MAX_DEBUG_PULLS_PER_RUN = 30
+C.MAX_DEBUG_CONTEXTS_PER_RUN = 120
+C.MAX_PULL_EVENTS = 120
+C.MAX_PULL_HP_SAMPLES = 80
 C.MAX_PULL_SPELLS = 220
 C.MAX_PULL_CANDIDATES = 80
 C.MAX_PULL_BOSS_CONTEXTS = 80

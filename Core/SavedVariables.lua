@@ -14,6 +14,8 @@ local recoveryBackupIsUsable
 local restoreRecoveryConfig
 local pendingStartupNotices = {}
 local WARNING_LEAD_TIME_DEFAULT_MIGRATION = "warningLeadTimeDefault3"
+local DEBUG_DEFAULT_OFF_MIGRATION = "debugCaptureDefaultOff1"
+local DEBUG_STORE_COMPACTION_MIGRATION = "debugStoreCompacted1"
 local OLD_DEFAULT_WARNING_LEAD_TIME = 5
 local RECOVERY_CONFIG_KEYS = {
 	enabled = true,
@@ -56,6 +58,78 @@ local function trimArray(array, maxEntries)
 		table.remove(array, 1)
 	end
 	return array
+end
+
+local function compactZoneSnapshot(zone)
+	if type(zone) ~= "table" then
+		return nil
+	end
+	return {
+		key = zone.key,
+		name = zone.name,
+		instanceType = zone.instanceType,
+		mapId = zone.mapId,
+	}
+end
+
+local function compactDebugPull(pull)
+	if type(pull) ~= "table" then
+		return nil
+	end
+	return {
+		id = pull.id,
+		reason = pull.reason,
+		startedAt = pull.startedAt,
+		startedAtSession = pull.startedAtSession,
+		endedAt = pull.endedAt,
+		endedAtSession = pull.endedAtSession,
+		endReason = pull.endReason,
+		duration = pull.duration,
+		bossKey = pull.bossKey,
+		bossName = pull.bossName,
+		zone = compactZoneSnapshot(pull.zone),
+	}
+end
+
+local function compactDebugRun(run)
+	if type(run) ~= "table" then
+		return nil
+	end
+	local compactPulls = {}
+	for index = 1, math.min(#(run.pulls or {}), C.MAX_DEBUG_PULLS_PER_RUN) do
+		local pull = compactDebugPull(run.pulls[index])
+		if pull then
+			compactPulls[#compactPulls + 1] = pull
+		end
+	end
+	return {
+		id = run.id,
+		version = run.version,
+		startedAt = run.startedAt,
+		endedAt = run.endedAt,
+		endReason = run.endReason,
+		player = run.player,
+		realm = run.realm,
+		client = run.client,
+		counters = type(run.counters) == "table" and copyTable(run.counters) or nil,
+		pulls = compactPulls,
+	}
+end
+
+local function compactDebugStore(db)
+	db.debug = type(db.debug) == "table" and db.debug or {}
+	local compactRuns = {}
+	local runs = trimArray(type(db.debug.runs) == "table" and db.debug.runs or {}, C.MAX_DEBUG_RUNS)
+	for index = 1, #runs do
+		local run = compactDebugRun(runs[index])
+		if run then
+			compactRuns[#compactRuns + 1] = run
+		end
+	end
+	db.debug.runs = compactRuns
+	db.debug.logs = RingBuffer.clear(db.debug.logs, C.MAX_DEBUG_LOGS)
+	db.debug.errors = RingBuffer.ensure(db.debug.errors, C.MAX_DEBUG_ERRORS)
+	db.debug.nextRunId = db.debug.nextRunId or 1
 end
 
 local function appendMigration(db, migration)
@@ -123,12 +197,37 @@ local function evidenceBackupIsUsable(evidence)
 		and type(evidence.instances) == "table"
 end
 
+local function copyPersistentEvidence(evidence)
+	if not evidenceBackupIsUsable(evidence) then
+		return nil
+	end
+	local copy = copyTable(evidence)
+	copy.incomplete = nil
+	return copy
+end
+
+local function copyPersistentEvidenceArchives(archives)
+	if type(archives) ~= "table" then
+		return nil
+	end
+	local copied = {}
+	for index = 1, #archives do
+		local archive = copyTable(archives[index])
+		if type(archive) == "table" and type(archive.evidence) == "table" then
+			archive.evidence.incomplete = nil
+			archive.incompleteCount = nil
+		end
+		copied[#copied + 1] = archive
+	end
+	return copied
+end
+
 local function ensureEvidenceShape(evidence)
 	evidence = type(evidence) == "table" and evidence or {}
 	evidence.schemaVersion = C.EVIDENCE_SCHEMA_VERSION
 	evidence.revision = tonumber(evidence.revision) or 0
 	evidence.instances = type(evidence.instances) == "table" and evidence.instances or {}
-	evidence.incomplete = type(evidence.incomplete) == "table" and evidence.incomplete or {}
+	evidence.incomplete = nil
 	return evidence
 end
 
@@ -254,9 +353,6 @@ local function mergeEvidenceBackup(db, backup)
 		end
 	end
 
-	if #target.incomplete == 0 and type(source.incomplete) == "table" then
-		target.incomplete = copyTable(source.incomplete)
-	end
 	if imported > 0 then
 		target.revision = math.max(tonumber(target.revision) or 0, tonumber(source.revision) or 0) + imported
 	else
@@ -276,7 +372,12 @@ local function mergeEvidenceArchives(db, backup)
 	db.evidenceArchives = type(db.evidenceArchives) == "table" and db.evidenceArchives or {}
 	local imported = 0
 	for index = 1, #source do
-		db.evidenceArchives[#db.evidenceArchives + 1] = copyTable(source[index])
+		local archive = copyTable(source[index])
+		if type(archive) == "table" and type(archive.evidence) == "table" then
+			archive.evidence.incomplete = nil
+			archive.incompleteCount = nil
+		end
+		db.evidenceArchives[#db.evidenceArchives + 1] = archive
 		imported = imported + 1
 	end
 	while #db.evidenceArchives > (tonumber(C.MAX_EVIDENCE_ARCHIVES) or 3) do
@@ -616,6 +717,57 @@ local function migrateWarningLeadTimeDefault(db)
 	return true
 end
 
+local function migrateDebugDefaults(db)
+	if type(db) ~= "table" or type(db.config) ~= "table" then
+		return false
+	end
+	db.configMigrations = type(db.configMigrations) == "table" and db.configMigrations or {}
+	if db.configMigrations[DEBUG_DEFAULT_OFF_MIGRATION] == true then
+		return false
+	end
+
+	local changed = false
+	if db.config.debugEnabled ~= false then
+		db.config.debugEnabled = false
+		changed = true
+	end
+	if db.config.combatLogDebug ~= false then
+		db.config.combatLogDebug = false
+		changed = true
+	end
+	db.configMigrations[DEBUG_DEFAULT_OFF_MIGRATION] = true
+	if changed then
+		appendMigration(db, {
+			id = DEBUG_DEFAULT_OFF_MIGRATION,
+			from = C.SCHEMA_VERSION,
+			to = C.SCHEMA_VERSION,
+			at = wallTime(),
+			reason = "Disabled verbose debug capture by default to keep account SavedVariables loadable.",
+		})
+	end
+	return changed
+end
+
+local function migrateDebugStoreCompaction(db)
+	if type(db) ~= "table" then
+		return false
+	end
+	db.configMigrations = type(db.configMigrations) == "table" and db.configMigrations or {}
+	if db.configMigrations[DEBUG_STORE_COMPACTION_MIGRATION] == true then
+		return false
+	end
+	compactDebugStore(db)
+	db.configMigrations[DEBUG_STORE_COMPACTION_MIGRATION] = true
+	appendMigration(db, {
+		id = DEBUG_STORE_COMPACTION_MIGRATION,
+		from = C.SCHEMA_VERSION,
+		to = C.SCHEMA_VERSION,
+		at = wallTime(),
+		reason = "Compacted stored debug diagnostics to prevent account SavedVariables loader failures.",
+	})
+	return true
+end
+
 local function boundLearnedData(learned)
 	if type(learned.zones) ~= "table" then
 		learned.zones = {}
@@ -802,12 +954,12 @@ local function writeLearnedBackup(allowEmpty, bumpRevision)
 		sourceCreatedAt = meta.createdAt,
 		sourceUpdatedAt = meta.updatedAt,
 		updatedAt = wallTime(),
-		learned = copyTable(type(db.learned) == "table" and db.learned or { zones = {} }),
-		evidence = evidenceBackupIsUsable(db.evidence) and copyTable(db.evidence) or nil,
-		evidenceArchives = type(db.evidenceArchives) == "table" and copyTable(db.evidenceArchives) or nil,
-		config = currentRecoveryConfig(),
-		overrides = copyTable(currentOverrides()),
-	}
+			learned = copyTable(type(db.learned) == "table" and db.learned or { zones = {} }),
+			evidence = copyPersistentEvidence(db.evidence),
+			evidenceArchives = copyPersistentEvidenceArchives(db.evidenceArchives),
+			config = currentRecoveryConfig(),
+			overrides = copyTable(currentOverrides()),
+		}
 end
 
 local function refreshAfterLearnedDataChange()
@@ -895,18 +1047,19 @@ function SavedVariables.init()
 	db.config = type(db.config) == "table" and db.config or {}
 	copyDefaults(db.config, C.DEFAULT_CONFIG)
 	migrateWarningLeadTimeDefault(db)
+	migrateDebugDefaults(db)
 	db.learned = type(db.learned) == "table" and db.learned or { zones = {} }
 	db.learned.zones = type(db.learned.zones) == "table" and db.learned.zones or {}
 	if addon.Core.EvidenceStore and addon.Core.EvidenceStore.ensureDb then
 		addon.Core.EvidenceStore.ensureDb(db)
 	else
-		db.evidence = type(db.evidence) == "table" and db.evidence or {
-			schemaVersion = C.EVIDENCE_SCHEMA_VERSION,
-			revision = 0,
-			instances = {},
-			incomplete = {},
-		}
-	end
+			db.evidence = type(db.evidence) == "table" and db.evidence or {
+				schemaVersion = C.EVIDENCE_SCHEMA_VERSION,
+				revision = 0,
+				instances = {},
+			}
+			db.evidence.incomplete = nil
+		end
 	if learnedHasData(db.learned) then
 		ensureLearnedMeta(db).clearedAt = nil
 	end
@@ -928,6 +1081,7 @@ function SavedVariables.init()
 	db.debug.errors = RingBuffer.ensure(db.debug.errors, C.MAX_DEBUG_ERRORS)
 	db.debug.logs = RingBuffer.ensure(db.debug.logs, C.MAX_DEBUG_LOGS)
 	db.debug.nextRunId = db.debug.nextRunId or 1
+	migrateDebugStoreCompaction(db)
 
 	charDB.config = type(charDB.config) == "table" and charDB.config or {}
 	copyDefaults(charDB.config, C.DEFAULT_CHAR_CONFIG)
@@ -1093,13 +1247,12 @@ function SavedVariables.clearLearnedData(reason)
 	if addon.Core.EvidenceStore and addon.Core.EvidenceStore.clearAll then
 		addon.Core.EvidenceStore.clearAll()
 	else
-		addon.db.evidence = {
-			schemaVersion = C.EVIDENCE_SCHEMA_VERSION,
-			revision = 0,
-			instances = {},
-			incomplete = {},
-		}
-	end
+			addon.db.evidence = {
+				schemaVersion = C.EVIDENCE_SCHEMA_VERSION,
+				revision = 0,
+				instances = {},
+			}
+		end
 	if addon.db.config and addon.db.config.overrides then
 		addon.db.config.overrides = { zones = {} }
 	end

@@ -11,10 +11,21 @@ function RingBuffer.ensure(buffer, maxEntries)
 		buffer = {}
 	end
 	buffer.max = maxEntries or buffer.max or 100
-	buffer.next = buffer.next or 1
-	buffer.size = buffer.size or 0
+	buffer.next = tonumber(buffer.next) or 1
+	if buffer.next < 1 or buffer.next > buffer.max then
+		buffer.next = 1
+	end
 	buffer.dropped = buffer.dropped or 0
 	buffer.items = type(buffer.items) == "table" and buffer.items or {}
+	local itemCount = 0
+	for key in pairs(buffer.items) do
+		if type(key) ~= "number" or key < 1 or key > buffer.max then
+			buffer.items[key] = nil
+		else
+			itemCount = itemCount + 1
+		end
+	end
+	buffer.size = math.min(tonumber(buffer.size) or itemCount, itemCount, buffer.max)
 	return buffer
 end
 

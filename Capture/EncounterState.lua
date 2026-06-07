@@ -22,12 +22,32 @@ local function activeRun()
 	return addon.Core.Logger and addon.Core.Logger.getRun()
 end
 
+local function compactZone(zone)
+	if type(zone) ~= "table" then
+		return nil
+	end
+	return {
+		key = zone.key,
+		name = zone.name,
+		instanceType = zone.instanceType,
+		mapId = zone.mapId,
+	}
+end
+
 local function pushRunPull(pull)
 	local run = activeRun()
 	if not run then
 		return
 	end
-	run.pulls[#run.pulls + 1] = pull
+	local summary = {
+		id = pull.id,
+		reason = pull.reason,
+		startedAt = pull.startedAt,
+		startedAtSession = pull.startedAtSession,
+		zone = compactZone(pull.zone),
+	}
+	pull.debugSummary = summary
+	run.pulls[#run.pulls + 1] = summary
 	while #run.pulls > C.MAX_DEBUG_PULLS_PER_RUN do
 		table.remove(run.pulls, 1)
 	end
@@ -719,6 +739,14 @@ local function finishPull(reason)
 		duration = state.current.duration,
 		bossName = state.current.bossName,
 	})
+	if state.current.debugSummary then
+		state.current.debugSummary.endedAt = state.current.endedAt
+		state.current.debugSummary.endedAtSession = state.current.endedAtSession
+		state.current.debugSummary.endReason = state.current.endReason
+		state.current.debugSummary.duration = state.current.duration
+		state.current.debugSummary.bossKey = state.current.bossKey
+		state.current.debugSummary.bossName = state.current.bossName
+	end
 
 	local contextsToClose = {}
 	for _, context in pairs(state.current.activeBossContexts) do

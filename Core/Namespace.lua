@@ -6,7 +6,7 @@
 local addonName, addon = ...
 
 addon.name = addonName
-addon.version = "1.9.9"
+addon.version = "1.9.11"
 addon.modules = addon.modules or {}
 addon.Core = addon.Core or {}
 addon.Capture = addon.Capture or {}

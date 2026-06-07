@@ -1,6 +1,6 @@
 -- EvidenceStore.lua
--- Persists compact kill evidence separately from calculated learned models.
--- The store keeps only bounded facts that can be replayed by future learners.
+-- Persists compact completed-kill evidence separately from calculated learned
+-- models. Incomplete attempts are kept only as bounded session diagnostics.
 
 local addon = _G.BossTracker
 local C = addon.Core.Constants
@@ -11,6 +11,7 @@ local EvidenceStore = {}
 addon.Core.EvidenceStore = EvidenceStore
 
 local activeDrafts = {}
+local incompleteAttempts = {}
 local suspended = false
 
 local EVENT_TO_CODE = {
@@ -164,7 +165,6 @@ local function newEvidenceStore()
 		schemaVersion = C.EVIDENCE_SCHEMA_VERSION,
 		revision = 0,
 		instances = {},
-		incomplete = {},
 	}
 end
 
@@ -186,10 +186,11 @@ local function archiveEvidenceStore(db, evidence, reason)
 		return
 	end
 	local killCount = evidencePermanentKillCount(evidence)
-	local incompleteCount = type(evidence.incomplete) == "table" and #evidence.incomplete or 0
-	if killCount == 0 and incompleteCount == 0 then
+	if killCount == 0 then
 		return
 	end
+	local archivedEvidence = copyTable(evidence)
+	archivedEvidence.incomplete = nil
 	db.evidenceArchives = type(db.evidenceArchives) == "table" and db.evidenceArchives or {}
 	db.evidenceArchives[#db.evidenceArchives + 1] = {
 		archivedAt = Util.wallTime(),
@@ -198,8 +199,7 @@ local function archiveEvidenceStore(db, evidence, reason)
 		expectedSchemaVersion = C.EVIDENCE_SCHEMA_VERSION,
 		revision = evidence.revision,
 		killCount = killCount,
-		incompleteCount = incompleteCount,
-		evidence = copyTable(evidence),
+		evidence = archivedEvidence,
 	}
 	while #db.evidenceArchives > C.MAX_EVIDENCE_ARCHIVES do
 		table.remove(db.evidenceArchives, 1)
@@ -215,7 +215,7 @@ function EvidenceStore.ensureDb(db)
 		db.evidence = type(db.evidence) == "table" and db.evidence or newEvidenceStore()
 		db.evidence.revision = tonumber(db.evidence.revision) or 0
 		db.evidence.instances = type(db.evidence.instances) == "table" and db.evidence.instances or {}
-		db.evidence.incomplete = type(db.evidence.incomplete) == "table" and db.evidence.incomplete or {}
+		db.evidence.incomplete = nil
 		return db.evidence
 	end
 	if type(db.evidence) ~= "table" or tonumber(db.evidence.schemaVersion) ~= C.EVIDENCE_SCHEMA_VERSION then
@@ -225,7 +225,7 @@ function EvidenceStore.ensureDb(db)
 	db.evidence.schemaVersion = C.EVIDENCE_SCHEMA_VERSION
 	db.evidence.revision = tonumber(db.evidence.revision) or 0
 	db.evidence.instances = type(db.evidence.instances) == "table" and db.evidence.instances or {}
-	db.evidence.incomplete = type(db.evidence.incomplete) == "table" and db.evidence.incomplete or {}
+	db.evidence.incomplete = nil
 	EvidenceStore.bound(db.evidence)
 	return db.evidence
 end
@@ -895,11 +895,10 @@ local function commitComponent(draft, component)
 end
 
 local function rememberIncomplete(draft, reason)
-	local evidence = store()
-	if not evidence or not draft then
+	if not draft then
 		return
 	end
-	appendLimited(evidence.incomplete, {
+	appendLimited(incompleteAttempts, {
 		capturedAt = Util.wallTime(),
 		pullId = draft.pullId,
 		instanceKey = draft.zone and draft.zone.key,
@@ -956,7 +955,7 @@ function EvidenceStore.bound(evidence)
 		return
 	end
 	evidence.instances = type(evidence.instances) == "table" and evidence.instances or {}
-	evidence.incomplete = type(evidence.incomplete) == "table" and evidence.incomplete or {}
+	evidence.incomplete = nil
 
 	while countKeys(evidence.instances) > C.MAX_EVIDENCE_INSTANCES do
 		removeOldestKey(evidence.instances, "lastSeenAt")
@@ -972,9 +971,6 @@ function EvidenceStore.bound(evidence)
 				removeOldestKey(boss.kills, "capturedAt")
 			end
 		end
-	end
-	while #evidence.incomplete > C.MAX_EVIDENCE_INCOMPLETE_ATTEMPTS do
-		table.remove(evidence.incomplete, 1)
 	end
 end
 
@@ -1309,6 +1305,7 @@ function EvidenceStore.clearAll()
 		addon.db.evidence = newEvidenceStore()
 	end
 	activeDrafts = {}
+	incompleteAttempts = {}
 end
 
 function EvidenceStore.countPermanentKills()
@@ -1323,8 +1320,7 @@ function EvidenceStore.countPermanentKills()
 end
 
 function EvidenceStore.countIncomplete()
-	local evidence = store()
-	return #(evidence and evidence.incomplete or {})
+	return #incompleteAttempts
 end
 
 function EvidenceStore.setSuspended(value)
@@ -1333,6 +1329,7 @@ end
 
 function EvidenceStore.start()
 	activeDrafts = {}
+	incompleteAttempts = {}
 	suspended = false
 	if not Codec then
 		suspended = true

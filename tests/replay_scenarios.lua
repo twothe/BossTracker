@@ -37,6 +37,24 @@ local function copyTable(value)
 	return copy
 end
 
+local function migrationWithIdExists(db, migrationId)
+	for index = 1, #(db and db.migrations or {}) do
+		if db.migrations[index].id == migrationId then
+			return true
+		end
+	end
+	return false
+end
+
+local function migrationWithReasonExists(db, reason)
+	for index = 1, #(db and db.migrations or {}) do
+		if db.migrations[index].reason == reason then
+			return true
+		end
+	end
+	return false
+end
+
 local function scenarioChannelLifecycle()
 	Harness.resetState("Replay Herod")
 	local boss = "Herod"
@@ -805,7 +823,7 @@ local function scenarioSavedVariablesMigratesOldWarningLeadTimeDefault()
 
 	Harness.assertTrue(addon.db.config.warningLeadTime == C.DEFAULT_CONFIG.warningLeadTime, "Old stored warning default should migrate to the current default")
 	Harness.assertTrue(addon.db.configMigrations.warningLeadTimeDefault3 == true, "Warning default migration should be marked complete")
-	Harness.assertTrue(addon.db.migrations[#addon.db.migrations].id == "warningLeadTimeDefault3", "Warning default migration should leave a migration breadcrumb")
+	Harness.assertTrue(migrationWithIdExists(addon.db, "warningLeadTimeDefault3"), "Warning default migration should leave a migration breadcrumb")
 
 	addon.db.config.warningLeadTime = 5
 	addon.Core.SavedVariables.init()
@@ -831,10 +849,14 @@ local function scenarioSavedVariablesRestoreFromCharacterBackup()
 	addon.Core.Config.setAbilityDisplayMode(zoneKey, encounterKey, abilityKey, "hide")
 	addon.Core.Config.setWarningLeadTime(9)
 	addon.db.config.timersEnabled = false
+	addon.db.evidence.incomplete = {
+		{ reason = "legacy_partial" },
+	}
 	addon.Core.SavedVariables.syncLearnedBackup(true)
 	local backup = _G.BossTrackerCharDB.learnedBackup
 	Harness.assertTrue(backup ~= nil and backup.learned ~= nil, "Character backup should be written after learning")
 	Harness.assertTrue(storedEvidenceKillCount(backup.evidence) == 1, "Character backup should include permanent evidence")
+	Harness.assertTrue(backup.evidence.incomplete == nil, "Character backup should not include session-local incomplete evidence")
 	Harness.assertTrue(backup.overrides.zones[zoneKey].encounters[encounterKey].abilities[abilityKey].display == "hide", "Character backup should include ability overrides")
 	Harness.assertTrue(backup.config.warningLeadTime == 9 and backup.config.timersEnabled == false, "Character backup should include player-facing timer settings")
 
@@ -846,9 +868,10 @@ local function scenarioSavedVariablesRestoreFromCharacterBackup()
 
 	Harness.assertTrue(addon.db.learned.zones[zoneKey].encounters[encounterKey] ~= nil, "Fresh account DB should restore learned data from character backup")
 	Harness.assertTrue(addon.Core.EvidenceStore.countPermanentKills() == 1, "Fresh account DB should restore permanent evidence from character backup")
+	Harness.assertTrue(addon.db.evidence.incomplete == nil, "Restored account evidence should not include character backup incomplete diagnostics")
 	Harness.assertTrue(addon.db.config.overrides.zones[zoneKey].encounters[encounterKey].abilities[abilityKey].display == "hide", "Fresh account DB should restore ability overrides from character backup")
 	Harness.assertTrue(addon.db.config.warningLeadTime == 9 and addon.db.config.timersEnabled == false, "Fresh account DB should restore player-facing timer settings from character backup")
-	Harness.assertTrue(addon.db.migrations[#addon.db.migrations].reason == "Restored learned data from per-character backup after account SavedVariables were empty.", "Restore should leave a migration breadcrumb")
+	Harness.assertTrue(migrationWithReasonExists(addon.db, "Restored learned data from per-character backup after account SavedVariables were empty."), "Restore should leave a migration breadcrumb")
 
 	local evidenceOnlyBackup = copyTable(backup)
 	evidenceOnlyBackup.learned = { zones = {} }
@@ -967,6 +990,140 @@ local function scenarioSavedVariablesSchemaResetTombstoneDoesNotBlockLaterBackup
 	addon.Core.SavedVariables.init()
 
 	Harness.assertTrue(addon.db.learned.zones[zoneKey].encounters.reset_tombstone_boss ~= nil, "A schema-reset tombstone from the broken recovery build must not block a later character backup")
+end
+
+local function scenarioSavedVariablesCompactsDebugStoreAndDisablesVerboseDefaults()
+	Harness.resetState("Replay SavedVariables Debug Compaction")
+	local C = addon.Core.Constants
+	_G.BossTrackerDB = {
+		schemaVersion = C.SCHEMA_VERSION,
+		config = {
+			debugEnabled = true,
+			combatLogDebug = true,
+			overrides = { zones = {} },
+		},
+		learned = { zones = {} },
+		learnedMeta = {
+			backupSchemaVersion = C.LEARNED_BACKUP_SCHEMA_VERSION,
+			dataSchemaVersion = C.SCHEMA_VERSION,
+			interpretationEngineVersion = C.INTERPRETATION_ENGINE_VERSION,
+			dataId = "debug-compaction-data",
+			revision = 1,
+		},
+		debug = {
+			nextRunId = 9,
+			logs = {
+				max = 500,
+				next = 1,
+				size = 500,
+				items = {
+					[1] = { message = "large old log", data = { payload = string.rep("x", 200) } },
+					[500] = { message = "large old log tail", data = { payload = string.rep("y", 200) } },
+				},
+			},
+			errors = {
+				max = 120,
+				next = 1,
+				size = 1,
+				items = {
+					[1] = { message = "kept error" },
+					[120] = { message = "old overflow error" },
+				},
+			},
+			runs = {
+				{
+					id = 7,
+					startedAt = 100,
+					player = "ReplayTester",
+					events = {
+						max = 4200,
+						next = 1,
+						size = 4200,
+						items = {
+							[1] = { kind = "huge_event", payload = string.rep("z", 200) },
+							[4200] = { kind = "huge_event_tail", payload = string.rep("q", 200) },
+						},
+					},
+					logs = {
+						max = 500,
+						next = 1,
+						size = 1,
+						items = {
+							[1] = { message = "run log" },
+						},
+					},
+					bossContexts = {
+						max = 360,
+						next = 1,
+						size = 1,
+						items = {
+							[1] = { bossName = "Debug Boss" },
+						},
+					},
+					pulls = {
+						{
+							id = 3,
+							reason = "debug_fixture",
+							events = {
+								items = {
+									[1] = { spellName = "Should Not Persist" },
+								},
+							},
+							spells = {
+								huge = {
+									events = {
+										SPELL_DAMAGE = 2000,
+									},
+								},
+							},
+							zone = {
+								key = "debug_zone",
+								name = "Debug Zone",
+								instanceType = "party",
+								mapId = 123,
+							},
+						},
+					},
+					counters = {
+						debugCounter = 2,
+					},
+				},
+			},
+		},
+	}
+	_G.BossTrackerCharDB = {}
+	addon.Core.SavedVariables.init()
+
+	Harness.assertTrue(addon.db.config.debugEnabled == false and addon.db.config.combatLogDebug == false, "Verbose debug capture should migrate to disabled by default")
+	Harness.assertTrue(addon.db.debug.logs.size == 0 and next(addon.db.debug.logs.items) == nil, "Stored debug logs should be cleared during compaction")
+	Harness.assertTrue(#addon.db.debug.runs == 1, "Debug compaction should retain bounded run summaries")
+	Harness.assertTrue(addon.db.debug.runs[1].events == nil and addon.db.debug.runs[1].logs == nil and addon.db.debug.runs[1].bossContexts == nil, "Debug run details should not persist after compaction")
+	Harness.assertTrue(addon.db.debug.runs[1].pulls[1].events == nil and addon.db.debug.runs[1].pulls[1].spells == nil, "Debug pull summaries should not persist full pull payloads")
+	Harness.assertTrue(addon.db.configMigrations.debugCaptureDefaultOff1 == true and addon.db.configMigrations.debugStoreCompacted1 == true, "Debug migrations should be marked complete")
+end
+
+local function scenarioSavedVariablesDropsPersistedIncompleteEvidence()
+	Harness.resetState("Replay SavedVariables Drops Incomplete")
+	local C = addon.Core.Constants
+	_G.BossTrackerDB = {
+		schemaVersion = C.SCHEMA_VERSION,
+		learned = { zones = {} },
+		config = {},
+		evidence = {
+			schemaVersion = C.EVIDENCE_SCHEMA_VERSION,
+			revision = 12,
+			instances = {},
+			incomplete = {
+				{ reason = "legacy_partial" },
+			},
+		},
+		debug = {},
+	}
+	_G.BossTrackerCharDB = {}
+	addon.Core.SavedVariables.init()
+
+	Harness.assertTrue(addon.db.evidence.incomplete == nil, "SavedVariables init should remove legacy persisted incomplete evidence")
+	Harness.assertTrue(addon.Core.EvidenceStore.countIncomplete() == 0, "Legacy persisted incomplete evidence should not enter the session-local buffer")
 end
 
 function manualLearnedData(zoneKey, encounterKey, spellName)
@@ -1276,6 +1433,7 @@ end
 
 local function scenarioDelayedTimerHidesUntilObservedAgain()
 	Harness.resetState("Replay Delayed Timer")
+	addon.db.config.debugEnabled = true
 	local boss = "Delayed Sentinel"
 	local guid = Harness.makeGuid(boss, 657)
 	Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = guid, spellName = "Phase Bolt", hp = 100 })
@@ -1302,6 +1460,7 @@ end
 
 local function scenarioLearnedDelayedTimerHidesUntilObservedAgain()
 	Harness.resetState("Replay Learned Delayed Timer")
+	addon.db.config.debugEnabled = true
 	local boss = "Learned Delay Sentinel"
 	local firstGuid = Harness.makeGuid(boss, 658)
 	local nextGuid = Harness.makeGuid(boss, 659)
@@ -1939,6 +2098,7 @@ local function scenarioEvidenceStoresCompletedBossEvidence()
 
 	Harness.assertTrue(addon.Core.EvidenceStore.countPermanentKills() == 0, "Incomplete attempts must not enter permanent evidence")
 	Harness.assertTrue(addon.Core.EvidenceStore.countIncomplete() == 1, "Incomplete attempts should remain bounded separately")
+	Harness.assertTrue(addon.db.evidence.incomplete == nil, "Incomplete attempts should not be persisted in account evidence")
 
 	Harness.resetState("Replay Evidence Low HP Completion")
 	Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = guid, spellName = "Measured Strike", hp = 100 })
@@ -2030,8 +2190,10 @@ local function scenarioEvidenceSchemaMismatchArchivesExistingStore()
 	Harness.assertTrue(addon.db.evidence.schemaVersion == C.EVIDENCE_SCHEMA_VERSION, "Current evidence store should be reset to the supported schema")
 	Harness.assertTrue(type(addon.db.evidenceArchives) == "table" and #addon.db.evidenceArchives == 1, "Incompatible existing evidence should be archived instead of discarded")
 	Harness.assertTrue(addon.db.evidenceArchives[1].killCount == 1, "Evidence archive should preserve the permanent kill count")
+	Harness.assertTrue(addon.db.evidenceArchives[1].incompleteCount == nil and addon.db.evidenceArchives[1].evidence.incomplete == nil, "Evidence archives should not preserve temporary incomplete diagnostics")
 	addon.Core.SavedVariables.syncLearnedBackup(true)
 	Harness.assertTrue(type(addon.charDB.learnedBackup.evidenceArchives) == "table" and #addon.charDB.learnedBackup.evidenceArchives == 1, "Character backup should include archived evidence")
+	Harness.assertTrue(addon.charDB.learnedBackup.evidenceArchives[1].evidence.incomplete == nil, "Character backup archives should not include temporary incomplete diagnostics")
 end
 
 local function scenarioEvidenceKeepsTechnicalSpellIdsForSameName()
@@ -2580,6 +2742,8 @@ local scenarios = {
 	scenarioSavedVariablesRestoreFromCharacterBackup,
 	scenarioSavedVariablesLateCharacterBackupRestoresAfterEmptyCharacterLogin,
 	scenarioSavedVariablesSchemaResetTombstoneDoesNotBlockLaterBackup,
+	scenarioSavedVariablesCompactsDebugStoreAndDisablesVerboseDefaults,
+	scenarioSavedVariablesDropsPersistedIncompleteEvidence,
 	scenarioSavedVariablesNewerCharacterBackupPromptsAndCanKeepAccount,
 	scenarioSavedVariablesNewerCharacterBackupCanRestore,
 	scenarioSavedVariablesExplicitClearBlocksCharacterRestore,
