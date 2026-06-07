@@ -16,6 +16,13 @@ local function isSpellLike(eventType)
 	)
 end
 
+local function isDeathLike(eventType)
+	return eventType == "UNIT_DIED"
+		or eventType == "UNIT_DESTROYED"
+		or eventType == "UNIT_DISSIPATES"
+		or eventType == "PARTY_KILL"
+end
+
 local function currentTargetHp(sourceGUID)
 	if not sourceGUID or not UnitGUID then
 		return nil
@@ -210,12 +217,17 @@ function CombatLog.handleEvent(eventName, ...)
 		return
 	end
 
-	if eventType == "UNIT_DIED" then
+	if isDeathLike(eventType) then
+		if not destIsHostileNpc then
+			addon.Core.Logger.counter("combat_death_non_hostile")
+			return
+		end
 		local record = makeRecord(timestamp, eventType, sourceGUID, sourceName, sourceFlags, destGUID, destName, destFlags)
 		addon.Capture.EncounterState.noteCombatEvent(record)
 		addon.Capture.EncounterState.markUnitDied(destGUID, destName)
 		addon.Core.Logger.event({
 			kind = "unit_died",
+			eventType = eventType,
 			destName = destName,
 			destGUID = Util.compactGuid(destGUID),
 			destIsHostileNpc = destIsHostileNpc,

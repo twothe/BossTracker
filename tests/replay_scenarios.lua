@@ -2064,19 +2064,31 @@ local function scenarioShortHighHpPartialIgnored()
 	Harness.assertTrue(model.pullCount == 1, "Ignored high-HP partial should not increment the learned pull count")
 end
 
-local function emitUnitDied(t, guid, name)
+local function emitDeathLikeEvent(t, eventType, guid, name)
 	Harness.setTime(t)
+	local sourceGUID
+	local sourceName
+	local sourceFlags = 0
+	if eventType == "PARTY_KILL" then
+		sourceGUID = "Player-0-0-0-0-1-ReplayTester"
+		sourceName = "ReplayTester"
+		sourceFlags = COMBATLOG_OBJECT_TYPE_PLAYER
+	end
 	addon.Capture.CombatLog.handleEvent(
 		"COMBAT_LOG_EVENT_UNFILTERED",
 		t,
-		"UNIT_DIED",
-		nil,
-		nil,
-		0,
+		eventType,
+		sourceGUID,
+		sourceName,
+		sourceFlags,
 		guid,
 		name,
 		Harness.hostileFlags()
 	)
+end
+
+local function emitUnitDied(t, guid, name)
+	emitDeathLikeEvent(t, "UNIT_DIED", guid, name)
 end
 
 local function scenarioUnitDiedDefersWhileBossFrameAlive()
@@ -2162,6 +2174,25 @@ local function scenarioUnitDiedPreventsDeadContextReactivation()
 	local bossKey = addon.Core.Util.bossKey(boss, guid)
 	local model = Harness.encounter(bossKey)
 	Harness.assertTrue(Harness.ability(model, bossKey, "Death Cleanup Aura") == nil, "Post-death cleanup events must not become learned boss abilities")
+end
+
+local function scenarioPartyKillCompletesBossContext()
+	Harness.resetState("Replay Party Kill Completion")
+	local boss = "Party Kill Drake"
+	local guid = Harness.makeGuid(boss, 724)
+	Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = guid, spellName = "Measured Strike", hp = 100 })
+	Harness.emitSpell({ t = 18, sourceName = boss, sourceGUID = guid, spellName = "Measured Strike", hp = 40 })
+
+	emitDeathLikeEvent(25, "PARTY_KILL", guid, boss)
+	local pull = addon.Capture.EncounterState.getCurrent()
+	local context = pull and pull.bossContexts[addon.Core.Util.actorKey(boss, guid)]
+	Harness.assertTrue(context and context.active == false and context.endReason == "unit_died", "PARTY_KILL should close a matching hostile boss context as completed")
+
+	Harness.finishPull(30, "out_of_combat")
+	local bossKey = addon.Core.Util.bossKey(boss, guid)
+	Harness.assertTrue(Harness.encounter(bossKey) ~= nil, "PARTY_KILL completed bosses should be promoted like UNIT_DIED bosses")
+	Harness.assertTrue(addon.Core.EvidenceStore.countPermanentKills() == 1, "PARTY_KILL completed bosses should enter permanent evidence")
+	Harness.assertTrue(addon.Core.EvidenceStore.countIncomplete() == 0, "PARTY_KILL completed bosses should not remain incomplete")
 end
 
 local function firstDecodedEvidenceKill()
@@ -2583,6 +2614,87 @@ local function scenarioEvidenceEngineVersionRebuildsFinalData()
 	Harness.assertTrue(addon.db.learnedMeta.rebuildRequired == nil, "Engine rebuild should clear the rebuild-required marker")
 end
 
+local function scenarioEngineRebuildPreservesLearnedOnlyLegacy()
+	Harness.resetState("Replay Partial Evidence Engine Version")
+	local C = addon.Core.Constants
+	local evidenceBoss = "Evidence Backed Sentinel"
+	local evidenceGuid = Harness.makeGuid(evidenceBoss, 1906)
+	Harness.emitSpell({ t = 0, sourceName = evidenceBoss, sourceGUID = evidenceGuid, spellName = "Evidence Slam", hp = 100 })
+	Harness.emitSpell({ t = 30, sourceName = evidenceBoss, sourceGUID = evidenceGuid, spellName = "Evidence Slam", hp = 20 })
+	Harness.finishPull(45, "unit_died")
+
+	local legacyZoneKey = "legacy_blackwing_lair"
+	local legacyEncounterKey = "broodlord_lashlayer"
+	local legacyLearned, legacyAbilityKey = manualLearnedData(legacyZoneKey, legacyEncounterKey, "Knock Away")
+	addon.db.learned.zones[legacyZoneKey] = legacyLearned.zones[legacyZoneKey]
+	addon.db.learnedMeta.interpretationEngineVersion = C.INTERPRETATION_ENGINE_VERSION - 1
+	addon.db.learnedMeta.rebuildRequired = true
+	addon.db.learnedMeta.rebuildReason = "test_partial_engine"
+
+	local rebuiltNow, promoted = addon.Core.SavedVariables.rebuildLearnedIfNeeded()
+	Harness.assertTrue(rebuiltNow == true and promoted >= 1, "Partial engine rebuild should still replay permanent evidence")
+	local evidenceBossKey = addon.Core.Util.bossKey(evidenceBoss, evidenceGuid)
+	Harness.assertTrue(Harness.encounter(evidenceBossKey) ~= nil, "Evidence-backed encounter should remain current after rebuild")
+	local legacyEncounter = addon.db.learned.zones[legacyZoneKey].encounters[legacyEncounterKey]
+	Harness.assertTrue(legacyEncounter ~= nil, "Learned-only encounter must not be deleted by an evidence rebuild")
+	Harness.assertTrue(legacyEncounter.legacyAfterRebuild == true, "Learned-only encounter should be marked as legacy after rebuild")
+	Harness.assertTrue(legacyEncounter.abilities[legacyAbilityKey].legacyAfterRebuild == true, "Learned-only ability should be marked as legacy after rebuild")
+	Harness.assertTrue(addon.Core.ModelStore.getEncounter(legacyZoneKey, legacyEncounterKey) == nil, "Legacy encounter should not feed runtime timer lookup")
+	Harness.assertTrue(addon.charDB.learnedBackup.learned.zones[legacyZoneKey].encounters[legacyEncounterKey] ~= nil, "Character backup must keep preserved legacy learned data")
+	Harness.assertTrue(addon.db.learnedMeta.rebuildCoverage == "partial", "Partial rebuild should be visible in learned metadata")
+	Harness.assertTrue((addon.db.learnedMeta.rebuildLegacyPreservedEncounters or 0) >= 1, "Partial rebuild should count preserved legacy encounters")
+end
+
+local function scenarioOldBackupRestorePreservesLegacyAfterEngineRebuild()
+	Harness.resetState("Replay Old Backup Restore Legacy")
+	local C = addon.Core.Constants
+	local zoneKey = "old_backup_legacy_zone"
+	local accountLearned = manualLearnedData(zoneKey, "account_boss", "Account Pulse")
+	local backupLearned, backupAbilityKey = manualLearnedData(zoneKey, "backup_boss", "Backup Pulse")
+
+	_G.BossTrackerDB = {
+		schemaVersion = C.SCHEMA_VERSION,
+		config = { overrides = { zones = {} } },
+		learned = accountLearned,
+		learnedMeta = {
+			backupSchemaVersion = C.LEARNED_BACKUP_SCHEMA_VERSION,
+			dataSchemaVersion = C.SCHEMA_VERSION,
+			interpretationEngineVersion = C.INTERPRETATION_ENGINE_VERSION,
+			interpretationEngineUpdatedAt = 100,
+			dataId = "restore-legacy-data",
+			revision = 1,
+			createdAt = 100,
+			updatedAt = 100,
+		},
+		debug = {},
+	}
+	_G.BossTrackerCharDB = {
+		learnedBackup = {
+			backupSchemaVersion = C.LEARNED_BACKUP_SCHEMA_VERSION,
+			dataSchemaVersion = C.SCHEMA_VERSION,
+			interpretationEngineVersion = C.INTERPRETATION_ENGINE_VERSION - 1,
+			interpretationEngineUpdatedAt = 200,
+			dataId = "restore-legacy-data",
+			revision = 2,
+			sourceCreatedAt = 100,
+			sourceUpdatedAt = 200,
+			updatedAt = 200,
+			learned = backupLearned,
+			overrides = { zones = {} },
+		},
+	}
+	addon.Core.SavedVariables.init()
+
+	Harness.assertTrue(addon.Core.SavedVariables.restorePendingLearnedBackup() == true, "Old-engine character backup should be restorable")
+	local restored = addon.db.learned.zones[zoneKey].encounters.backup_boss
+	Harness.assertTrue(restored ~= nil, "Restored learned-only backup encounter must remain present")
+	Harness.assertTrue(restored.legacyAfterRebuild == true, "Restored learned-only backup should become marked legacy after rebuild")
+	Harness.assertTrue(restored.abilities[backupAbilityKey].legacyAfterRebuild == true, "Restored backup ability should become marked legacy after rebuild")
+	Harness.assertTrue(addon.Core.ModelStore.getEncounter(zoneKey, "backup_boss") == nil, "Restored legacy backup should not feed runtime timer lookup")
+	Harness.assertTrue(addon.charDB.learnedBackup.learned.zones[zoneKey].encounters.backup_boss ~= nil, "Backup rewrite must not drop restored legacy data")
+	Harness.assertTrue(addon.db.learnedMeta.interpretationEngineVersion == C.INTERPRETATION_ENGINE_VERSION, "Restore follow-up rebuild should mark metadata current")
+end
+
 local function scenarioMissingEvidenceEngineVersionRebuildsForFutureEngines()
 	Harness.resetState("Replay Missing Evidence Engine Version")
 	local boss = "Future Engine Sentinel"
@@ -2733,6 +2845,35 @@ local function scenarioEvidenceSyncRoundTripRebuildsModel()
 	lastMessage = messages[#messages]
 	Harness.assertTrue(lastMessage ~= nil and lastMessage.distribution == "RAID", "Raid sync should use raid distribution")
 	Harness.assertTrue(lastMessage.target == nil, "Raid sync request should not whisper a single target")
+end
+
+local function scenarioEvidenceSyncImportPreservesLocalLegacy()
+	Harness.resetState("Replay Evidence Sync Source")
+	local boss = "Sync Source Sentinel"
+	local guid = Harness.makeGuid(boss, 2905)
+	Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = guid, spellName = "Peer Slam", hp = 100 })
+	Harness.emitSpell({ t = 30, sourceName = boss, sourceGUID = guid, spellName = "Peer Slam", hp = 60 })
+	Harness.finishPull(60, "unit_died")
+	local sourceZoneKey = addon.Core.Util.zoneInfo().key
+	local payload = addon.Core.EvidenceSync.exportPayload()
+	Harness.assertTrue(payload ~= nil, "Evidence sync source should export a payload")
+
+	Harness.resetState("Replay Evidence Sync Target Legacy")
+	local legacyZoneKey = "sync_target_legacy_zone"
+	local legacyEncounterKey = "local_legacy_boss"
+	local legacyLearned, legacyAbilityKey = manualLearnedData(legacyZoneKey, legacyEncounterKey, "Local Pulse")
+	addon.db.learned.zones[legacyZoneKey] = legacyLearned.zones[legacyZoneKey]
+
+	local importStats, importError = addon.Core.EvidenceSync.importPayload(payload, "PeerTester")
+	Harness.assertTrue(importStats ~= nil, "Evidence sync import should succeed: " .. tostring(importError))
+	Harness.assertTrue(importStats.imported == 1, "Evidence sync import should import one permanent kill")
+	Harness.assertTrue(addon.db.learned.zones[sourceZoneKey] ~= nil, "Imported evidence should rebuild the source encounter zone")
+	local legacyEncounter = addon.db.learned.zones[legacyZoneKey].encounters[legacyEncounterKey]
+	Harness.assertTrue(legacyEncounter ~= nil, "Sync-triggered rebuild must not delete local learned-only encounters")
+	Harness.assertTrue(legacyEncounter.legacyAfterRebuild == true, "Sync-triggered rebuild should mark local learned-only encounters as legacy")
+	Harness.assertTrue(legacyEncounter.abilities[legacyAbilityKey].legacyAfterRebuild == true, "Sync-triggered rebuild should mark local learned-only abilities as legacy")
+	Harness.assertTrue(addon.Core.ModelStore.getEncounter(legacyZoneKey, legacyEncounterKey) == nil, "Sync-preserved legacy encounter should not feed runtime timer lookup")
+	Harness.assertTrue(addon.charDB.learnedBackup.learned.zones[legacyZoneKey].encounters[legacyEncounterKey] ~= nil, "Sync-triggered backup rewrite must retain local legacy data")
 end
 
 local function scenarioEvidenceDifficultyAbilityAvailability()
@@ -2917,6 +3058,7 @@ local scenarios = {
 	scenarioUnitDiedDefersWhileBossFrameAlive,
 	scenarioUnitDiedUsesGuidBeforeName,
 	scenarioUnitDiedPreventsDeadContextReactivation,
+	scenarioPartyKillCompletesBossContext,
 	scenarioEvidenceStoresCompletedBossEvidence,
 	scenarioEvidenceCommitsWhenLearnerIsBlocked,
 	scenarioEvidenceSchemaMismatchArchivesExistingStore,
@@ -2929,8 +3071,11 @@ local scenarios = {
 	scenarioEvidenceRebuildPreservesBossContextStart,
 	scenarioEvidenceRebuildPreservesPlayerAuraPhase,
 	scenarioEvidenceEngineVersionRebuildsFinalData,
+	scenarioEngineRebuildPreservesLearnedOnlyLegacy,
+	scenarioOldBackupRestorePreservesLegacyAfterEngineRebuild,
 	scenarioMissingEvidenceEngineVersionRebuildsForFutureEngines,
 	scenarioEvidenceSyncRoundTripRebuildsModel,
+	scenarioEvidenceSyncImportPreservesLocalLegacy,
 	scenarioEvidenceDifficultyAbilityAvailability,
 	scenarioBlankFivePlayerDifficultyInfersNormalOnly,
 	scenarioObservedDifficultySummaryUsesSeenTiers,

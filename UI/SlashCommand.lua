@@ -23,9 +23,44 @@ local function help()
 	Util.print("/btr debug on/off, /btr clearlogs, /btr clearlearned - alpha diagnostics")
 end
 
+local function countLearnedState()
+	local encounters = 0
+	local legacy = 0
+	local abilities = 0
+	for _, zone in pairs(addon.db and addon.db.learned and addon.db.learned.zones or {}) do
+		for _, encounter in pairs(zone.encounters or {}) do
+			encounters = encounters + 1
+			if encounter.legacyAfterRebuild == true then
+				legacy = legacy + 1
+			end
+			for _ in pairs(encounter.abilities or {}) do
+				abilities = abilities + 1
+			end
+		end
+	end
+	return encounters, abilities, legacy
+end
+
+local function backupStatusText()
+	local backup = addon.charDB and addon.charDB.learnedBackup or nil
+	if type(backup) ~= "table" then
+		return "none"
+	end
+	return "rev=" .. tostring(backup.revision or 0)
+		.. ", engine=" .. tostring(backup.interpretationEngineVersion or "none")
+		.. ", updated=" .. tostring(backup.updatedAt or "unknown")
+end
+
 local function status()
 	local pull = addon.Capture.EncounterState.getCurrent()
 	local run = addon.Core.Logger.getRun()
+	local meta = addon.db and addon.db.learnedMeta or {}
+	local encounterCount, abilityCount, legacyCount = countLearnedState()
+	Util.print("version=" .. tostring(C.VERSION)
+		.. ", dbVersion=" .. tostring(addon.db.version or "none")
+		.. ", schema=" .. tostring(addon.db.schemaVersion or "none")
+		.. ", engine=" .. tostring(C.INTERPRETATION_ENGINE_VERSION)
+		.. ", dbEngine=" .. tostring(meta.interpretationEngineVersion or "none"))
 	Util.print("enabled=" .. tostring(addon.db.config.enabled)
 		.. ", timers=" .. tostring(addon.db.config.timersEnabled)
 		.. ", debug=" .. tostring(addon.db.config.debugEnabled)
@@ -53,6 +88,13 @@ local function status()
 	if addon.Core.EvidenceStore then
 		Util.print("evidence=" .. tostring(addon.Core.EvidenceStore.countPermanentKills()) .. " completed kill(s), incomplete=" .. tostring(addon.Core.EvidenceStore.countIncomplete()))
 	end
+	Util.print("learned=" .. tostring(encounterCount) .. " boss(es), abilities=" .. tostring(abilityCount) .. ", legacy=" .. tostring(legacyCount))
+	if meta.rebuiltFromEvidenceAt or meta.rebuildCoverage then
+		Util.print("lastRebuild=" .. tostring(meta.rebuildCoverage or "unknown")
+			.. ", kills=" .. tostring(meta.rebuiltFromEvidenceKills or 0)
+			.. ", promoted=" .. tostring(meta.rebuiltFromEvidencePromoted or 0))
+	end
+	Util.print("backup=" .. backupStatusText())
 end
 
 local function clearLogs()

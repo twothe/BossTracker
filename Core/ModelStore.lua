@@ -205,7 +205,11 @@ local function averageComponentConfidence(component)
 end
 
 local function encounterIsSuppressed(encounter)
-	return encounter and (encounter.suppressed == true or encounter.autoSuppressed == true)
+	return encounter and (
+		encounter.suppressed == true
+		or encounter.autoSuppressed == true
+		or encounter.legacyAfterRebuild == true
+	)
 end
 
 local function mergeEventCounts(target, source)
@@ -347,6 +351,7 @@ local function bestGroupContainingActor(zone, actorKey)
 		if type(encounterKey) == "string"
 			and string.sub(encounterKey, 1, 6) == "group:"
 			and type(encounter) == "table"
+			and encounter.legacyAfterRebuild ~= true
 			and type(encounter.actors) == "table"
 			and encounter.actors[actorKey] then
 			local score = groupMergeScore(encounter, actorKey)
@@ -382,7 +387,7 @@ local function normalizeContainedSingleActorEncounters(zone)
 	local mergeCount = 0
 	local actions = {}
 	for encounterKey, encounter in pairs(zone.encounters) do
-		local actorKey = singleActorKey(encounterKey, encounter)
+		local actorKey = encounter and encounter.legacyAfterRebuild ~= true and singleActorKey(encounterKey, encounter) or nil
 		local target = actorKey and bestGroupContainingActor(zone, actorKey) or nil
 		if target and target ~= encounter then
 			actions[#actions + 1] = {

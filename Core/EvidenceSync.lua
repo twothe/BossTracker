@@ -269,8 +269,10 @@ local function parsePayload(payload)
 	return parsed
 end
 
-local function refreshAfterImport()
-	if addon.Core.SavedVariables and addon.Core.SavedVariables.boundLearnedData then
+local function refreshAfterImport(skipLearnedBackup)
+	if not skipLearnedBackup
+		and addon.Core.SavedVariables
+		and addon.Core.SavedVariables.boundLearnedData then
 		addon.Core.SavedVariables.boundLearnedData()
 	end
 	if addon.Runtime.PredictionEngine and addon.Runtime.PredictionEngine.reset then
@@ -313,14 +315,23 @@ function EvidenceSync.importPayload(payload, sender)
 	end
 
 	local promoted = 0
+	local rebuildError
 	if imported > 0 then
 		if storeApi.bound then
 			storeApi.bound(evidence)
 		end
 		if storeApi.rebuildLearned then
-			promoted = storeApi.rebuildLearned()
+			local rebuilt, errorMessage = storeApi.rebuildLearned({
+				preserveLegacy = true,
+				rebuildReason = "evidence_sync_import",
+			})
+			if rebuilt == nil then
+				rebuildError = errorMessage or "learned rebuild failed"
+			else
+				promoted = rebuilt
+			end
 		end
-		refreshAfterImport()
+		refreshAfterImport(rebuildError ~= nil)
 	end
 	logInfo("Evidence sync payload imported", {
 		sender = sender,
@@ -328,12 +339,14 @@ function EvidenceSync.importPayload(payload, sender)
 		duplicates = duplicates,
 		rejected = rejected,
 		promoted = promoted,
+		rebuildError = rebuildError,
 	})
 	return {
 		imported = imported,
 		duplicates = duplicates,
 		rejected = rejected,
 		promoted = promoted,
+		rebuildError = rebuildError,
 	}
 end
 

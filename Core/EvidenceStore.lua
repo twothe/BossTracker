@@ -1238,6 +1238,106 @@ local function sortedKeys(tbl)
 	return keys
 end
 
+local function tracebackError(err)
+	if debug and debug.traceback then
+		return debug.traceback(tostring(err), 2)
+	end
+	return tostring(err)
+end
+
+local function markLegacyAbility(ability, options)
+	if type(ability) ~= "table" then
+		return 0
+	end
+	ability.legacyAfterRebuild = true
+	ability.rebuildCoverage = "missing_permanent_evidence"
+	ability.previousInterpretationEngineVersion = options and options.previousEngineVersion or nil
+	ability.legacyPreservedAt = Util.wallTime()
+	return 1
+end
+
+local function markLegacyEncounter(encounter, options)
+	if type(encounter) ~= "table" then
+		return 0, 0
+	end
+	local abilityCount = 0
+	encounter.legacyAfterRebuild = true
+	encounter.rebuildCoverage = "missing_permanent_evidence"
+	encounter.previousInterpretationEngineVersion = options and options.previousEngineVersion or nil
+	encounter.legacyPreservedAt = Util.wallTime()
+	for _, ability in pairs(encounter.abilities or {}) do
+		abilityCount = abilityCount + markLegacyAbility(ability, options)
+	end
+	encounter.legacyAbilityCount = abilityCount
+	encounter.abilityCount = countKeys(encounter.abilities)
+	return 1, abilityCount
+end
+
+local function legacyZoneCopy(zone)
+	local copy = copyTable(zone)
+	copy.encounters = {}
+	copy.legacyAfterRebuild = true
+	copy.rebuildCoverage = "missing_permanent_evidence"
+	copy.legacyPreservedAt = Util.wallTime()
+	return copy
+end
+
+local function preserveLegacyLearned(previousLearned, rebuiltLearned, options)
+	local stats = {
+		legacyPreservedEncounters = 0,
+		legacyPreservedAbilities = 0,
+		legacyPartialEncounters = 0,
+	}
+	if type(previousLearned) ~= "table"
+		or type(previousLearned.zones) ~= "table"
+		or type(rebuiltLearned) ~= "table" then
+		return stats
+	end
+	rebuiltLearned.zones = type(rebuiltLearned.zones) == "table" and rebuiltLearned.zones or {}
+
+	for zoneKey, previousZone in pairs(previousLearned.zones) do
+		if type(previousZone) == "table" then
+			local targetZone = rebuiltLearned.zones[zoneKey]
+			for encounterKey, previousEncounter in pairs(previousZone.encounters or {}) do
+				if type(previousEncounter) == "table" then
+					if type(targetZone) ~= "table" then
+						targetZone = legacyZoneCopy(previousZone)
+						rebuiltLearned.zones[zoneKey] = targetZone
+					end
+					targetZone.encounters = type(targetZone.encounters) == "table" and targetZone.encounters or {}
+					local targetEncounter = targetZone.encounters[encounterKey]
+					if type(targetEncounter) ~= "table" then
+						local legacyEncounter = copyTable(previousEncounter)
+						local preservedEncounters, preservedAbilities = markLegacyEncounter(legacyEncounter, options)
+						targetZone.encounters[encounterKey] = legacyEncounter
+						stats.legacyPreservedEncounters = stats.legacyPreservedEncounters + preservedEncounters
+						stats.legacyPreservedAbilities = stats.legacyPreservedAbilities + preservedAbilities
+					else
+						targetEncounter.abilities = type(targetEncounter.abilities) == "table" and targetEncounter.abilities or {}
+						local preservedAbilities = 0
+						for abilityKey, previousAbility in pairs(previousEncounter.abilities or {}) do
+							if type(previousAbility) == "table" and type(targetEncounter.abilities[abilityKey]) ~= "table" then
+								local legacyAbility = copyTable(previousAbility)
+								preservedAbilities = preservedAbilities + markLegacyAbility(legacyAbility, options)
+								targetEncounter.abilities[abilityKey] = legacyAbility
+							end
+						end
+						if preservedAbilities > 0 then
+							targetEncounter.rebuildCoverage = "partial"
+							targetEncounter.legacyAbilityCount = (tonumber(targetEncounter.legacyAbilityCount) or 0) + preservedAbilities
+							targetEncounter.abilityCount = countKeys(targetEncounter.abilities)
+							stats.legacyPreservedAbilities = stats.legacyPreservedAbilities + preservedAbilities
+							stats.legacyPartialEncounters = stats.legacyPartialEncounters + 1
+						end
+					end
+				end
+			end
+		end
+	end
+
+	return stats
+end
+
 local function zoneForKill(instance, kill)
 	local zone = copyTable(kill.zone or {})
 	zone.key = zone.key or instance.key
@@ -1393,49 +1493,90 @@ local function replayKill(instance, boss, kill, pullId)
 	return promoted
 end
 
-function EvidenceStore.rebuildLearned()
+function EvidenceStore.rebuildLearned(options)
 	if not Codec then
-		return 0
+		return nil, "evidence codec is unavailable"
 	end
 	local evidence = store()
 	if not evidence then
-		return 0
+		return nil, "evidence store is unavailable"
+	end
+	options = type(options) == "table" and options or {}
+
+	local previousLearned = addon.db and addon.db.learned or nil
+	local rebuiltLearned = { zones = {} }
+	local previousSuspended = suspended
+	local savedVariables = addon.Core.SavedVariables
+	if savedVariables and savedVariables.setBackupWritesSuspended then
+		savedVariables.setBackupWritesSuspended(true)
 	end
 	suspended = true
-	addon.db.learned = { zones = {} }
-	local promoted = 0
-	local pullId = 0
-	for _, instanceKey in ipairs(sortedKeys(evidence.instances)) do
-		local instance = evidence.instances[instanceKey]
-		for _, bossKey in ipairs(sortedKeys(instance and instance.bosses)) do
-			local boss = instance.bosses[bossKey]
-			for _, killHashKey in ipairs(sortedKeys(boss and boss.kills)) do
-				pullId = pullId + 1
-				local decoded, decodeError = EvidenceStore.decodeStoredKill(instance, boss, boss.kills[killHashKey])
-				if decoded and decoded.kill then
-					promoted = promoted + replayKill(decoded.instance or instance, decoded.boss or boss, decoded.kill, pullId)
-				else
-					logWarn("Skipped corrupt stored evidence kill during rebuild", {
-						instanceKey = instance and instance.key,
-						bossKey = boss and boss.key,
-						killHash = killHashKey,
-						error = decodeError,
-					})
+	addon.db.learned = rebuiltLearned
+
+	local ok, result = xpcall(function()
+		local stats = {
+			promoted = 0,
+			evidenceKills = 0,
+			skippedCorruptEvidence = 0,
+			legacyPreservedEncounters = 0,
+			legacyPreservedAbilities = 0,
+			legacyPartialEncounters = 0,
+		}
+		for _, instanceKey in ipairs(sortedKeys(evidence.instances)) do
+			local instance = evidence.instances[instanceKey]
+			for _, bossKey in ipairs(sortedKeys(instance and instance.bosses)) do
+				local boss = instance.bosses[bossKey]
+				for _, killHashKey in ipairs(sortedKeys(boss and boss.kills)) do
+					stats.evidenceKills = stats.evidenceKills + 1
+					local decoded, decodeError = EvidenceStore.decodeStoredKill(instance, boss, boss.kills[killHashKey])
+					if decoded and decoded.kill then
+						stats.promoted = stats.promoted + replayKill(decoded.instance or instance, decoded.boss or boss, decoded.kill, stats.evidenceKills)
+					else
+						stats.skippedCorruptEvidence = stats.skippedCorruptEvidence + 1
+						logWarn("Skipped corrupt stored evidence kill during rebuild", {
+							instanceKey = instance and instance.key,
+							bossKey = boss and boss.key,
+							killHash = killHashKey,
+							error = decodeError,
+						})
+					end
 				end
 			end
 		end
+		if options.preserveLegacy ~= false then
+			local legacyStats = preserveLegacyLearned(previousLearned, rebuiltLearned, options)
+			stats.legacyPreservedEncounters = legacyStats.legacyPreservedEncounters
+			stats.legacyPreservedAbilities = legacyStats.legacyPreservedAbilities
+			stats.legacyPartialEncounters = legacyStats.legacyPartialEncounters
+		end
+		return stats
+	end, tracebackError)
+
+	suspended = previousSuspended
+	if savedVariables and savedVariables.setBackupWritesSuspended then
+		savedVariables.setBackupWritesSuspended(false)
 	end
-	suspended = false
+	if not ok then
+		addon.db.learned = previousLearned or { zones = {} }
+		addon.Learning.EncounterModel.clearPull()
+		addon.Learning.OccurrenceBuilder.reset()
+		logWarn("Rolled back learned rebuild after an unexpected error", {
+			error = result,
+		})
+		return nil, result
+	end
+
+	local stats = result
 	if addon.Learning.RelevanceScorer and addon.Learning.RelevanceScorer.markRoutineIndexDirty then
 		addon.Learning.RelevanceScorer.markRoutineIndexDirty()
 	end
 	if addon.Core.ModelStore then
 		addon.Core.ModelStore.refreshAllRules()
 	end
-	if addon.Core.SavedVariables then
+	if addon.Core.SavedVariables and not options.skipBackup then
 		addon.Core.SavedVariables.boundLearnedData()
 	end
-	return promoted
+	return stats.promoted, nil, stats
 end
 
 function EvidenceStore.clearAll()

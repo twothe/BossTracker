@@ -9,10 +9,10 @@ local RingBuffer = addon.Core.RingBuffer
 local SavedVariables = {}
 addon.Core.SavedVariables = SavedVariables
 local pendingLearnedBackupConflict
-local learnedBackupIsUsable
 local recoveryBackupIsUsable
 local restoreRecoveryConfig
 local pendingStartupNotices = {}
+local backupWriteSuspendDepth = 0
 local WARNING_LEAD_TIME_DEFAULT_MIGRATION = "warningLeadTimeDefault3"
 local DEBUG_DEFAULT_OFF_MIGRATION = "debugCaptureDefaultOff1"
 local DEBUG_STORE_COMPACTION_MIGRATION = "debugStoreCompacted1"
@@ -523,6 +523,14 @@ local function learnedSummary(learned)
 	return string.format("%d bosses, %d abilities, %d zones", encounterCount, abilityCount, zoneCount)
 end
 
+local function learnedEvidenceSummary(learned, evidence)
+	local killCount = evidencePermanentKillCount(evidence)
+	if killCount <= 0 then
+		return learnedSummary(learned)
+	end
+	return learnedSummary(learned) .. ", " .. tostring(killCount) .. " evidence kill(s)"
+end
+
 local function backupUpdatedAt(backup)
 	return tonumber(backup and (backup.sourceUpdatedAt or backup.updatedAt)) or 0
 end
@@ -532,7 +540,12 @@ local function accountUpdatedAt(meta)
 end
 
 local function createNewerBackupConflict(db, charDB)
-	if not learnedBackupIsUsable(charDB) or not learnedHasData(db and db.learned) or learnedDataWasExplicitlyCleared(db) then
+	if not recoveryBackupIsUsable(charDB)
+		or (
+			not learnedHasData(db and db.learned)
+			and evidenceKillCount(db) <= 0
+		)
+		or learnedDataWasExplicitlyCleared(db) then
 		return nil
 	end
 
@@ -555,10 +568,10 @@ local function createNewerBackupConflict(db, charDB)
 	end
 
 	return {
-		accountSummary = learnedSummary(db.learned),
+		accountSummary = learnedEvidenceSummary(db.learned, db.evidence),
 		accountRevision = accountRevision,
 		accountUpdatedAt = accountTime,
-		backupSummary = learnedSummary(backup.learned),
+		backupSummary = learnedEvidenceSummary(backup.learned, backup.evidence),
 		backupRevision = backupRevision,
 		backupUpdatedAt = backupTime,
 	}
@@ -816,14 +829,6 @@ local function resetLearnedDataForSchema(db, previousSchemaVersion)
 	})
 end
 
-learnedBackupIsUsable = function(charDB)
-	local backup = type(charDB) == "table" and charDB.learnedBackup or nil
-	return type(backup) == "table"
-		and backupSchemaIsSupported(backup.backupSchemaVersion)
-		and tonumber(backup.dataSchemaVersion) == C.SCHEMA_VERSION
-		and learnedHasData(backup.learned)
-end
-
 recoveryBackupIsUsable = function(charDB)
 	local backup = type(charDB) == "table" and charDB.learnedBackup or nil
 	return type(backup) == "table"
@@ -936,6 +941,9 @@ local function writeLearnedBackup(allowEmpty, bumpRevision)
 	local hasLearnedData = learnedHasData(db.learned)
 	local hasEvidenceData = evidencePermanentKillCount(db.evidence) > 0
 	local hasArchivedEvidence = type(db.evidenceArchives) == "table" and #db.evidenceArchives > 0
+	if backupWriteSuspendDepth > 0 then
+		return
+	end
 	if not hasLearnedData and not hasEvidenceData and not hasArchivedEvidence then
 		if allowEmpty then
 			charDB.learnedBackup = nil
@@ -954,12 +962,37 @@ local function writeLearnedBackup(allowEmpty, bumpRevision)
 		sourceCreatedAt = meta.createdAt,
 		sourceUpdatedAt = meta.updatedAt,
 		updatedAt = wallTime(),
-			learned = copyTable(type(db.learned) == "table" and db.learned or { zones = {} }),
-			evidence = copyPersistentEvidence(db.evidence),
-			evidenceArchives = copyPersistentEvidenceArchives(db.evidenceArchives),
-			config = currentRecoveryConfig(),
-			overrides = copyTable(currentOverrides()),
-		}
+		learned = copyTable(type(db.learned) == "table" and db.learned or { zones = {} }),
+		evidence = copyPersistentEvidence(db.evidence),
+		evidenceArchives = copyPersistentEvidenceArchives(db.evidenceArchives),
+		config = currentRecoveryConfig(),
+		overrides = copyTable(currentOverrides()),
+	}
+end
+
+local function storedInterpretationEngineVersion(db)
+	local meta = ensureLearnedMeta(db)
+	return tonumber(meta.interpretationEngineVersion)
+end
+
+local function applyRebuildMetadata(db, reason, killCount, promoted, stats)
+	stats = type(stats) == "table" and stats or {}
+	local meta = markLearnedEngineCurrent(db)
+	meta.rebuiltFromEvidenceAt = wallTime()
+	meta.rebuiltFromEvidenceReason = reason
+	meta.rebuiltFromEvidenceKills = killCount
+	meta.rebuiltFromEvidencePromoted = promoted or 0
+	meta.rebuildLegacyPreservedEncounters = tonumber(stats.legacyPreservedEncounters) or 0
+	meta.rebuildLegacyPreservedAbilities = tonumber(stats.legacyPreservedAbilities) or 0
+	meta.rebuildLegacyPartialEncounters = tonumber(stats.legacyPartialEncounters) or 0
+	meta.rebuildSkippedCorruptEvidence = tonumber(stats.skippedCorruptEvidence) or 0
+	if meta.rebuildLegacyPreservedEncounters > 0
+		or meta.rebuildLegacyPreservedAbilities > 0 then
+		meta.rebuildCoverage = "partial"
+	else
+		meta.rebuildCoverage = "complete"
+	end
+	return meta
 end
 
 local function refreshAfterLearnedDataChange()
@@ -1172,6 +1205,14 @@ function SavedVariables.syncLearnedBackup(allowEmpty)
 	writeLearnedBackup(allowEmpty ~= false, true)
 end
 
+function SavedVariables.setBackupWritesSuspended(suspended)
+	if suspended then
+		backupWriteSuspendDepth = backupWriteSuspendDepth + 1
+	else
+		backupWriteSuspendDepth = math.max(0, backupWriteSuspendDepth - 1)
+	end
+end
+
 function SavedVariables.rebuildLearnedIfNeeded()
 	if not addon.db then
 		return false, "no_db"
@@ -1192,47 +1233,61 @@ function SavedVariables.rebuildLearnedIfNeeded()
 	end
 
 	local killCount = evidenceKillCount(addon.db)
-	if killCount > 0 then
-		local promoted = addon.Core.EvidenceStore.rebuildLearned()
-		local meta = markLearnedEngineCurrent(addon.db)
-		meta.rebuiltFromEvidenceAt = wallTime()
-		meta.rebuiltFromEvidenceReason = reason
-		meta.rebuiltFromEvidenceKills = killCount
-		meta.rebuiltFromEvidencePromoted = promoted
+	local previousEngineVersion = storedInterpretationEngineVersion(addon.db)
+	if killCount > 0 or learnedHasData(addon.db.learned) then
+		local promoted, rebuildError, stats = addon.Core.EvidenceStore.rebuildLearned({
+			preserveLegacy = true,
+			previousEngineVersion = previousEngineVersion,
+			rebuildReason = reason,
+			skipBackup = true,
+		})
+		if promoted == nil then
+			local meta = ensureLearnedMeta(addon.db)
+			meta.rebuildRequired = true
+			meta.rebuildReason = reason or "rebuild_failed"
+			meta.rebuildError = tostring(rebuildError or "unknown rebuild error")
+			if addon.Core.Logger then
+				addon.Core.Logger.error("SavedVariables", "learned boss data rebuild failed", {
+					reason = reason,
+					error = meta.rebuildError,
+				})
+			end
+			return false, meta.rebuildError
+		end
+
+		boundLearnedData(addon.db.learned)
+		if addon.Core.EvidenceStore and addon.Core.EvidenceStore.bound then
+			addon.Core.EvidenceStore.bound(addon.db.evidence)
+		end
+		local meta = applyRebuildMetadata(addon.db, reason, killCount, promoted, stats)
 		appendMigration(addon.db, {
 			from = C.SCHEMA_VERSION,
 			to = C.SCHEMA_VERSION,
 			at = wallTime(),
-			reason = "Rebuilt learned boss data from permanent evidence for the current interpretation engine.",
+			reason = killCount > 0
+				and "Rebuilt learned boss data from permanent evidence for the current interpretation engine."
+				or "Marked stale learned boss data as legacy because the interpretation engine changed and no permanent evidence was available.",
 			rebuildReason = reason,
 			evidenceKills = killCount,
 			promotedComponents = promoted,
 			interpretationEngineVersion = currentInterpretationEngineVersion(),
+			legacyPreservedEncounters = meta.rebuildLegacyPreservedEncounters,
+			legacyPreservedAbilities = meta.rebuildLegacyPreservedAbilities,
+			rebuildCoverage = meta.rebuildCoverage,
 		})
 		writeLearnedBackup(true, false)
 		refreshAfterLearnedDataChange()
 		if addon.Core.Logger then
-			addon.Core.Logger.chat("rebuilt learned boss data from " .. tostring(killCount) .. " evidence kill(s)")
+			local legacyCount = tonumber(meta.rebuildLegacyPreservedEncounters) or 0
+			local message = "rebuilt learned boss data from " .. tostring(killCount) .. " evidence kill(s)"
+			if killCount <= 0 then
+				message = "marked stale learned boss data as needing fresh evidence"
+			elseif legacyCount > 0 then
+				message = message .. "; preserved " .. tostring(legacyCount) .. " legacy boss(es) needing fresh evidence"
+			end
+			addon.Core.Logger.chat(message)
 		end
 		return true, promoted
-	end
-
-	if learnedHasData(addon.db.learned) then
-		addon.db.learned = { zones = {} }
-		markLearnedDataReset(addon.db, "interpretation_engine")
-		appendMigration(addon.db, {
-			from = C.SCHEMA_VERSION,
-			to = C.SCHEMA_VERSION,
-			at = wallTime(),
-			reason = "Reset learned boss data because the interpretation engine changed and no permanent evidence was available.",
-			rebuildReason = reason,
-			interpretationEngineVersion = currentInterpretationEngineVersion(),
-		})
-		if addon.charDB then
-			addon.charDB.learnedBackup = nil
-		end
-		refreshAfterLearnedDataChange()
-		return true, 0
 	end
 
 	markLearnedEngineCurrent(addon.db)

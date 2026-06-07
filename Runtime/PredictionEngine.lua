@@ -468,6 +468,9 @@ local function learnedAbilityForPrediction(ability, zoneKey, encounterKey)
 	if type(ability) ~= "table" then
 		return nil
 	end
+	if ability.legacyAfterRebuild == true then
+		return nil
+	end
 	if addon.Core.Difficulty
 		and addon.Core.Difficulty.abilityAvailable
 		and not addon.Core.Difficulty.abilityAvailable(ability, Util.zoneInfo()) then

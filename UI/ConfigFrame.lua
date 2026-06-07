@@ -199,6 +199,9 @@ local function selectedEncounter()
 end
 
 local function abilityTimingText(ability)
+	if ability and ability.legacyAfterRebuild == true then
+		return "needs evidence"
+	end
 	local rule = ability and ability.selectedRule
 	if type(rule) ~= "table" then
 		return "learning"
@@ -238,6 +241,9 @@ local function abilityDisplayName(ability)
 end
 
 local function abilityIsActive(zoneKey, encounterKey, ability)
+	if ability and ability.legacyAfterRebuild == true then
+		return false
+	end
 	local mode = addon.Core.Config.getAbilityDisplayMode(zoneKey, encounterKey, ability.key)
 	if mode == "show" then
 		return true
@@ -274,6 +280,7 @@ local function collectBosses()
 					encounter = encounter,
 					shown = shown,
 					total = total,
+					legacy = encounter.legacyAfterRebuild == true,
 					suppressed = encounter.suppressed == true or encounter.autoSuppressed == true,
 				}
 			end
@@ -414,8 +421,11 @@ local function updateBossRows()
 		if entry then
 			local selected = entry.zoneKey == state.selectedZoneKey and entry.encounterKey == state.selectedEncounterKey
 			row.text:SetText(entry.label)
-			row.status:SetText(tostring(entry.shown) .. " shown")
-			if entry.suppressed then
+			row.status:SetText(entry.legacy and "needs evidence" or tostring(entry.shown) .. " shown")
+			if entry.legacy then
+				row.text:SetTextColor(0.62, 0.58, 0.50)
+				row.status:SetTextColor(0.70, 0.56, 0.36)
+			elseif entry.suppressed then
 				row.text:SetTextColor(0.52, 0.52, 0.50)
 				row.status:SetTextColor(0.60, 0.48, 0.40)
 			elseif selected then
@@ -428,7 +438,7 @@ local function updateBossRows()
 			row:SetBackdropColor(selected and 0.13 or 0.06, selected and 0.10 or 0.065, selected and 0.05 or 0.075, 0.92)
 			if selected then
 				row:SetBackdropBorderColor(0.95, 0.72, 0.22, 1.0)
-			elseif entry.suppressed then
+			elseif entry.legacy or entry.suppressed then
 				row:SetBackdropBorderColor(0.24, 0.22, 0.20, 0.90)
 			else
 				row:SetBackdropBorderColor(0.34, 0.29, 0.20, 0.95)
