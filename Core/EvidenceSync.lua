@@ -462,12 +462,8 @@ local function rebuildAfterSyncImport(reason)
 	return nil, "evidence store is not available", false
 end
 
-function EvidenceSync.importPayload(payload, sender, options)
+local function importParsedBlocks(parsed, sender, options)
 	options = type(options) == "table" and options or {}
-	local parsed, parseError = parsePayload(payload)
-	if not parsed then
-		return nil, parseError
-	end
 	local storeApi = addon.Core.EvidenceStore
 	if not storeApi or type(storeApi.ensureDb) ~= "function" or type(storeApi.importKillBlock) ~= "function" then
 		return nil, "evidence store is not available"
@@ -529,6 +525,14 @@ function EvidenceSync.importPayload(payload, sender, options)
 		batchCount = parsed.batchCount,
 		totalKills = parsed.totalKills,
 	}
+end
+
+function EvidenceSync.importPayload(payload, sender, options)
+	local parsed, parseError = parsePayload(payload)
+	if not parsed then
+		return nil, parseError
+	end
+	return importParsedBlocks(parsed, sender, options)
 end
 
 local function sendAddonMessage(message, distribution, target)
@@ -862,7 +866,35 @@ local function receiveHeader(sender, parts)
 	end
 end
 
-local function aggregateBatchImport(transfer, stats)
+local function cleanupInboundImportSession(sender, session)
+	local baseSession = splitBatchSession(session)
+	local sessionKey = requestKey(sender, baseSession)
+	inboundImportSessions[sessionKey] = nil
+	authorizedInboundSessions[sessionKey] = nil
+	authorizedInboundSessions[requestKey(sender, session)] = nil
+	for transferKey, activeTransfer in pairs(inboundTransfers) do
+		if normalizedName(activeTransfer.sender) == normalizedName(sender)
+			and (activeTransfer.baseSession or activeTransfer.session) == baseSession then
+			inboundTransfers[transferKey] = nil
+		end
+	end
+end
+
+local function validateParsedBlocks(parsed)
+	local codec = addon.Core.EvidenceCodec
+	if not codec or type(codec.decodeKillBlock) ~= "function" or type(codec.validDecodedKill) ~= "function" then
+		return nil, "evidence codec is unavailable"
+	end
+	for index = 1, #(parsed.blocks or {}) do
+		local decoded, decodeError = codec.decodeKillBlock(parsed.blocks[index])
+		if not decoded or not codec.validDecodedKill(decoded) then
+			return nil, "invalid kill evidence in batch " .. tostring(parsed.batchIndex or "?") .. " block " .. tostring(index) .. ": " .. tostring(decodeError or "invalid kill evidence")
+		end
+	end
+	return true
+end
+
+local function aggregateBatchPayload(transfer, parsed)
 	local sessionKey = requestKey(transfer.sender, transfer.baseSession or transfer.session)
 	local sessionStats = inboundImportSessions[sessionKey]
 	if not sessionStats then
@@ -871,10 +903,7 @@ local function aggregateBatchImport(transfer, stats)
 			session = transfer.baseSession or transfer.session,
 			batchCount = transfer.batchCount or 1,
 			totalKills = transfer.totalKills or transfer.killCount or 0,
-			imported = 0,
-			duplicates = 0,
-			rejected = 0,
-			valid = 0,
+			blockCount = 0,
 			completed = 0,
 			batches = {},
 			startedAt = now(),
@@ -882,16 +911,45 @@ local function aggregateBatchImport(transfer, stats)
 		}
 		inboundImportSessions[sessionKey] = sessionStats
 	end
+
+	if sessionStats.batchCount ~= (transfer.batchCount or 1)
+		or sessionStats.totalKills ~= (transfer.totalKills or transfer.killCount or 0)
+		or parsed.batchIndex ~= transfer.batchIndex
+		or parsed.batchCount ~= transfer.batchCount
+		or (parsed.totalKills or 0) ~= (transfer.totalKills or transfer.killCount or 0)
+		or (parsed.declaredKills or 0) ~= (transfer.killCount or 0) then
+		return nil, "batch metadata mismatch"
+	end
+
+	local validBlocks, validationError = validateParsedBlocks(parsed)
+	if not validBlocks then
+		return nil, validationError
+	end
+
 	if not sessionStats.batches[transfer.batchIndex] then
-		sessionStats.batches[transfer.batchIndex] = true
+		sessionStats.batches[transfer.batchIndex] = {
+			blocks = parsed.blocks or {},
+			killCount = #(parsed.blocks or {}),
+		}
 		sessionStats.completed = sessionStats.completed + 1
-		sessionStats.imported = sessionStats.imported + (tonumber(stats.imported) or 0)
-		sessionStats.duplicates = sessionStats.duplicates + (tonumber(stats.duplicates) or 0)
-		sessionStats.rejected = sessionStats.rejected + (tonumber(stats.rejected) or 0)
-		sessionStats.valid = sessionStats.valid + (tonumber(stats.valid) or 0)
+		sessionStats.blockCount = sessionStats.blockCount + #(parsed.blocks or {})
 		sessionStats.updatedAt = now()
 	end
 	if sessionStats.completed >= sessionStats.batchCount then
+		local blocks = {}
+		for batchIndex = 1, sessionStats.batchCount do
+			local batch = sessionStats.batches[batchIndex]
+			if not batch then
+				return nil, "missing sync batch"
+			end
+			for blockIndex = 1, #(batch.blocks or {}) do
+				blocks[#blocks + 1] = batch.blocks[blockIndex]
+			end
+		end
+		if sessionStats.totalKills ~= #blocks then
+			return nil, "batch kill count mismatch"
+		end
+		sessionStats.blocks = blocks
 		inboundImportSessions[sessionKey] = nil
 		return sessionStats, true
 	end
@@ -899,38 +957,38 @@ local function aggregateBatchImport(transfer, stats)
 end
 
 local function finishBatchImportSession(transfer, sessionStats)
-	local promoted = 0
-	local rebuildError
-	if (tonumber(sessionStats.valid) or 0) > 0 then
-		if addon.Core.EvidenceStore and addon.Core.EvidenceStore.bound then
-			addon.Core.EvidenceStore.bound(addon.db and addon.db.evidence)
-		end
-		local rebuilt, errorMessage, handledRefresh = rebuildAfterSyncImport("evidence_sync_import")
-		if rebuilt == nil then
-			rebuildError = errorMessage or "learned rebuild failed"
-		else
-			promoted = rebuilt
-		end
-		if not handledRefresh then
-			refreshAfterImport(rebuildError ~= nil)
-		end
+	local stats, importError = importParsedBlocks({
+		blocks = sessionStats.blocks or {},
+		batchIndex = sessionStats.batchCount,
+		batchCount = sessionStats.batchCount,
+		totalKills = sessionStats.totalKills,
+	}, transfer.sender)
+	if not stats then
+		chat("sync from " .. tostring(transfer.sender) .. " failed: " .. tostring(importError))
+		logWarn("Batched sync import failed", {
+			sender = transfer.sender,
+			session = transfer.baseSession or transfer.session,
+			error = importError,
+		})
+		authorizedInboundSessions[requestKey(transfer.sender, transfer.baseSession or transfer.session)] = nil
+		return
 	end
-	if rebuildError then
-		chat("sync imported " .. tostring(sessionStats.imported) .. " kill(s), ignored " .. tostring(sessionStats.duplicates) .. " duplicate(s)" .. rejectedSummary(sessionStats.rejected) .. ", but learned rebuild failed: " .. tostring(rebuildError))
+	if stats.rebuildError then
+		chat("sync imported " .. tostring(stats.imported) .. " kill(s), ignored " .. tostring(stats.duplicates) .. " duplicate(s)" .. rejectedSummary(stats.rejected) .. ", but learned rebuild failed: " .. tostring(stats.rebuildError))
 		logWarn("Batched sync rebuild failed", {
 			sender = transfer.sender,
 			session = transfer.baseSession or transfer.session,
-			imported = sessionStats.imported,
-			duplicates = sessionStats.duplicates,
-			rejected = sessionStats.rejected,
-			error = rebuildError,
+			imported = stats.imported,
+			duplicates = stats.duplicates,
+			rejected = stats.rejected,
+			error = stats.rebuildError,
 		})
-	elseif (tonumber(sessionStats.imported) or 0) > 0 then
-		chat("sync imported " .. tostring(sessionStats.imported) .. " kill(s), ignored " .. tostring(sessionStats.duplicates) .. " duplicate(s)" .. rejectedSummary(sessionStats.rejected) .. ", rebuilt " .. tostring(promoted) .. " model component(s)")
-	elseif (tonumber(sessionStats.valid) or 0) > 0 then
-		chat("sync complete: no new evidence kills imported" .. rejectedSummary(sessionStats.rejected) .. "; rebuilt local models from existing evidence")
+	elseif (tonumber(stats.imported) or 0) > 0 then
+		chat("sync imported " .. tostring(stats.imported) .. " kill(s), ignored " .. tostring(stats.duplicates) .. " duplicate(s)" .. rejectedSummary(stats.rejected) .. ", rebuilt " .. tostring(stats.promoted) .. " model component(s)")
+	elseif (tonumber(stats.valid) or 0) > 0 then
+		chat("sync complete: no new evidence kills imported" .. rejectedSummary(stats.rejected) .. "; rebuilt local models from existing evidence")
 	else
-		chat("sync complete: no new evidence kills imported" .. rejectedSummary(sessionStats.rejected))
+		chat("sync complete: no new evidence kills imported" .. rejectedSummary(stats.rejected))
 	end
 	authorizedInboundSessions[requestKey(transfer.sender, transfer.baseSession or transfer.session)] = nil
 end
@@ -938,7 +996,8 @@ end
 local function completeTransfer(transferKey, transfer)
 	local payload = table.concat(transfer.chunks)
 	inboundTransfers[transferKey] = nil
-	if not transfer.derivedAuthorization and transfer.authorizationKey then
+	local batched = (tonumber(transfer.batchCount) or 1) > 1
+	if not batched and not transfer.derivedAuthorization and transfer.authorizationKey then
 		authorizedInboundSessions[transfer.authorizationKey] = nil
 	end
 	if #payload ~= transfer.length or hashString(payload) ~= transfer.hash then
@@ -951,12 +1010,59 @@ local function completeTransfer(transferKey, transfer)
 			expectedHash = transfer.hash,
 			actualHash = hashString(payload),
 		})
+		if batched then
+			cleanupInboundImportSession(transfer.sender, transfer.baseSession or transfer.session)
+		end
 		return
 	end
-	local batched = (tonumber(transfer.batchCount) or 1) > 1
-	local stats, importError = EvidenceSync.importPayload(payload, transfer.sender, {
-		deferRebuild = batched,
-	})
+
+	local parsed, parseError = parsePayload(payload)
+	if not parsed then
+		chat("sync from " .. tostring(transfer.sender) .. " failed: " .. tostring(parseError))
+		logWarn("Sync payload parse failed", {
+			sender = transfer.sender,
+			session = transfer.session,
+			error = parseError,
+		})
+		if batched then
+			cleanupInboundImportSession(transfer.sender, transfer.baseSession or transfer.session)
+		end
+		return
+	end
+
+	if batched or (tonumber(parsed.batchCount) or 1) > 1 then
+		if parsed.batchIndex ~= transfer.batchIndex or parsed.batchCount ~= transfer.batchCount then
+			chat("sync from " .. tostring(transfer.sender) .. " failed: batch metadata mismatch")
+			logWarn("Sync payload batch metadata mismatch", {
+				sender = transfer.sender,
+				session = transfer.session,
+				headerBatchIndex = transfer.batchIndex,
+				headerBatchCount = transfer.batchCount,
+				payloadBatchIndex = parsed.batchIndex,
+				payloadBatchCount = parsed.batchCount,
+			})
+			cleanupInboundImportSession(transfer.sender, transfer.baseSession or transfer.session)
+			return
+		end
+		local sessionStats, completeOrError = aggregateBatchPayload(transfer, parsed)
+		if not sessionStats then
+			chat("sync from " .. tostring(transfer.sender) .. " failed: " .. tostring(completeOrError))
+			logWarn("Sync batch staging failed", {
+				sender = transfer.sender,
+				session = transfer.session,
+				error = completeOrError,
+			})
+			cleanupInboundImportSession(transfer.sender, transfer.baseSession or transfer.session)
+			return
+		end
+		local complete = completeOrError == true
+		if complete then
+			finishBatchImportSession(transfer, sessionStats)
+		end
+		return
+	end
+
+	local stats, importError = importParsedBlocks(parsed, transfer.sender)
 	if not stats then
 		chat("sync from " .. tostring(transfer.sender) .. " failed: " .. tostring(importError))
 		logWarn("Sync payload import failed", {
@@ -964,13 +1070,6 @@ local function completeTransfer(transferKey, transfer)
 			session = transfer.session,
 			error = importError,
 		})
-		return
-	end
-	if batched then
-		local sessionStats, complete = aggregateBatchImport(transfer, stats)
-		if complete then
-			finishBatchImportSession(transfer, sessionStats)
-		end
 		return
 	end
 	if stats.rebuildError then
@@ -1145,10 +1244,14 @@ function EvidenceSync.handleSlash(rest)
 	return requestSync(rest)
 end
 
-function EvidenceSync.flushQueue()
-	while #sendQueue > 0 do
+function EvidenceSync.flushQueue(maxMessages)
+	local sent = 0
+	maxMessages = tonumber(maxMessages)
+	while #sendQueue > 0 and (not maxMessages or sent < maxMessages) do
 		flushOneQueuedMessage()
+		sent = sent + 1
 	end
+	return sent, #sendQueue
 end
 
 function EvidenceSync.start()

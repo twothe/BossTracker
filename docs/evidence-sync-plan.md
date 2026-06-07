@@ -2,7 +2,7 @@
 
 This document captures the agreed design and current implementation contract for
 persistent encounter evidence and player-to-player synchronization. Version
-1.9.6 includes the local evidence store, the shared packed `EvidenceCodec`,
+1.9.16 includes the local evidence store, the shared packed `EvidenceCodec`,
 completed-segment commit path, evidence rebuild path, interpretation-engine rebuild
 detection, difficulty-aware ability availability, and accepted player-to-player
 sync transport.
@@ -362,6 +362,10 @@ The wire payload is schema-specific and compact:
 - multi-batch transfers require both peers to support the batched protocol
   introduced in 1.9.15; a sender must reject large syncs to older peers instead
   of falling back to a partial first payload.
+- inbound multi-batch transfers are transactional: the receiver stages every
+  validated payload batch in memory, commits to permanent evidence only after all
+  batches arrive with consistent metadata, and discards the staged session on
+  corrupt, missing, or inconsistent batch data.
 - events are packed as tuples and chunked below the addon-message size limit.
 - the receiver validates schema, payload length, transfer hash, caps, kill
   shape, actor references, spell references, authorization, and duplicate
@@ -378,6 +382,15 @@ If all received kills are duplicates, the sync may still rebuild the local
 learned cache from existing permanent evidence. This repairs sessions where the
 source evidence was already present but the calculated display cache was missing
 or stale.
+
+`tests/sync_scenarios.lua` is the local two-client sync simulator. It loads two
+isolated addon instances, routes addon messages through a deterministic bus, and
+tests complete sync sessions without requiring a second live player. The suite
+covers multi-batch transfers, out-of-order and duplicate chunks, dropped chunks,
+corrupt transport data, tampered payloads with valid transport hashes,
+duplicate-only rebuilds, old peer rejection, simultaneous cross-sync, and group
+request handshakes. It also has a ticked transport mode that flushes only one
+queued addon message per simulated client tick for long-transfer confidence.
 
 ## Deduplication
 

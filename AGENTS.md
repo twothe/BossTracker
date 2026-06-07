@@ -20,6 +20,7 @@
 - Keep learned-data rebuilds transactional and coverage-aware. Rebuild into a staged learned store, roll back on replay errors, preserve models not covered by permanent evidence only as explicitly legacy/non-runtime data, and never write the per-character recovery backup from a partial staged rebuild before legacy preservation is complete.
 - Sync only permanent completed encounter evidence after player approval. Imported sync data must merge into the normal evidence store and rebuild locally; never accept calculated rules, UI settings, warnings, character backups, diagnostics, or incomplete attempts from other players. Inbound transfers must be tied to an accepted/requested session, and duplicate detection must use locally recomputed content hashes rather than sender-provided identifiers.
 - Evidence sync must be complete for the selected peer session. Split large exports into bounded payload batches and fail clearly if a stored kill cannot be sent; never silently cap the session to the newest kills. Duplicate-only sync payloads should still be able to rebuild a missing or stale learned cache from local permanent evidence.
+- Batched evidence sync imports must be transactional. Stage all received batch payloads first, commit to permanent evidence only after every batch validates, and discard the staged session on missing, corrupt, or inconsistent batch data.
 - Treat Ascension instance difficulty as additive ability availability. Boss models are shared across difficulties; each learned ability records the lowest difficulty where kill evidence observed it, and higher difficulties may inherit lower-difficulty abilities.
 - Treat blank 5-player instance difficulty facts with `difficultyIndex=1`, `maxPlayers=5`, and non-dynamic state as normal difficulty. Do not infer higher Ascension tiers from blank raid difficulty indexes until live evidence proves the mapping.
 - Do not promote non-boss-frame/non-worldboss fallback contexts without death or low-HP confirmation. Long elite trash with many casts is still trash unless there is strong boss evidence.
@@ -72,6 +73,7 @@
 - Combat-log parser tests must exercise `Capture.CombatLog.handleEvent`, not only helper normalization or direct learner records. A parser regression once learned subevent names such as `SPELL_HEAL` as ability names because tests bypassed the real event handler.
 - Before reporting completion for code changes, at minimum run `luac -p Core/*.lua Capture/*.lua Learning/*.lua Runtime/*.lua UI/*.lua Init.lua` when Lua syntax tools are available.
 - For learning or prediction changes, also run `lua tests/replay_scenarios.lua` when local Lua is available.
+- For evidence sync transport changes, also run `lua tests/sync_scenarios.lua` when local Lua is available.
 - For replay adapter or broad encounter-model changes, also run `lua tests/cpp_module_replay.lua`; use `lua tests/cpp_module_replay.lua <path/to/boss.cpp>` for focused AzerothCore boss-script coverage.
 
 # Project Overview
@@ -112,6 +114,7 @@ Current architecture:
 - `docs/simulator-test-system.md`: target architecture, workflow, and invariants for the AzerothCore-based encounter simulator.
 - `docs/test-runbook.md`: manual alpha testing workflow and slash commands.
 - `tests/replay_scenarios.lua`: headless Lua replay tests for core learning and prediction scenarios.
+- `tests/sync_scenarios.lua`: two-client sync simulator for evidence exchange, batching, duplicate handling, corrupt payloads, and hostile transport conditions.
 - `tests/cpp_module_replay.lua`: AzerothCore C++ boss-script adapter that simulates common scheduler, HP-gate, repeat, and summon patterns against the addon replay harness.
 
 # Glossary
