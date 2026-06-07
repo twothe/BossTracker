@@ -120,6 +120,23 @@ local function appendLimited(array, value, maxEntries)
 	end
 end
 
+local function draftActorLimit()
+	return tonumber(C.MAX_EVIDENCE_DRAFT_ACTORS) or (tonumber(C.MAX_EVIDENCE_ACTORS_PER_KILL) or 64) * 4
+end
+
+local function draftSpellLimit()
+	return tonumber(C.MAX_EVIDENCE_DRAFT_SPELLS) or (tonumber(C.MAX_EVIDENCE_SPELLS_PER_KILL) or 220) * 2
+end
+
+local function noteDraftTruncation(draft, reason)
+	if not draft then
+		return
+	end
+	draft.truncated = true
+	draft.truncationReasons = type(draft.truncationReasons) == "table" and draft.truncationReasons or {}
+	draft.truncationReasons[reason or "unknown"] = (draft.truncationReasons[reason or "unknown"] or 0) + 1
+end
+
 local function zoneSnapshot(zone)
 	zone = type(zone) == "table" and zone or Util.zoneInfo()
 	return {
@@ -238,11 +255,19 @@ function EvidenceStore.isAvailable()
 	return Codec ~= nil
 end
 
+local function draftKey(pull)
+	if not pull or not pull.id then
+		return nil
+	end
+	return tostring(pull.id) .. ":" .. tostring(pull.startedAtSession or pull.startedAt or "")
+end
+
 local function ensureDraft(pull)
 	if not pull or not pull.id then
 		return nil
 	end
-	local draft = activeDrafts[pull.id]
+	local key = draftKey(pull)
+	local draft = activeDrafts[key]
 	if draft then
 		return draft
 	end
@@ -262,10 +287,12 @@ local function ensureDraft(pull)
 		playerTargetByKey = {},
 		playerTargetCount = 0,
 		events = {},
+		eventsByOwner = {},
 		eventCounts = {},
+		eventCountsByOwner = {},
 		truncated = false,
 	}
-	activeDrafts[pull.id] = draft
+	activeDrafts[key] = draft
 	return draft
 end
 
@@ -294,8 +321,8 @@ local function ensureActor(draft, actorKey, modelKey, name, guid, t10Value, hp10
 	end
 	local actor = draft.actorByKey[actorKey]
 	if not actor then
-		if draft.actorCount >= C.MAX_EVIDENCE_ACTORS_PER_KILL then
-			draft.truncated = true
+		if draft.actorCount >= draftActorLimit() then
+			noteDraftTruncation(draft, "actor_limit")
 			return nil
 		end
 		draft.actorCount = draft.actorCount + 1
@@ -397,8 +424,8 @@ local function ensureSpell(draft, record)
 	end
 	local spell = draft.spellByKey[spellKey]
 	if not spell then
-		if draft.spellCount >= C.MAX_EVIDENCE_SPELLS_PER_KILL then
-			draft.truncated = true
+		if draft.spellCount >= draftSpellLimit() then
+			noteDraftTruncation(draft, "spell_limit")
 			return nil
 		end
 		draft.spellCount = draft.spellCount + 1
@@ -489,10 +516,6 @@ function EvidenceStore.recordSpellEvent(pull, record)
 	if not draft then
 		return
 	end
-	if #draft.events >= C.MAX_EVIDENCE_EVENTS_PER_KILL then
-		draft.truncated = true
-		return
-	end
 
 	local relativeT10 = round10((record.t or Util.now()) - (draft.startedAtSession or 0)) or 0
 	local recordHp10 = hp10(record.hpPct)
@@ -503,7 +526,7 @@ function EvidenceStore.recordSpellEvent(pull, record)
 	local dest = destActor(draft, record, source, relativeT10)
 	local spell = ensureSpell(draft, record)
 	if not owner or not source or not spell then
-		draft.truncated = true
+		noteDraftTruncation(draft, "record_context_limit")
 		return
 	end
 
@@ -519,7 +542,7 @@ function EvidenceStore.recordSpellEvent(pull, record)
 	end
 	local playerTargetId = anonymousPlayerTargetId(draft, record)
 
-	draft.events[#draft.events + 1] = {
+	local event = {
 		relativeT10,
 		code,
 		owner.id,
@@ -530,6 +553,24 @@ function EvidenceStore.recordSpellEvent(pull, record)
 		flags,
 		playerTargetId,
 	}
+	local ownerEvents = draft.eventsByOwner[owner.id]
+	if not ownerEvents then
+		ownerEvents = {}
+		draft.eventsByOwner[owner.id] = ownerEvents
+	end
+	if #ownerEvents < C.MAX_EVIDENCE_EVENTS_PER_KILL then
+		ownerEvents[#ownerEvents + 1] = event
+	else
+		noteDraftTruncation(draft, "owner_event_limit")
+	end
+	draft.eventCountsByOwner[owner.id] = draft.eventCountsByOwner[owner.id] or {}
+	draft.eventCountsByOwner[owner.id][code] = (draft.eventCountsByOwner[owner.id][code] or 0) + 1
+
+	if #draft.events < C.MAX_EVIDENCE_EVENTS_PER_KILL then
+		draft.events[#draft.events + 1] = event
+	else
+		noteDraftTruncation(draft, "pull_event_limit")
+	end
 	draft.eventCounts[code] = (draft.eventCounts[code] or 0) + 1
 end
 
@@ -710,23 +751,101 @@ local function componentActorIds(draft, component)
 	return ids
 end
 
+local function sortedOwnerIds(ownerIds)
+	local ids = {}
+	for actorId in pairs(ownerIds or {}) do
+		ids[#ids + 1] = actorId
+	end
+	table.sort(ids, function(left, right)
+		return (tonumber(left) or 0) < (tonumber(right) or 0)
+	end)
+	return ids
+end
+
+local function copyEvent(event)
+	return copyTable(event)
+end
+
+local function componentEvents(draft, ownerIds)
+	local ownerIdList = sortedOwnerIds(ownerIds)
+	local limit = tonumber(C.MAX_EVIDENCE_EVENTS_PER_KILL) or 2400
+	if #ownerIdList == 0 or limit <= 0 then
+		return {}
+	end
+
+	if type(draft.eventsByOwner) ~= "table" or next(draft.eventsByOwner) == nil then
+		local events = {}
+		for index = 1, #(draft.events or {}) do
+			local event = draft.events[index]
+			if ownerIds[event[3]] and #events < limit then
+				events[#events + 1] = copyEvent(event)
+			end
+		end
+		return events
+	end
+
+	local selected = {}
+	local cursors = {}
+	local quota = math.max(1, math.floor(limit / #ownerIdList))
+	for index = 1, #ownerIdList do
+		local actorId = ownerIdList[index]
+		local ownerEvents = draft.eventsByOwner[actorId] or {}
+		local take = math.min(#ownerEvents, quota, limit - #selected)
+		for eventIndex = 1, take do
+			selected[#selected + 1] = copyEvent(ownerEvents[eventIndex])
+		end
+		cursors[actorId] = take + 1
+	end
+
+	while #selected < limit do
+		local selectedOwnerId
+		local selectedEvent
+		for index = 1, #ownerIdList do
+			local actorId = ownerIdList[index]
+			local ownerEvents = draft.eventsByOwner[actorId] or {}
+			local candidate = ownerEvents[cursors[actorId] or 1]
+			if candidate and (not selectedEvent or (candidate[1] or 0) < (selectedEvent[1] or 0)) then
+				selectedOwnerId = actorId
+				selectedEvent = candidate
+			end
+		end
+		if not selectedEvent then
+			break
+		end
+		selected[#selected + 1] = copyEvent(selectedEvent)
+		cursors[selectedOwnerId] = (cursors[selectedOwnerId] or 1) + 1
+	end
+
+	table.sort(selected, function(left, right)
+		for index = 1, 9 do
+			local leftValue = left[index]
+			local rightValue = right[index]
+			if leftValue ~= rightValue then
+				if type(leftValue) == "number" and type(rightValue) == "number" then
+					return leftValue < rightValue
+				end
+				return tostring(leftValue) < tostring(rightValue)
+			end
+		end
+		return false
+	end)
+	return selected
+end
+
 local function filteredKillTables(draft, ownerIds)
 	local actorIds = {}
 	local spellIds = {}
-	local events = {}
+	local events = componentEvents(draft, ownerIds)
 	local eventCounts = {}
-	for index = 1, #draft.events do
-		local event = draft.events[index]
-		if ownerIds[event[3]] then
-			events[#events + 1] = copyTable(event)
-			eventCounts[event[2]] = (eventCounts[event[2]] or 0) + 1
-			actorIds[event[3]] = true
-			actorIds[event[4]] = true
-			if event[5] and event[5] > 0 then
-				actorIds[event[5]] = true
-			end
-			spellIds[event[6]] = true
+	for index = 1, #events do
+		local event = events[index]
+		eventCounts[event[2]] = (eventCounts[event[2]] or 0) + 1
+		actorIds[event[3]] = true
+		actorIds[event[4]] = true
+		if event[5] and event[5] > 0 then
+			actorIds[event[5]] = true
 		end
+		spellIds[event[6]] = true
 	end
 	for actorId in pairs(ownerIds) do
 		actorIds[actorId] = true
@@ -837,13 +956,22 @@ end
 local function commitComponent(draft, component)
 	local evidence = store()
 	local completionReason = componentCompletionReason(component or {})
-	if not evidence or not Codec or not Codec.encodeStoredKill or draft.truncated or not completionReason then
+	if not evidence or not Codec or not Codec.encodeStoredKill or not completionReason then
 		return false
 	end
 
 	local ownerIds = componentActorIds(draft, component)
 	local actors, spells, events, eventCounts = filteredKillTables(draft, ownerIds)
 	if #events == 0 then
+		return false
+	end
+	if #actors > C.MAX_EVIDENCE_ACTORS_PER_KILL or #spells > C.MAX_EVIDENCE_SPELLS_PER_KILL then
+		logWarn("Rejected permanent evidence kill because component evidence still exceeds packed limits", {
+			instanceKey = draft.zone and draft.zone.key,
+			encounterKey = component.encounterKey,
+			actorCount = #actors,
+			spellCount = #spells,
+		})
 		return false
 	end
 
@@ -878,6 +1006,7 @@ local function commitComponent(draft, component)
 		spells = spells,
 		events = events,
 		eventCounts = eventCounts,
+		truncated = draft.truncated == true or nil,
 	}
 	local storedKill, storeError = Codec.encodeStoredKill(instance, boss, kill, hash)
 	if not storedKill then
@@ -887,6 +1016,14 @@ local function commitComponent(draft, component)
 			bossKey = boss.key,
 		})
 		return false
+	end
+	if draft.truncated then
+		logWarn("Stored bounded permanent evidence from a truncated pull draft", {
+			instanceKey = instance.key,
+			bossKey = boss.key,
+			eventCount = #events,
+			truncationReasons = draft.truncationReasons,
+		})
 	end
 	boss.kills[hash] = storedKill
 	evidence.revision = (tonumber(evidence.revision) or 0) + 1
@@ -908,6 +1045,7 @@ local function rememberIncomplete(draft, reason)
 		actorCount = countKeys(draft.actors),
 		spellCount = countKeys(draft.spells),
 		truncated = draft.truncated == true or nil,
+		truncationReasons = draft.truncationReasons,
 	}, C.MAX_EVIDENCE_INCOMPLETE_ATTEMPTS)
 end
 
@@ -915,7 +1053,7 @@ function EvidenceStore.finishPull(pull, reason, pullState, components)
 	if suspended or not pull or not pull.id then
 		return 0
 	end
-	local draft = activeDrafts[pull.id]
+	local draft = activeDrafts[draftKey(pull)]
 	if not draft then
 		return 0
 	end
@@ -945,7 +1083,7 @@ function EvidenceStore.finishPull(pull, reason, pullState, components)
 	if committed == 0 then
 		rememberIncomplete(draft, reason)
 	end
-	activeDrafts[pull.id] = nil
+	activeDrafts[draftKey(pull)] = nil
 	return committed
 end
 

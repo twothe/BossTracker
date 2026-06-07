@@ -1656,6 +1656,77 @@ local function markEliteBossFrame(context, hpPct)
 	context.lastHpPct = hpPct or context.lastHpPct
 end
 
+local function scenarioRaidContainedBossFrameAddDoesNotGroupWithPrimary()
+	Harness.resetState("Replay Contained Raid Add")
+	Harness.setInstanceInfo({
+		name = "Blackwing Lair",
+		instanceType = "raid",
+		maxPlayers = 40,
+		mapId = 469,
+		difficultyIndex = 1,
+	})
+
+	local boss = "Broodlord Lashlayer"
+	local add = "Greater Corrupted Red Whelp"
+	local bossGuid = Harness.makeGuid(boss, 655)
+	local addGuid = Harness.makeGuid(add, 656)
+	local bossKey = addon.Core.Util.bossKey(boss, bossGuid)
+	local addKey = addon.Core.Util.bossKey(add, addGuid)
+
+	Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = bossGuid, spellName = "Knock Away", hp = 100 })
+	local _, addContext = Harness.emitSpell({ t = 8, sourceName = add, sourceGUID = addGuid, spellName = "Lesser Flame Breath", hp = 100, boss = false })
+	markEliteBossFrame(addContext, 100)
+	Harness.emitSpell({ t = 18, sourceName = add, sourceGUID = addGuid, spellName = "Lesser Flame Breath", hp = 5, boss = false })
+	markEliteBossFrame(addContext, 5)
+	Harness.emitSpell({ t = 30, sourceName = boss, sourceGUID = bossGuid, spellName = "Knock Away", hp = 60 })
+	Harness.emitSpell({ t = 60, sourceName = boss, sourceGUID = bossGuid, spellName = "Knock Away", hp = 2 })
+	Harness.finishPull(75, "unit_died")
+
+	local groupKey = "group:" .. table.concat({ bossKey, addKey }, "+")
+	Harness.assertTrue(Harness.encounter(bossKey) ~= nil, "The primary raid boss should keep its exact single-boss model")
+	Harness.assertTrue(Harness.encounter(groupKey) == nil, "Contained short boss-frame adds should not be folded into the primary raid encounter key")
+end
+
+local function scenarioRaidContainedCompanionBossStillGroupsWithPrimary()
+	Harness.resetState("Replay Contained Raid Companion Boss")
+	Harness.setInstanceInfo({
+		name = "Blackwing Lair",
+		instanceType = "raid",
+		maxPlayers = 40,
+		mapId = 469,
+		difficultyIndex = 1,
+	})
+
+	local boss = "Primary Raid Warden"
+	local companion = "Companion Lieutenant"
+	local bossGuid = Harness.makeGuid(boss, 657)
+	local companionGuid = Harness.makeGuid(companion, 658)
+	local bossKey = addon.Core.Util.bossKey(boss, bossGuid)
+	local companionKey = addon.Core.Util.bossKey(companion, companionGuid)
+	local groupKeys = { bossKey, companionKey }
+	table.sort(groupKeys)
+
+	Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = bossGuid, spellName = "Warden Smash", hp = 100 })
+	local _, companionContext = Harness.emitSpell({ t = 8, sourceName = companion, sourceGUID = companionGuid, spellName = "Lieutenant Cleave", hp = 100, boss = false })
+	markEliteBossFrame(companionContext, 100)
+	for index = 1, 36 do
+		Harness.emitSpell({
+			t = 8 + index * 1.4,
+			sourceName = companion,
+			sourceGUID = companionGuid,
+			spellName = index % 4 == 0 and "Lieutenant Ward" or index % 3 == 0 and "Lieutenant Roar" or index % 2 == 0 and "Lieutenant Charge" or "Lieutenant Cleave",
+			hp = 100 - index * 2,
+			boss = false,
+		})
+	end
+	markEliteBossFrame(companionContext, 10)
+	Harness.emitSpell({ t = 62, sourceName = boss, sourceGUID = bossGuid, spellName = "Warden Smash", hp = 12 })
+	Harness.finishPull(75, "unit_died")
+
+	local groupKey = "group:" .. table.concat(groupKeys, "+")
+	Harness.assertTrue(Harness.encounter(groupKey) ~= nil, "Contained companion bosses with substantial evidence should still use a grouped raid encounter key")
+end
+
 local function scenarioClosedPhaseActorStillGroupsAfterContextEviction()
 	Harness.resetState("Replay Razorgore Eviction")
 	Harness.setInstanceInfo({
@@ -2063,6 +2134,36 @@ local function scenarioUnitDiedUsesGuidBeforeName()
 	Harness.assertTrue(secondContext.active == true, "UNIT_DIED must not close other active units with the same name")
 end
 
+local function scenarioUnitDiedPreventsDeadContextReactivation()
+	Harness.resetState("Replay Dead Context Guard")
+	local boss = "Duplicate Death Drake"
+	local guid = Harness.makeGuid(boss, 723)
+	Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = guid, spellName = "Dark Breath", hp = 100 })
+	Harness.emitSpell({ t = 20, sourceName = boss, sourceGUID = guid, spellName = "Dark Breath", hp = 40 })
+	emitUnitDied(25, guid, boss)
+
+	local pull = addon.Capture.EncounterState.getCurrent()
+	local context = pull and pull.bossContexts[addon.Core.Util.actorKey(boss, guid)]
+	local eventCount = context and context.eventCount
+	Harness.assertTrue(context and context.active == false and context.endReason == "unit_died", "UNIT_DIED should close the boss context before cleanup events")
+
+	Harness.emitCombatLogSpell({
+		t = 26,
+		sourceName = boss,
+		sourceGUID = guid,
+		spellName = "Death Cleanup Aura",
+		eventType = "SPELL_AURA_REMOVED",
+		boss = false,
+	})
+	Harness.assertTrue(context.active == false, "Post-death cleanup events must not reactivate a killed boss context")
+	Harness.assertTrue(context.eventCount == eventCount, "Post-death cleanup events must not add learned boss evidence")
+	Harness.finishPull(30, "out_of_combat")
+
+	local bossKey = addon.Core.Util.bossKey(boss, guid)
+	local model = Harness.encounter(bossKey)
+	Harness.assertTrue(Harness.ability(model, bossKey, "Death Cleanup Aura") == nil, "Post-death cleanup events must not become learned boss abilities")
+end
+
 local function firstDecodedEvidenceKill()
 	for _, instance in pairs(addon.db.evidence.instances or {}) do
 		for _, evidenceBoss in pairs(instance.bosses or {}) do
@@ -2316,6 +2417,51 @@ local function scenarioEvidenceStoresAddHeavyKillsWithinCap()
 	Harness.assertTrue(addon.Core.EvidenceStore.countIncomplete() == 0, "Add-heavy killed encounters inside the cap should not be marked incomplete")
 	local decoded = firstDecodedEvidenceKill()
 	Harness.assertTrue(decoded ~= nil and #(decoded.kill.actors or {}) > 18, "Permanent evidence should retain add actor facts beyond the old actor cap")
+end
+
+local function scenarioEvidenceStoresBoundedKillFromTruncatedPullDraft()
+	Harness.resetState("Replay Evidence Truncated Draft")
+	Harness.setInstanceInfo({
+		name = "Blackwing Lair",
+		instanceType = "raid",
+		maxPlayers = 40,
+		mapId = 469,
+		difficultyIndex = 1,
+	})
+
+	local C = addon.Core.Constants
+	local previousEventLimit = C.MAX_EVIDENCE_EVENTS_PER_KILL
+	C.MAX_EVIDENCE_EVENTS_PER_KILL = 12
+
+	local boss = "Truncated Evidence Drake"
+	local guid = Harness.makeGuid(boss, 960)
+	for index = 0, 19 do
+		Harness.emitSpell({
+			t = index * 3,
+			sourceName = boss,
+			sourceGUID = guid,
+			spellName = index % 2 == 0 and "Scorching Breath" or "Wing Buffet",
+			hp = 100 - index * 4,
+		})
+	end
+	for index = 1, 24 do
+		Harness.emitSpell({
+			t = 70 + index * 0.1,
+			sourceName = "Blackwing Mage " .. tostring(index),
+			sourceGUID = Harness.makeGuid("Blackwing Mage " .. tostring(index), 960 + index),
+			spellName = "Arcane Bolt",
+			hp = 100,
+			boss = false,
+		})
+	end
+	Harness.finishPull(90, "unit_died")
+
+	C.MAX_EVIDENCE_EVENTS_PER_KILL = previousEventLimit
+	Harness.assertTrue(addon.Core.EvidenceStore.countPermanentKills() == 1, "A completed boss component should still store bounded evidence when the pull draft overflows")
+	Harness.assertTrue(addon.Core.EvidenceStore.countIncomplete() == 0, "A stored truncated boss component should not leave an incomplete attempt")
+	local decoded = firstDecodedEvidenceKill()
+	Harness.assertTrue(decoded ~= nil and #(decoded.kill.events or {}) == 12, "Truncated component evidence should stay within the configured packed event cap")
+	Harness.assertTrue(decoded.boss.name == boss, "Truncated pull evidence should commit the completed boss component, not unrelated trash")
 end
 
 local function scenarioEvidenceRebuildsLearnedModel()
@@ -2756,6 +2902,8 @@ local scenarios = {
 	scenarioPredictionDeduplicatesSameModelAbility,
 	scenarioGroupKeyDeduplicatesSameModelActors,
 	scenarioPrimaryBossUsesDynamicGroupVariantModel,
+	scenarioRaidContainedBossFrameAddDoesNotGroupWithPrimary,
+	scenarioRaidContainedCompanionBossStillGroupsWithPrimary,
 	scenarioClosedPhaseActorStillGroupsAfterContextEviction,
 	scenarioContainedSingleActorEncounterMergesIntoGroup,
 	scenarioPartyGroupVariantKeepsSingleActorEncounter,
@@ -2768,6 +2916,7 @@ local scenarios = {
 	scenarioShortHighHpPartialIgnored,
 	scenarioUnitDiedDefersWhileBossFrameAlive,
 	scenarioUnitDiedUsesGuidBeforeName,
+	scenarioUnitDiedPreventsDeadContextReactivation,
 	scenarioEvidenceStoresCompletedBossEvidence,
 	scenarioEvidenceCommitsWhenLearnerIsBlocked,
 	scenarioEvidenceSchemaMismatchArchivesExistingStore,
@@ -2775,6 +2924,7 @@ local scenarios = {
 	scenarioEvidenceHashUsesAllEventFacts,
 	scenarioEvidenceCountsAreSegmentLocal,
 	scenarioEvidenceStoresAddHeavyKillsWithinCap,
+	scenarioEvidenceStoresBoundedKillFromTruncatedPullDraft,
 	scenarioEvidenceRebuildsLearnedModel,
 	scenarioEvidenceRebuildPreservesBossContextStart,
 	scenarioEvidenceRebuildPreservesPlayerAuraPhase,

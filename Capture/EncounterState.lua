@@ -337,6 +337,18 @@ local function ensureBossContext(name, guid, flags, reason, score, startedAtSess
 		context.guid = context.guid or guid
 		context.flags = context.flags or flags
 		if not context.active then
+			if context.dead == true or context.endReason == "unit_died" then
+				addon.Core.Logger.event({
+					kind = "boss_context_reactivation_ignored",
+					pullId = pull.id,
+					actorKey = actorKey,
+					bossKey = context.modelKey,
+					bossName = context.name,
+					reason = reason,
+					endReason = context.endReason,
+				})
+				return nil
+			end
 			context.active = true
 			context.restartedAtSession = now
 			addon.Core.Logger.event({

@@ -172,7 +172,94 @@ local function actorInterval(bossState, context)
 	return startAt, endAt
 end
 
-local function intervalsConnected(left, right)
+local function isRaidZone(zone)
+	return type(zone) == "table" and (
+		zone.instanceType == "raid"
+		or (tonumber(zone.maxPlayers) or 0) > 5
+	)
+end
+
+local function entryIsWorldboss(entry)
+	local bossState = entry and entry.bossState
+	local context = entry and entry.context
+	return (type(bossState) == "table" and bossState.unitClassification == "worldboss")
+		or (type(context) == "table" and context.unitClassification == "worldboss")
+end
+
+local function entryHasBossSignal(entry)
+	if isBossSignalContext(entry and entry.context) then
+		return true
+	end
+	local bossState = entry and entry.bossState
+	return type(bossState) == "table"
+		and (
+			bossState.unitClassification == "worldboss"
+			or bossState.sawBossUnit == true
+			or isBossUnitToken(bossState.bossUnitToken)
+			or isBossUnitToken(bossState.lastUnitToken)
+			or (
+				type(bossState.lastUnitSource) == "string"
+				and string.sub(bossState.lastUnitSource, 1, 9) == "boss_unit"
+			)
+		)
+end
+
+local function entryEventCount(entry)
+	local bossState = entry and entry.bossState
+	local context = entry and entry.context
+	return tonumber(context and context.eventCount)
+		or tonumber(bossState and bossState.eventCount)
+		or 0
+end
+
+local function entryOccurrenceCount(entry)
+	local bossState = entry and entry.bossState
+	local context = entry and entry.context
+	return tonumber(context and context.occurrenceCount)
+		or tonumber(bossState and bossState.occurrenceCount)
+		or 0
+end
+
+local function entryAbilityCount(entry)
+	local bossState = entry and entry.bossState
+	return countKeys(bossState and bossState.abilities)
+end
+
+local function entryLooksLikeContainedAdd(entry)
+	return not entryIsWorldboss(entry)
+		and entryHasBossSignal(entry)
+		and entryEventCount(entry) <= (tonumber(C.ENCOUNTER_CONTAINED_ADD_MAX_EVENTS) or 30)
+		and entryOccurrenceCount(entry) <= (tonumber(C.ENCOUNTER_CONTAINED_ADD_MAX_OCCURRENCES) or 24)
+		and entryAbilityCount(entry) <= (tonumber(C.ENCOUNTER_CONTAINED_ADD_MAX_ABILITIES) or 3)
+end
+
+local function raidContainedAddShouldStaySeparate(left, right, zone)
+	if not isRaidZone(zone) then
+		return false
+	end
+	local leftWorldboss = entryIsWorldboss(left)
+	local rightWorldboss = entryIsWorldboss(right)
+	if leftWorldboss == rightWorldboss then
+		return false
+	end
+
+	local primary = leftWorldboss and left or right
+	local add = leftWorldboss and right or left
+	if not entryLooksLikeContainedAdd(add) then
+		return false
+	end
+
+	local primaryStart, primaryEnd = actorInterval(primary.bossState, primary.context)
+	local addStart, addEnd = actorInterval(add.bossState, add.context)
+	local containedGrace = tonumber(C.ENCOUNTER_CONTAINED_ADD_START_GRACE_SECONDS) or 2
+	return addStart >= primaryStart + containedGrace
+		and addEnd <= primaryEnd + C.ENCOUNTER_GROUP_GAP_SECONDS
+end
+
+local function intervalsConnected(left, right, zone)
+	if raidContainedAddShouldStaySeparate(left, right, zone) then
+		return false
+	end
 	local leftStart, leftEnd = actorInterval(left.bossState, left.context)
 	local rightStart, rightEnd = actorInterval(right.bossState, right.context)
 	return leftStart <= rightEnd + C.ENCOUNTER_GROUP_GAP_SECONDS
@@ -217,7 +304,7 @@ local function encounterNameForComponent(component)
 	return table.concat(names, " / ")
 end
 
-local function buildComponents(entries)
+local function buildComponents(entries, zone)
 	table.sort(entries, function(left, right)
 		local leftStart = actorInterval(left.bossState, left.context)
 		local rightStart = actorInterval(right.bossState, right.context)
@@ -231,7 +318,7 @@ local function buildComponents(entries)
 		for componentIndex = 1, #components do
 			local component = components[componentIndex]
 			for memberIndex = 1, #component do
-				if intervalsConnected(component[memberIndex], entry) then
+				if intervalsConnected(component[memberIndex], entry, zone) then
 					targetComponent = component
 					break
 				end
@@ -363,7 +450,7 @@ function EncounterModel.scorePull(pullState, pull, reason)
 		end
 	end
 
-	return decisions, buildComponents(qualifiedEntries), pullDecisionStats
+	return decisions, buildComponents(qualifiedEntries, pullState.zone), pullDecisionStats
 end
 
 function EncounterModel.activeGroupKey(contexts)
