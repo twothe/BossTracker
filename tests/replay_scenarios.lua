@@ -2847,6 +2847,91 @@ local function scenarioEvidenceSyncRoundTripRebuildsModel()
 	Harness.assertTrue(lastMessage.target == nil, "Raid sync request should not whisper a single target")
 end
 
+local function scenarioEvidenceSyncTransfersAllBatches()
+	Harness.resetState("Replay Evidence Sync Batches")
+	local constants = addon.Core.Constants
+	local originalKillsPerPayload = constants.MAX_SYNC_KILLS_PER_PAYLOAD
+	constants.MAX_SYNC_KILLS_PER_PAYLOAD = 2
+
+	local firstBossKey
+	for index = 1, 5 do
+		local boss = "Batch Sync Sentinel " .. tostring(index)
+		local guid = Harness.makeGuid(boss, 3000 + index)
+		local startedAt = index * 100
+		firstBossKey = firstBossKey or addon.Core.Util.bossKey(boss, guid)
+		Harness.emitSpell({ t = startedAt, sourceName = boss, sourceGUID = guid, spellName = "Batch Slam", hp = 100 })
+		Harness.emitSpell({ t = startedAt + 30, sourceName = boss, sourceGUID = guid, spellName = "Batch Slam", hp = 60 })
+		Harness.finishPull(startedAt + 60, "unit_died")
+	end
+
+	local payloads, exportStatsOrError = addon.Core.EvidenceSync.exportPayloads()
+	Harness.assertTrue(payloads ~= nil, "Batched evidence sync should export payloads: " .. tostring(exportStatsOrError))
+	Harness.assertTrue(exportStatsOrError.exported == 5, "Batched evidence sync should export every permanent kill")
+	Harness.assertTrue(exportStatsOrError.total == 5, "Batched evidence sync should count all source kills")
+	Harness.assertTrue(#payloads == 3, "Batched evidence sync should split the full export into three payloads")
+
+	Harness.setUnit("target", {
+		name = "PeerBatchTarget",
+		guid = "Player-0-0-0-0-10-PeerBatchTarget",
+		player = true,
+	})
+	addon.Core.EvidenceSync.handleSlash("target")
+	local messages = Harness.sentAddonMessages()
+	local requestMessage = messages[#messages]
+	local sessionId = requestMessage and string.match(requestMessage.message, "^R|([^|]+)|")
+	Harness.assertTrue(sessionId ~= nil, "Batch sync request should include a session id")
+
+	Harness.clearAddonMessages()
+	addon.Core.EvidenceSync.handleAddonMessage("CHAT_MSG_ADDON", constants.SYNC_PREFIX, "A|" .. sessionId .. "|1.9.14", "WHISPER", "PeerBatchTarget")
+	messages = Harness.sentAddonMessages()
+	Harness.assertTrue(#messages == 1 and string.sub(messages[1].message, 1, 2) == "N|", "Multi-batch sync should fail clearly for peers without batch support")
+
+	Harness.clearAddonMessages()
+	addon.Core.EvidenceSync.handleAddonMessage("CHAT_MSG_ADDON", constants.SYNC_PREFIX, "A|" .. sessionId .. "|" .. constants.VERSION, "WHISPER", "PeerBatchTarget")
+	addon.Core.EvidenceSync.flushQueue()
+	messages = Harness.sentAddonMessages()
+	constants.MAX_SYNC_KILLS_PER_PAYLOAD = originalKillsPerPayload
+
+	local headerCount = 0
+	for index = 1, #messages do
+		Harness.assertTrue(#messages[index].message <= 255, "Batched sync addon message " .. tostring(index) .. " should stay below the client limit")
+		if string.sub(messages[index].message, 1, 2) == "H|" then
+			headerCount = headerCount + 1
+			local headerParts = {}
+			for part in string.gmatch(messages[index].message, "([^|]+)") do
+				headerParts[#headerParts + 1] = part
+			end
+			Harness.assertTrue(tonumber(headerParts[9]) == 3, "Batched sync header should advertise the total batch count")
+			Harness.assertTrue(tonumber(headerParts[10]) == 5, "Batched sync header should advertise the total kill count")
+		end
+	end
+	Harness.assertTrue(headerCount == 3, "Batched evidence sync should send one header per payload batch")
+
+	addon.Core.SavedVariables.clearLearnedData("Test clears local data before batched sync receive.")
+	Harness.assertTrue(addon.Core.EvidenceStore.countPermanentKills() == 0, "Test setup should clear local evidence before batched receive")
+	for index = 1, #messages do
+		addon.Core.EvidenceSync.handleAddonMessage("CHAT_MSG_ADDON", constants.SYNC_PREFIX, messages[index].message, "WHISPER", "Intruder")
+	end
+	Harness.assertTrue(addon.Core.EvidenceStore.countPermanentKills() == 0, "Unauthorized batched sync must not import evidence")
+	for index = 1, #messages do
+		addon.Core.EvidenceSync.handleAddonMessage("CHAT_MSG_ADDON", constants.SYNC_PREFIX, messages[index].message, "WHISPER", "PeerBatchTarget")
+	end
+	Harness.assertTrue(addon.Core.EvidenceStore.countPermanentKills() == 5, "Batched sync receive should import every permanent evidence kill")
+	local rebuilt = Harness.ability(Harness.encounter(firstBossKey), firstBossKey, "Batch Slam")
+	Harness.assertTrue(rebuilt ~= nil, "Batched sync receive should rebuild learned models after the final batch")
+	Harness.assertNear(rebuilt.minInterval, 30, 0.01, "Batched sync receive should preserve timer evidence")
+
+	addon.db.learned = { zones = {} }
+	addon.db.learnedMeta = addon.db.learnedMeta or {}
+	addon.db.learnedMeta.interpretationEngineVersion = constants.INTERPRETATION_ENGINE_VERSION
+	addon.db.learnedMeta.rebuildRequired = nil
+	local duplicateStats, duplicateError = addon.Core.EvidenceSync.importPayload(payloads[1].payload, "PeerBatchTarget")
+	Harness.assertTrue(duplicateStats ~= nil, "Duplicate-only sync payload should remain importable: " .. tostring(duplicateError))
+	Harness.assertTrue(duplicateStats.imported == 0 and duplicateStats.duplicates == payloads[1].killCount, "Duplicate-only sync should detect existing evidence")
+	rebuilt = Harness.ability(Harness.encounter(firstBossKey), firstBossKey, "Batch Slam")
+	Harness.assertTrue(rebuilt ~= nil, "Duplicate-only sync should rebuild a missing learned cache from existing evidence")
+end
+
 local function scenarioEvidenceSyncImportPreservesLocalLegacy()
 	Harness.resetState("Replay Evidence Sync Source")
 	local boss = "Sync Source Sentinel"
@@ -3075,6 +3160,7 @@ local scenarios = {
 	scenarioOldBackupRestorePreservesLegacyAfterEngineRebuild,
 	scenarioMissingEvidenceEngineVersionRebuildsForFutureEngines,
 	scenarioEvidenceSyncRoundTripRebuildsModel,
+	scenarioEvidenceSyncTransfersAllBatches,
 	scenarioEvidenceSyncImportPreservesLocalLegacy,
 	scenarioEvidenceDifficultyAbilityAvailability,
 	scenarioBlankFivePlayerDifficultyInfersNormalOnly,

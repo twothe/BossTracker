@@ -345,7 +345,8 @@ classes:
 
 - `R`: sync request with addon version, evidence revision, and kill count.
 - `A` / `D`: accept or decline.
-- `H`: transfer header with payload length, hash, chunk count, and kill count.
+- `H`: transfer header with payload length, hash, chunk count, kill count,
+  addon version, optional batch index/count, and total session kill count.
 - `C`: one bounded payload chunk.
 - `N`: no-data or sender-side failure notice.
 
@@ -355,6 +356,12 @@ The wire payload is schema-specific and compact:
 - each `P` block uses the same packed kill string stored locally.
 - inside a kill block, actor and spell references use numeric IDs local to that
   block.
+- large sync sessions are split into multiple complete payload batches; the
+  session must send every exportable permanent kill or fail clearly instead of
+  silently sending only the newest subset.
+- multi-batch transfers require both peers to support the batched protocol
+  introduced in 1.9.15; a sender must reject large syncs to older peers instead
+  of falling back to a partial first payload.
 - events are packed as tuples and chunked below the addon-message size limit.
 - the receiver validates schema, payload length, transfer hash, caps, kill
   shape, actor references, spell references, authorization, and duplicate
@@ -366,6 +373,11 @@ the normal permanent evidence store, deduplicated by a locally recomputed
 combined evidence. The receiver never accepts calculated rules, confidence
 values, UI settings, warning settings, character backups, diagnostics, or
 incomplete attempts from another player.
+
+If all received kills are duplicates, the sync may still rebuild the local
+learned cache from existing permanent evidence. This repairs sessions where the
+source evidence was already present but the calculated display cache was missing
+or stale.
 
 ## Deduplication
 

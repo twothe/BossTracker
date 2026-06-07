@@ -15,6 +15,7 @@ local pendingRequests = {}
 local inboundTransfers = {}
 local outboundSessions = {}
 local authorizedInboundSessions = {}
+local inboundImportSessions = {}
 local sendQueue = {}
 local sendFrame
 local sendElapsed = 0
@@ -49,6 +50,22 @@ local function requestKey(sender, session)
 	return normalizedName(sender) .. ":" .. tostring(session or "")
 end
 
+local function splitBatchSession(session)
+	local sessionText = tostring(session or "")
+	local baseSession, batchText = string.match(sessionText, "^(.-)%.(%d+)$")
+	if baseSession and baseSession ~= "" then
+		return baseSession, tonumber(batchText)
+	end
+	return sessionText, nil
+end
+
+local function transferSessionId(session, batchIndex, batchCount)
+	if tonumber(batchCount) and tonumber(batchCount) > 1 then
+		return tostring(session or "") .. "." .. tostring(batchIndex or 1)
+	end
+	return tostring(session or "")
+end
+
 local function authorizeInboundTransfer(sender, session, reason)
 	if not sender or not session then
 		return nil
@@ -65,12 +82,20 @@ local function authorizeInboundTransfer(sender, session, reason)
 end
 
 local function inboundTransferAuthorized(sender, session)
-	local authorization = authorizedInboundSessions[requestKey(sender, session)]
+	local key = requestKey(sender, session)
+	local authorization = authorizedInboundSessions[key]
 	if not authorization then
-		return false
+		local baseSession = splitBatchSession(session)
+		key = requestKey(sender, baseSession)
+		authorization = authorizedInboundSessions[key]
+		if not authorization then
+			return false, nil, false
+		end
+		authorization.updatedAt = now()
+		return true, key, true
 	end
 	authorization.updatedAt = now()
-	return true
+	return true, key, false
 end
 
 local function hashString(value)
@@ -110,6 +135,31 @@ local function logInfo(message, data)
 	if addon.Core.Logger and addon.Core.Logger.info then
 		addon.Core.Logger.info("EvidenceSync", message, data)
 	end
+end
+
+local function rejectedSummary(count)
+	count = tonumber(count) or 0
+	if count > 0 then
+		return ", rejected " .. tostring(count) .. " invalid kill(s)"
+	end
+	return ""
+end
+
+local function parseVersionParts(version)
+	local major, minor, patch = string.match(tostring(version or ""), "^(%d+)%.(%d+)%.(%d+)")
+	return tonumber(major) or 0, tonumber(minor) or 0, tonumber(patch) or 0
+end
+
+local function versionAtLeast(version, requiredVersion)
+	local major, minor, patch = parseVersionParts(version)
+	local requiredMajor, requiredMinor, requiredPatch = parseVersionParts(requiredVersion)
+	if major ~= requiredMajor then
+		return major > requiredMajor
+	end
+	if minor ~= requiredMinor then
+		return minor > requiredMinor
+	end
+	return patch >= requiredPatch
 end
 
 local function escapeField(value)
@@ -181,6 +231,99 @@ local function unpackLine(recordLine)
 end
 
 function EvidenceSync.exportPayload(maxKills)
+	local payloads, statsOrError = EvidenceSync.exportPayloads(maxKills)
+	if not payloads then
+		return nil, statsOrError
+	end
+	local payload = payloads[1] and payloads[1].payload or nil
+	local stats = statsOrError or {}
+	return payload, {
+		exported = payloads[1] and payloads[1].killCount or 0,
+		total = stats.total or 0,
+		skippedTooLarge = stats.skippedTooLarge or 0,
+		truncated = (stats.batchCount or 0) > 1 or (stats.exported or 0) < (stats.total or 0),
+		batchCount = stats.batchCount or 0,
+	}
+end
+
+local function maxSyncKillsPerPayload()
+	return tonumber(C.MAX_SYNC_KILLS_PER_PAYLOAD or C.MAX_SYNC_KILLS_PER_EXPORT) or 80
+end
+
+local function maxSyncPayloadBytes()
+	return math.max(1, (tonumber(C.MAX_SYNC_PAYLOAD_BYTES) or 180000) - 256)
+end
+
+local function buildPayloadsFromBlocks(evidence, killBlocks, totalKills)
+	local maxPayloadBytes = maxSyncPayloadBytes()
+	local maxKillsPerPayload = maxSyncKillsPerPayload()
+	local batches = {}
+	local currentBatch
+
+	for index = 1, #killBlocks do
+		local blockLine = line("P", killBlocks[index].block)
+		local additionalLength = #blockLine + 1
+		if additionalLength > maxPayloadBytes then
+			return nil, "one evidence kill block exceeds the sync payload limit"
+		end
+		if not currentBatch
+			or currentBatch.payloadLength + additionalLength > maxPayloadBytes
+			or currentBatch.killCount >= maxKillsPerPayload then
+			currentBatch = {
+				lines = { "" },
+				payloadLength = 0,
+				killCount = 0,
+				firstKillIndex = index,
+			}
+			batches[#batches + 1] = currentBatch
+		end
+		currentBatch.lines[#currentBatch.lines + 1] = blockLine
+		currentBatch.payloadLength = currentBatch.payloadLength + additionalLength
+		currentBatch.killCount = currentBatch.killCount + 1
+	end
+
+	if #batches == 0 then
+		batches[1] = {
+			lines = { "" },
+			payloadLength = 0,
+			killCount = 0,
+			firstKillIndex = 0,
+		}
+	end
+
+	local payloads = {}
+	local batchCount = #batches
+	for batchIndex = 1, batchCount do
+		local batch = batches[batchIndex]
+		batch.lines[1] = line(
+			"E",
+			C.EVIDENCE_SCHEMA_VERSION,
+			C.VERSION,
+			evidence.revision or 0,
+			batch.killCount,
+			totalKills,
+			0,
+			wallTime(),
+			batchIndex,
+			batchCount,
+			batch.firstKillIndex
+		)
+		local payload = table.concat(batch.lines, RECORD_SEPARATOR)
+		if #payload > C.MAX_SYNC_PAYLOAD_BYTES then
+			return nil, "sync payload exceeds configured limit"
+		end
+		payloads[#payloads + 1] = {
+			payload = payload,
+			killCount = batch.killCount,
+			batchIndex = batchIndex,
+			batchCount = batchCount,
+			firstKillIndex = batch.firstKillIndex,
+		}
+	end
+	return payloads, nil
+end
+
+function EvidenceSync.exportPayloads(maxKills)
 	local evidence = addon.Core.EvidenceStore and addon.Core.EvidenceStore.ensureDb(addon.db) or nil
 	local storeApi = addon.Core.EvidenceStore
 	if not evidence or not storeApi or type(storeApi.collectKillBlocks) ~= "function" then
@@ -191,45 +334,28 @@ function EvidenceSync.exportPayload(maxKills)
 	end
 
 	local killBlocks = storeApi.collectKillBlocks()
-	local lines = { "" }
-	local payloadLength = 0
-	local exported = 0
-	local skippedTooLarge = 0
-	local maxExportedKills = math.min(tonumber(maxKills) or C.MAX_SYNC_KILLS_PER_EXPORT, C.MAX_SYNC_KILLS_PER_EXPORT)
-	local maxPayloadBytes = C.MAX_SYNC_PAYLOAD_BYTES - 256
-
-	for index = 1, #killBlocks do
-		if exported >= maxExportedKills then
-			break
-		end
-		local blockLine = line("P", killBlocks[index].block)
-		local additionalLength = #blockLine + 1
-		if #blockLine > maxPayloadBytes then
-			skippedTooLarge = skippedTooLarge + 1
-		elseif payloadLength + additionalLength <= maxPayloadBytes then
-			lines[#lines + 1] = blockLine
-			payloadLength = payloadLength + additionalLength
-			exported = exported + 1
-		else
-			break
+	local permanentKillCount = storeApi.countPermanentKills and storeApi.countPermanentKills() or #killBlocks
+	if #killBlocks < permanentKillCount then
+		return nil, "stored evidence contains corrupt kill block(s); full sync cannot be created"
+	end
+	local totalKills = permanentKillCount
+	local requestedLimit = tonumber(maxKills)
+	if requestedLimit and requestedLimit >= 0 and requestedLimit < #killBlocks then
+		while #killBlocks > requestedLimit do
+			table.remove(killBlocks)
 		end
 	end
 
-	lines[1] = line(
-		"E",
-		C.EVIDENCE_SCHEMA_VERSION,
-		C.VERSION,
-		evidence.revision or 0,
-		exported,
-		#killBlocks,
-		skippedTooLarge,
-		wallTime()
-	)
-	return table.concat(lines, RECORD_SEPARATOR), {
-		exported = exported,
-		total = #killBlocks,
-		skippedTooLarge = skippedTooLarge,
-		truncated = exported < #killBlocks,
+	local payloads, buildError = buildPayloadsFromBlocks(evidence, killBlocks, totalKills)
+	if not payloads then
+		return nil, buildError
+	end
+	return payloads, {
+		exported = #killBlocks,
+		total = totalKills,
+		skippedTooLarge = 0,
+		truncated = #killBlocks < totalKills,
+		batchCount = #payloads,
 	}
 end
 
@@ -245,6 +371,10 @@ local function parsePayload(payload)
 		schemaVersion = nil,
 		version = nil,
 		revision = 0,
+		declaredKills = nil,
+		totalKills = nil,
+		batchIndex = 1,
+		batchCount = 1,
 		blocks = {},
 	}
 	for _, rawLine in ipairs(split(payload, RECORD_SEPARATOR)) do
@@ -255,9 +385,16 @@ local function parsePayload(payload)
 				parsed.schemaVersion = tonumber(fields[2])
 				parsed.version = fields[3]
 				parsed.revision = tonumber(fields[4]) or 0
+				parsed.declaredKills = tonumber(fields[5])
+				parsed.totalKills = tonumber(fields[6])
+				parsed.batchIndex = tonumber(fields[9]) or 1
+				parsed.batchCount = tonumber(fields[10]) or 1
 			elseif recordType == "P" then
-				if fields[2] ~= "" and #parsed.blocks < C.MAX_SYNC_KILLS_PER_EXPORT then
+				if fields[2] ~= "" then
 					parsed.blocks[#parsed.blocks + 1] = fields[2]
+					if #parsed.blocks > maxSyncKillsPerPayload() then
+						return nil, "payload kill count exceeds configured limit"
+					end
 				end
 			end
 		end
@@ -265,6 +402,9 @@ local function parsePayload(payload)
 
 	if parsed.schemaVersion ~= C.EVIDENCE_SCHEMA_VERSION then
 		return nil, "unsupported evidence schema"
+	end
+	if parsed.declaredKills ~= nil and parsed.declaredKills ~= #parsed.blocks then
+		return nil, "payload kill count mismatch"
 	end
 	return parsed
 end
@@ -286,7 +426,44 @@ local function refreshAfterImport(skipLearnedBackup)
 	end
 end
 
-function EvidenceSync.importPayload(payload, sender)
+local function markSyncRebuildRequired(reason)
+	if not addon.db then
+		return
+	end
+	addon.db.learnedMeta = type(addon.db.learnedMeta) == "table" and addon.db.learnedMeta or {}
+	addon.db.learnedMeta.rebuildRequired = true
+	addon.db.learnedMeta.rebuildReason = reason or "evidence_sync_import"
+end
+
+local function rebuildAfterSyncImport(reason)
+	if addon.Core.SavedVariables and addon.Core.SavedVariables.rebuildLearnedIfNeeded then
+		markSyncRebuildRequired(reason)
+		local rebuilt, result = addon.Core.SavedVariables.rebuildLearnedIfNeeded()
+		if rebuilt == true then
+			return result or 0, nil, true
+		end
+		if result == "current" or result == "no_evidence" then
+			return 0, nil, true
+		end
+		return nil, result or "learned rebuild failed", true
+	end
+
+	local storeApi = addon.Core.EvidenceStore
+	if storeApi and storeApi.rebuildLearned then
+		local rebuilt, errorMessage = storeApi.rebuildLearned({
+			preserveLegacy = true,
+			rebuildReason = reason or "evidence_sync_import",
+		})
+		if rebuilt == nil then
+			return nil, errorMessage or "learned rebuild failed", false
+		end
+		return rebuilt, nil, false
+	end
+	return nil, "evidence store is not available", false
+end
+
+function EvidenceSync.importPayload(payload, sender, options)
+	options = type(options) == "table" and options or {}
 	local parsed, parseError = parsePayload(payload)
 	if not parsed then
 		return nil, parseError
@@ -316,22 +493,20 @@ function EvidenceSync.importPayload(payload, sender)
 
 	local promoted = 0
 	local rebuildError
-	if imported > 0 then
+	local valid = imported + duplicates
+	if valid > 0 and not options.deferRebuild then
 		if storeApi.bound then
 			storeApi.bound(evidence)
 		end
-		if storeApi.rebuildLearned then
-			local rebuilt, errorMessage = storeApi.rebuildLearned({
-				preserveLegacy = true,
-				rebuildReason = "evidence_sync_import",
-			})
-			if rebuilt == nil then
-				rebuildError = errorMessage or "learned rebuild failed"
-			else
-				promoted = rebuilt
-			end
+		local rebuilt, errorMessage, handledRefresh = rebuildAfterSyncImport("evidence_sync_import")
+		if rebuilt == nil then
+			rebuildError = errorMessage or "learned rebuild failed"
+		else
+			promoted = rebuilt
 		end
-		refreshAfterImport(rebuildError ~= nil)
+		if not handledRefresh then
+			refreshAfterImport(rebuildError ~= nil)
+		end
 	end
 	logInfo("Evidence sync payload imported", {
 		sender = sender,
@@ -340,13 +515,19 @@ function EvidenceSync.importPayload(payload, sender)
 		rejected = rejected,
 		promoted = promoted,
 		rebuildError = rebuildError,
+		batchIndex = parsed.batchIndex,
+		batchCount = parsed.batchCount,
 	})
 	return {
 		imported = imported,
 		duplicates = duplicates,
 		rejected = rejected,
+		valid = valid,
 		promoted = promoted,
 		rebuildError = rebuildError,
+		batchIndex = parsed.batchIndex,
+		batchCount = parsed.batchCount,
+		totalKills = parsed.totalKills,
 	}
 end
 
@@ -400,6 +581,11 @@ local function cleanupExpired()
 			inboundTransfers[key] = nil
 		end
 	end
+	for key, session in pairs(inboundImportSessions) do
+		if tonumber(session.updatedAt) and session.updatedAt < cutoffTransfer then
+			inboundImportSessions[key] = nil
+		end
+	end
 	for key, session in pairs(outboundSessions) do
 		if tonumber(session.startedAt) and session.startedAt < cutoffTransfer then
 			outboundSessions[key] = nil
@@ -444,8 +630,8 @@ local function startTransfer(sessionId, receiver)
 	if not session then
 		return false
 	end
-	local payload, statsOrError = EvidenceSync.exportPayload()
-	if not payload then
+	local payloads, statsOrError = EvidenceSync.exportPayloads()
+	if not payloads then
 		sendImmediate("N|" .. sessionId .. "|" .. escapeField(statsOrError), "WHISPER", receiver)
 		return false
 	end
@@ -454,36 +640,57 @@ local function startTransfer(sessionId, receiver)
 		sendImmediate("N|" .. sessionId .. "|no evidence kills available", "WHISPER", receiver)
 		return false
 	end
-
-	local chunks = chunkPayload(payload)
-	if #chunks > C.MAX_SYNC_CHUNKS then
-		sendImmediate("N|" .. sessionId .. "|sync payload is too large", "WHISPER", receiver)
+	if #payloads > 1 and not versionAtLeast(session.peerVersion, "1.9.15") then
+		local message = "batched sync requires BossTracker 1.9.15 or newer on both players"
+		sendImmediate("N|" .. sessionId .. "|" .. escapeField(message), "WHISPER", receiver)
+		chat("cannot sync all evidence to " .. tostring(receiver) .. ": " .. message)
 		return false
 	end
 
-	local payloadHash = hashString(payload)
-	sendImmediate(table.concat({
-		"H",
-		sessionId,
-		tostring(#payload),
-		payloadHash,
-		tostring(#chunks),
-		tostring(stats.exported),
-		C.VERSION,
-	}, "|"), "WHISPER", receiver)
-	for index = 1, #chunks do
+	local totalChunks = 0
+	for batchIndex = 1, #payloads do
+		local chunks = chunkPayload(payloads[batchIndex].payload)
+		if #chunks > C.MAX_SYNC_CHUNKS then
+			sendImmediate("N|" .. sessionId .. "|sync payload is too large", "WHISPER", receiver)
+			return false
+		end
+		payloads[batchIndex].chunks = chunks
+		totalChunks = totalChunks + #chunks
+	end
+
+	for batchIndex = 1, #payloads do
+		local payloadInfo = payloads[batchIndex]
+		local payload = payloadInfo.payload
+		local chunks = payloadInfo.chunks
+		local batchSession = transferSessionId(sessionId, batchIndex, #payloads)
+		local payloadHash = hashString(payload)
 		queueMessage(table.concat({
-			"C",
-			sessionId,
-			tostring(index),
+			"H",
+			batchSession,
+			tostring(#payload),
+			payloadHash,
 			tostring(#chunks),
-			chunks[index],
+			tostring(payloadInfo.killCount),
+			C.VERSION,
+			tostring(batchIndex),
+			tostring(#payloads),
+			tostring(stats.exported),
 		}, "|"), "WHISPER", receiver)
+		for index = 1, #chunks do
+			queueMessage(table.concat({
+				"C",
+				batchSession,
+				tostring(index),
+				tostring(#chunks),
+				chunks[index],
+			}, "|"), "WHISPER", receiver)
+		end
 	end
-	chat("syncing " .. tostring(stats.exported) .. " evidence kill(s) to " .. tostring(receiver) .. " in " .. tostring(#chunks) .. " chunk(s)")
-	if stats.truncated then
-		chat("sync export was capped to the newest " .. tostring(stats.exported) .. " kill(s)")
+	local batchText = ""
+	if #payloads > 1 then
+		batchText = " across " .. tostring(#payloads) .. " batch(es)"
 	end
+	chat("syncing " .. tostring(stats.exported) .. " evidence kill(s) to " .. tostring(receiver) .. " in " .. tostring(totalChunks) .. " chunk(s)" .. batchText)
 	session.sentTo = session.sentTo or {}
 	session.sentTo[normalizedName(receiver)] = true
 	return true
@@ -564,6 +771,7 @@ function EvidenceSync.acceptRequest(sender, session)
 		target = request.sender,
 		reciprocal = true,
 	}
+	outboundSessions[request.session].peerVersion = request.version
 	startTransfer(request.session, request.sender)
 	chat("accepted BossTracker evidence sync from " .. tostring(request.sender))
 	return true
@@ -581,10 +789,11 @@ function EvidenceSync.declineRequest(sender, session)
 	return true
 end
 
-local function receiveAccept(sender, sessionId)
+local function receiveAccept(sender, sessionId, version)
 	if not outboundSessions[sessionId] then
 		return
 	end
+	outboundSessions[sessionId].peerVersion = version
 	authorizeInboundTransfer(sender, sessionId, "requested_sync")
 	startTransfer(sessionId, sender)
 end
@@ -595,44 +804,143 @@ local function receiveHeader(sender, parts)
 	local payloadHash = parts[4]
 	local chunkCount = tonumber(parts[5])
 	local killCount = tonumber(parts[6]) or 0
+	local batchIndex = tonumber(parts[8])
+	local batchCount = tonumber(parts[9])
+	local totalKills = tonumber(parts[10]) or killCount
+	local baseSession, batchFromSession = splitBatchSession(sessionId)
+	batchIndex = batchIndex or batchFromSession or 1
+	batchCount = batchCount or 1
 	if not sessionId or not length or not chunkCount or chunkCount <= 0
 		or chunkCount > C.MAX_SYNC_CHUNKS
-		or length > C.MAX_SYNC_PAYLOAD_BYTES then
+		or length > C.MAX_SYNC_PAYLOAD_BYTES
+		or batchIndex < 1
+		or batchCount < 1
+		or batchIndex > batchCount then
 		logWarn("Rejected invalid sync header", {
 			sender = sender,
 			session = sessionId,
 			length = length,
 			chunkCount = chunkCount,
+			batchIndex = batchIndex,
+			batchCount = batchCount,
 		})
 		return
 	end
-	if not inboundTransferAuthorized(sender, sessionId) then
+	local authorized, authorizationKey, derivedAuthorization = inboundTransferAuthorized(sender, sessionId)
+	if not authorized then
 		logWarn("Rejected unauthorized sync header", {
 			sender = sender,
 			session = sessionId,
 			killCount = killCount,
+			batchIndex = batchIndex,
+			batchCount = batchCount,
 		})
 		return
 	end
 	inboundTransfers[requestKey(sender, sessionId)] = {
 		sender = sender,
 		session = sessionId,
+		baseSession = baseSession,
 		length = length,
 		hash = payloadHash,
 		chunkCount = chunkCount,
 		killCount = killCount,
+		totalKills = totalKills,
+		batchIndex = batchIndex,
+		batchCount = batchCount,
+		authorizationKey = authorizationKey,
+		derivedAuthorization = derivedAuthorization == true,
 		chunks = {},
 		received = 0,
 		startedAt = now(),
 		updatedAt = now(),
 	}
-	chat("receiving " .. tostring(killCount) .. " BossTracker evidence kill(s) from " .. tostring(sender) .. " in " .. tostring(chunkCount) .. " chunk(s)")
+	if batchCount > 1 then
+		chat("receiving BossTracker evidence batch " .. tostring(batchIndex) .. "/" .. tostring(batchCount) .. " from " .. tostring(sender) .. " (" .. tostring(killCount) .. " of " .. tostring(totalKills) .. " kill(s))")
+	else
+		chat("receiving " .. tostring(killCount) .. " BossTracker evidence kill(s) from " .. tostring(sender) .. " in " .. tostring(chunkCount) .. " chunk(s)")
+	end
+end
+
+local function aggregateBatchImport(transfer, stats)
+	local sessionKey = requestKey(transfer.sender, transfer.baseSession or transfer.session)
+	local sessionStats = inboundImportSessions[sessionKey]
+	if not sessionStats then
+		sessionStats = {
+			sender = transfer.sender,
+			session = transfer.baseSession or transfer.session,
+			batchCount = transfer.batchCount or 1,
+			totalKills = transfer.totalKills or transfer.killCount or 0,
+			imported = 0,
+			duplicates = 0,
+			rejected = 0,
+			valid = 0,
+			completed = 0,
+			batches = {},
+			startedAt = now(),
+			updatedAt = now(),
+		}
+		inboundImportSessions[sessionKey] = sessionStats
+	end
+	if not sessionStats.batches[transfer.batchIndex] then
+		sessionStats.batches[transfer.batchIndex] = true
+		sessionStats.completed = sessionStats.completed + 1
+		sessionStats.imported = sessionStats.imported + (tonumber(stats.imported) or 0)
+		sessionStats.duplicates = sessionStats.duplicates + (tonumber(stats.duplicates) or 0)
+		sessionStats.rejected = sessionStats.rejected + (tonumber(stats.rejected) or 0)
+		sessionStats.valid = sessionStats.valid + (tonumber(stats.valid) or 0)
+		sessionStats.updatedAt = now()
+	end
+	if sessionStats.completed >= sessionStats.batchCount then
+		inboundImportSessions[sessionKey] = nil
+		return sessionStats, true
+	end
+	return sessionStats, false
+end
+
+local function finishBatchImportSession(transfer, sessionStats)
+	local promoted = 0
+	local rebuildError
+	if (tonumber(sessionStats.valid) or 0) > 0 then
+		if addon.Core.EvidenceStore and addon.Core.EvidenceStore.bound then
+			addon.Core.EvidenceStore.bound(addon.db and addon.db.evidence)
+		end
+		local rebuilt, errorMessage, handledRefresh = rebuildAfterSyncImport("evidence_sync_import")
+		if rebuilt == nil then
+			rebuildError = errorMessage or "learned rebuild failed"
+		else
+			promoted = rebuilt
+		end
+		if not handledRefresh then
+			refreshAfterImport(rebuildError ~= nil)
+		end
+	end
+	if rebuildError then
+		chat("sync imported " .. tostring(sessionStats.imported) .. " kill(s), ignored " .. tostring(sessionStats.duplicates) .. " duplicate(s)" .. rejectedSummary(sessionStats.rejected) .. ", but learned rebuild failed: " .. tostring(rebuildError))
+		logWarn("Batched sync rebuild failed", {
+			sender = transfer.sender,
+			session = transfer.baseSession or transfer.session,
+			imported = sessionStats.imported,
+			duplicates = sessionStats.duplicates,
+			rejected = sessionStats.rejected,
+			error = rebuildError,
+		})
+	elseif (tonumber(sessionStats.imported) or 0) > 0 then
+		chat("sync imported " .. tostring(sessionStats.imported) .. " kill(s), ignored " .. tostring(sessionStats.duplicates) .. " duplicate(s)" .. rejectedSummary(sessionStats.rejected) .. ", rebuilt " .. tostring(promoted) .. " model component(s)")
+	elseif (tonumber(sessionStats.valid) or 0) > 0 then
+		chat("sync complete: no new evidence kills imported" .. rejectedSummary(sessionStats.rejected) .. "; rebuilt local models from existing evidence")
+	else
+		chat("sync complete: no new evidence kills imported" .. rejectedSummary(sessionStats.rejected))
+	end
+	authorizedInboundSessions[requestKey(transfer.sender, transfer.baseSession or transfer.session)] = nil
 end
 
 local function completeTransfer(transferKey, transfer)
 	local payload = table.concat(transfer.chunks)
 	inboundTransfers[transferKey] = nil
-	authorizedInboundSessions[transferKey] = nil
+	if not transfer.derivedAuthorization and transfer.authorizationKey then
+		authorizedInboundSessions[transfer.authorizationKey] = nil
+	end
 	if #payload ~= transfer.length or hashString(payload) ~= transfer.hash then
 		chat("sync from " .. tostring(transfer.sender) .. " failed integrity check")
 		logWarn("Sync payload integrity check failed", {
@@ -645,7 +953,10 @@ local function completeTransfer(transferKey, transfer)
 		})
 		return
 	end
-	local stats, importError = EvidenceSync.importPayload(payload, transfer.sender)
+	local batched = (tonumber(transfer.batchCount) or 1) > 1
+	local stats, importError = EvidenceSync.importPayload(payload, transfer.sender, {
+		deferRebuild = batched,
+	})
 	if not stats then
 		chat("sync from " .. tostring(transfer.sender) .. " failed: " .. tostring(importError))
 		logWarn("Sync payload import failed", {
@@ -655,10 +966,23 @@ local function completeTransfer(transferKey, transfer)
 		})
 		return
 	end
+	if batched then
+		local sessionStats, complete = aggregateBatchImport(transfer, stats)
+		if complete then
+			finishBatchImportSession(transfer, sessionStats)
+		end
+		return
+	end
+	if stats.rebuildError then
+		chat("sync imported " .. tostring(stats.imported) .. " kill(s), ignored " .. tostring(stats.duplicates) .. " duplicate(s)" .. rejectedSummary(stats.rejected) .. ", but learned rebuild failed: " .. tostring(stats.rebuildError))
+		return
+	end
 	if stats.imported > 0 then
-		chat("sync imported " .. tostring(stats.imported) .. " kill(s), ignored " .. tostring(stats.duplicates) .. " duplicate(s), rebuilt " .. tostring(stats.promoted) .. " model component(s)")
+		chat("sync imported " .. tostring(stats.imported) .. " kill(s), ignored " .. tostring(stats.duplicates) .. " duplicate(s)" .. rejectedSummary(stats.rejected) .. ", rebuilt " .. tostring(stats.promoted) .. " model component(s)")
+	elseif stats.valid and stats.valid > 0 then
+		chat("sync complete: no new evidence kills imported" .. rejectedSummary(stats.rejected) .. "; rebuilt local models from existing evidence")
 	else
-		chat("sync complete: no new evidence kills imported")
+		chat("sync complete: no new evidence kills imported" .. rejectedSummary(stats.rejected))
 	end
 end
 
@@ -696,14 +1020,14 @@ local function handleAddonMessage(_, prefix, message, distribution, sender)
 		receiveRequest(sender, parts[2], parts[3], parts[4], parts[5])
 	elseif messageType == "A" then
 		local parts = splitN(message, "|", 3)
-		receiveAccept(sender, parts[2])
+		receiveAccept(sender, parts[2], parts[3])
 	elseif messageType == "D" then
 		local parts = splitN(message, "|", 3)
 		if outboundSessions[parts[2]] then
 			chat(tostring(sender) .. " declined BossTracker evidence sync")
 		end
 	elseif messageType == "H" then
-		receiveHeader(sender, splitN(message, "|", 7))
+		receiveHeader(sender, splitN(message, "|", 10))
 	elseif messageType == "C" then
 		receiveChunk(sender, message)
 	elseif messageType == "N" then
@@ -832,6 +1156,7 @@ function EvidenceSync.start()
 	inboundTransfers = {}
 	outboundSessions = {}
 	authorizedInboundSessions = {}
+	inboundImportSessions = {}
 	sendQueue = {}
 	sendElapsed = 0
 	ensureSendFrame()
