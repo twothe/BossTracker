@@ -5,7 +5,7 @@ local addon = _G.BossTracker
 local C = {}
 addon.Core.Constants = C
 
-C.VERSION = "1.9.16"
+C.VERSION = "1.10.0"
 C.SCHEMA_VERSION = 7
 C.INTERPRETATION_ENGINE_VERSION = 12
 C.LEARNED_BACKUP_SCHEMA_VERSION = 2
@@ -38,8 +38,8 @@ C.DEFAULT_CHAR_CONFIG = {
 		relativePoint = "CENTER",
 		x = 0,
 		y = 180,
-		width = 300,
-		height = 194,
+		width = 340,
+		height = 248,
 		scale = 1.0,
 	},
 	minimap = {

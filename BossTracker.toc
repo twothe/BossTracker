@@ -1,7 +1,7 @@
 ## Interface: 30300
 ## Title: |cff4ec3ffBoss|r |cffe8e8e8Tracker|r
 ## Notes: Learns Ascension Bronzebeard boss ability timings and shows compact encounter timers.
-## Version: 1.9.16
+## Version: 1.10.0
 ## SavedVariables: BossTrackerDB
 ## SavedVariablesPerCharacter: BossTrackerCharDB
 ## DefaultState: Enabled

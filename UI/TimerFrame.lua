@@ -12,21 +12,48 @@ addon.UI.TimerFrame = TimerFrame
 local frame
 local tickerFrame
 local rows = {}
-local elapsedSinceUpdate = 0
 local updateRows
 local lastDisplaySignature = nil
 
-local BAR_HEIGHT = 18
-local BAR_GAP = 3
-local HEADER_HEIGHT = 18
-local PADDING = 8
-local MIN_FRAME_WIDTH = 220
-local MAX_FRAME_WIDTH = 560
+local TIMER_STYLE_VERSION = 3
+local OLD_STYLE_DEFAULT_WIDTH = 360
+local OLD_STYLE_DEFAULT_HEIGHT_LIMIT = 340
+local DEFAULT_FRAME_WIDTH = 340
+local ROW_HEIGHT = 28
+local ROW_GAP = 2
+local PADDING = 5
+local MIN_FRAME_WIDTH = 160
+local MAX_FRAME_WIDTH = 640
 local GRIP_SIZE = 16
 local MIN_SCALE = 0.70
 local MAX_SCALE = 1.60
 local SCALE_STEP = 0.05
 local QUESTION_ICON = "Interface\\Icons\\INV_Misc_QuestionMark"
+local FLAT_TEXTURE = "Interface\\Buttons\\WHITE8X8"
+
+-- Timer row visual tuning lives here so live client iteration only needs
+-- small constant changes followed by /reload.
+local ICON_SIZE = 26
+local ICON_INSET = 1
+local ICON_GAP = 4
+local TIMER_TRACK_HEIGHT = 26
+local TIMER_TEXT_LEFT_PADDING = 8
+local TIMER_TEXT_RIGHT_PADDING = 7
+local TIMER_TEXT_WARNING_GAP = 4
+local TIMER_TIME_WIDTH = 58
+local WARNING_SLOT_WIDTH = 18
+local WARNING_FONT_SIZE = 18
+local TIMER_NAME_FONT_SIZE = 13
+local TIMER_TIME_FONT_SIZE = 13
+local FILL_ALPHA = 0.50
+local FILL_SOON_ALPHA = 0.50
+local FILL_URGENT_ALPHA = 0.50
+local TRACK_BG_ALPHA = 0.92
+local ROW_BG_ALPHA = 0.96
+local ROW_ALERT_ALPHA = 0.10
+local TEXT_SHADE_ALPHA = 0.34
+local SOON_SECONDS = 10
+local URGENT_SECONDS = 5
 
 local minFrameHeight
 local maxFrameHeight
@@ -34,7 +61,8 @@ local canEditFrame
 local visibleRowCapacity
 
 local function defaultFrameHeight()
-	return HEADER_HEIGHT + PADDING * 2 + (C.DEFAULT_CONFIG.maxBars * (BAR_HEIGHT + BAR_GAP))
+	local rowCount = C.DEFAULT_CONFIG.maxBars or 8
+	return PADDING * 2 + (rowCount * ROW_HEIGHT) + ((rowCount - 1) * ROW_GAP)
 end
 
 local function clamp(value, minimum, maximum)
@@ -48,40 +76,82 @@ local function clamp(value, minimum, maximum)
 	return value
 end
 
-local function previewTimerRemaining(period, offset)
-	local now = Util.now() + (offset or 0)
-	local elapsed = now - (math.floor(now / period) * period)
-	return period - elapsed
+local function previewLoopRemaining(now, period, initialRemaining)
+	period = clamp(period, 1, 3600)
+	initialRemaining = clamp(initialRemaining, 0, period)
+	local elapsedOffset = period - initialRemaining
+	local elapsed = (now + elapsedOffset) - (math.floor((now + elapsedOffset) / period) * period)
+	local remaining = period - elapsed
+	if remaining <= 0 then
+		return period
+	end
+	return remaining
 end
 
 local function buildPreviewTimers()
+	local now = Util.now()
 	return {
 		{
-			key = "preview:1",
+			key = "preview:shadow-nova",
 			spellName = "Shadow Crash",
 			confidence = 0.92,
 			mode = "time",
-			remaining = previewTimerRemaining(24, 6),
-			duration = 24,
+			duration = 28,
+			remaining = previewLoopRemaining(now, 28, 3.2),
 			bossName = "Preview Boss",
+			warningMode = "raid",
+			iconTexture = "Interface\\Icons\\Spell_Shadow_Shadowfury",
 		},
 		{
-			key = "preview:2",
+			key = "preview:searing-slam",
 			spellName = "Burning Nova",
 			confidence = 0.68,
 			mode = "time",
-			remaining = previewTimerRemaining(45, 11),
-			duration = 45,
+			duration = 32,
+			remaining = previewLoopRemaining(now, 32, 8.4),
 			bossName = "Preview Boss",
+			warningMode = "personal",
+			iconTexture = "Interface\\Icons\\Spell_Fire_SelfDestruct",
 		},
 		{
-			key = "preview:3",
-			spellName = "Frenzy",
-			confidence = 0.74,
+			key = "preview:adds-spawn",
+			spellName = "Adds Spawn",
+			confidence = 0.82,
+			mode = "time",
+			duration = 42,
+			remaining = previewLoopRemaining(now, 42, 12.1),
+			bossName = "Preview Boss",
+			iconTexture = "Interface\\Icons\\Ability_Warlock_DemonicEmpowerment",
+		},
+		{
+			key = "preview:phase-shift",
+			spellName = "Phase Shift",
+			confidence = 0.76,
 			mode = "hp",
-			hpPct = 30,
+			hpPct = 50,
 			duration = 1,
 			bossName = "Preview Boss",
+			iconTexture = "Interface\\Icons\\Spell_Arcane_PortalDalaran",
+		},
+		{
+			key = "preview:infernal-orbs",
+			spellName = "Infernal Orbs",
+			confidence = 0.74,
+			mode = "time",
+			duration = 48,
+			remaining = previewLoopRemaining(now, 48, 25.6),
+			bossName = "Preview Boss",
+			iconTexture = "Interface\\Icons\\Spell_Shadow_MindBomb",
+		},
+		{
+			key = "preview:meteor-strike",
+			spellName = "Meteor Strike",
+			confidence = 0.88,
+			mode = "time",
+			duration = 55,
+			remaining = previewLoopRemaining(now, 55, 32.7),
+			bossName = "Preview Boss",
+			iconTexture = "Interface\\Icons\\Spell_Fire_FlameBolt",
 		},
 	}
 end
@@ -137,7 +207,14 @@ local function logDisplayState(timers, previewActive)
 	})
 end
 
-local function formatRemaining(timer)
+local function displayRemaining(timer, now)
+	if timer and timer.mode == "time" and timer.nextAt then
+		return timer.nextAt - now
+	end
+	return timer and timer.remaining or nil
+end
+
+local function formatDisplayRemaining(timer, remaining)
 	if timer.mode == "hp" then
 		if timer.hpPct then
 			return string.format("%.0f%%", timer.hpPct)
@@ -147,16 +224,16 @@ local function formatRemaining(timer)
 	if timer.status == "delayed" then
 		return "Overdue"
 	end
-	if not timer.remaining then
+	if not remaining then
 		return ""
 	end
-	if timer.remaining <= 0 then
+	if remaining <= 0 then
 		return "now"
 	end
-	if timer.remaining < 10 then
-		return string.format("%.1f", timer.remaining)
+	if remaining < 100 then
+		return string.format("%.1fs", remaining)
 	end
-	return tostring(math.floor(timer.remaining + 0.5))
+	return tostring(math.floor(remaining + 0.5)) .. "s"
 end
 
 local function shortName(name)
@@ -178,60 +255,246 @@ local function timerDisplayName(timer)
 	return timer and timer.spellName or "Unknown Ability"
 end
 
-local function rowColor(timer)
+local function rowColor(timer, remaining)
 	if timer.status == "delayed" then
-		return 0.86, 0.48, 0.22
+		return 0.94, 0.42, 0.25
+	end
+	if timer.mode == "time" and remaining and remaining <= URGENT_SECONDS then
+		return 0.90, 0.18, 0.18
+	end
+	if timer.mode == "time" and remaining and remaining <= SOON_SECONDS then
+		return 0.92, 0.56, 0.20
 	end
 	if timer.mode == "hp" then
-		return 0.52, 0.74, 0.56
+		return 0.40, 0.78, 0.42
 	end
 	if timer.confidence >= 0.75 then
-		return 0.32, 0.65, 0.95
+		return 0.28, 0.56, 0.92
 	end
 	if timer.confidence >= 0.45 then
-		return 0.83, 0.68, 0.35
+		return 0.78, 0.58, 0.30
 	end
-	return 0.58, 0.58, 0.62
+	return 0.46, 0.48, 0.54
+end
+
+local function fillAlpha(timer, remaining)
+	if timer.status == "delayed" then
+		return FILL_URGENT_ALPHA
+	end
+	if timer.mode == "time" and remaining and remaining <= URGENT_SECONDS then
+		return FILL_URGENT_ALPHA
+	end
+	if timer.mode == "time" and remaining and remaining <= SOON_SECONDS then
+		return FILL_SOON_ALPHA
+	end
+	return FILL_ALPHA
+end
+
+local function timerWarningMode(timer)
+	if timer and (timer.warningMode == "personal" or timer.warningMode == "raid") then
+		return timer.warningMode
+	end
+	if not timer or not timer.zoneKey or not timer.encounterKey or not timer.abilityKey then
+		return "off"
+	end
+	local config = addon.Core and addon.Core.Config
+	if not config or not config.getAbilityWarningMode then
+		return "off"
+	end
+	return config.getAbilityWarningMode(timer.zoneKey, timer.encounterKey, timer.abilityKey)
+end
+
+local function rowBorderColor(timer, warningMode, remaining)
+	if timer.status == "delayed" then
+		return 0.95, 0.45, 0.25, 0.95
+	end
+	if timer.mode == "time" and remaining and remaining <= URGENT_SECONDS then
+		return 1.00, 0.24, 0.20, 0.96
+	end
+	if warningMode == "raid" then
+		return 0.95, 0.20, 0.18, 0.88
+	end
+	if warningMode == "personal" then
+		return 0.98, 0.74, 0.26, 0.86
+	end
+	if timer.mode == "time" and remaining and remaining <= SOON_SECONDS then
+		return 0.92, 0.55, 0.22, 0.78
+	end
+	if timer.mode == "hp" then
+		return 0.34, 0.66, 0.38, 0.74
+	end
+	return 0.20, 0.24, 0.30, 0.82
+end
+
+local function alertOverlayColor(timer, warningMode, remaining)
+	if timer.status == "delayed" or (timer.mode == "time" and remaining and remaining <= URGENT_SECONDS) then
+		return 0.95, 0.20, 0.16, ROW_ALERT_ALPHA
+	end
+	if warningMode == "raid" then
+		return 0.90, 0.15, 0.15, 0.10
+	end
+	if warningMode == "personal" or (timer.mode == "time" and remaining and remaining <= SOON_SECONDS) then
+		return 0.90, 0.58, 0.16, 0.08
+	end
+	return 0, 0, 0, 0
+end
+
+local function timeTextColor(timer, remaining)
+	if timer.status == "delayed" then
+		return 1.00, 0.58, 0.32
+	end
+	if timer.mode == "time" and remaining and remaining <= URGENT_SECONDS then
+		return 1.00, 0.42, 0.36
+	end
+	if timer.mode == "time" and remaining and remaining <= SOON_SECONDS then
+		return 1.00, 0.78, 0.42
+	end
+	if timer.mode == "hp" then
+		return 0.70, 1.00, 0.72
+	end
+	return 0.86, 0.91, 0.98
+end
+
+local function warningTextColor(warningMode)
+	if warningMode == "raid" then
+		return 1.00, 0.22, 0.18
+	end
+	if warningMode == "personal" then
+		return 1.00, 0.82, 0.26
+	end
+	return 0.78, 0.78, 0.78
+end
+
+local function applyFont(fontString, size)
+	if fontString.SetFont and STANDARD_TEXT_FONT then
+		fontString:SetFont(STANDARD_TEXT_FONT, size, "OUTLINE")
+	end
+	if fontString.SetShadowColor then
+		fontString:SetShadowColor(0, 0, 0, 0.92)
+	end
+	if fontString.SetShadowOffset then
+		fontString:SetShadowOffset(1, -1)
+	end
 end
 
 local function createRow(parent, index)
 	local row = CreateFrame("Frame", nil, parent)
-	row:SetHeight(BAR_HEIGHT)
-	row:SetPoint("TOPLEFT", parent, "TOPLEFT", PADDING, -HEADER_HEIGHT - PADDING - ((index - 1) * (BAR_HEIGHT + BAR_GAP)))
+	row:SetHeight(ROW_HEIGHT)
+	row:SetPoint("TOPLEFT", parent, "TOPLEFT", PADDING, -PADDING - ((index - 1) * (ROW_HEIGHT + ROW_GAP)))
 	row:SetPoint("RIGHT", parent, "RIGHT", -PADDING, 0)
+	row:SetBackdrop({
+		bgFile = FLAT_TEXTURE,
+		edgeFile = FLAT_TEXTURE,
+		tile = false,
+		edgeSize = 1,
+		insets = { left = 1, right = 1, top = 1, bottom = 1 },
+	})
+	row:SetBackdropColor(0.025, 0.030, 0.040, ROW_BG_ALPHA)
+	row:SetBackdropBorderColor(0.20, 0.24, 0.30, 0.82)
 
-	row.icon = row:CreateTexture(nil, "ARTWORK")
-	row.icon:SetWidth(16)
-	row.icon:SetHeight(16)
-	row.icon:SetPoint("LEFT", row, "LEFT", 0, 0)
+	row.alert = row:CreateTexture(nil, "BACKGROUND")
+	row.alert:SetPoint("TOPLEFT", row, "TOPLEFT", 2, -2)
+	row.alert:SetPoint("BOTTOMRIGHT", row, "BOTTOMRIGHT", -2, 2)
+	row.alert:SetTexture(FLAT_TEXTURE)
+	row.alert:SetVertexColor(0, 0, 0, 0)
+
+	row.iconFrame = CreateFrame("Frame", nil, row)
+	row.iconFrame:SetWidth(ICON_SIZE)
+	row.iconFrame:SetHeight(ICON_SIZE)
+	row.iconFrame:SetPoint("LEFT", row, "LEFT", 2, 0)
+	row.iconFrame:SetBackdrop({
+		bgFile = FLAT_TEXTURE,
+		edgeFile = FLAT_TEXTURE,
+		tile = false,
+		edgeSize = 1,
+		insets = { left = 1, right = 1, top = 1, bottom = 1 },
+	})
+	row.iconFrame:SetBackdropColor(0.02, 0.02, 0.025, 0.95)
+	row.iconFrame:SetBackdropBorderColor(0.38, 0.42, 0.48, 0.90)
+
+	row.icon = row.iconFrame:CreateTexture(nil, "ARTWORK")
+	row.icon:SetPoint("TOPLEFT", row.iconFrame, "TOPLEFT", ICON_INSET, -ICON_INSET)
+	row.icon:SetPoint("BOTTOMRIGHT", row.iconFrame, "BOTTOMRIGHT", -ICON_INSET, ICON_INSET)
 	row.icon:SetTexture(QUESTION_ICON)
+	if row.icon.SetTexCoord then
+		row.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+	end
 
 	row.bar = CreateFrame("StatusBar", nil, row)
-	row.bar:SetPoint("LEFT", row.icon, "RIGHT", 5, 0)
+	row.bar:SetPoint("LEFT", row.iconFrame, "RIGHT", ICON_GAP, 0)
 	row.bar:SetPoint("RIGHT", row, "RIGHT", 0, 0)
-	row.bar:SetHeight(BAR_HEIGHT)
+	row.bar:SetHeight(TIMER_TRACK_HEIGHT)
 	row.bar:SetMinMaxValues(0, 1)
 	row.bar:SetValue(1)
-	row.bar:SetStatusBarTexture("Interface\\TargetingFrame\\UI-StatusBar")
+	row.bar:SetStatusBarTexture(FLAT_TEXTURE)
 
 	row.bg = row.bar:CreateTexture(nil, "BACKGROUND")
 	row.bg:SetAllPoints(row.bar)
-	row.bg:SetTexture("Interface\\TargetingFrame\\UI-StatusBar")
-	row.bg:SetVertexColor(0.08, 0.08, 0.09, 0.72)
+	row.bg:SetTexture(FLAT_TEXTURE)
+	row.bg:SetVertexColor(0.035, 0.040, 0.052, TRACK_BG_ALPHA)
 
-	row.name = row.bar:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-	row.name:SetPoint("LEFT", row.bar, "LEFT", 5, 0)
-	row.name:SetPoint("RIGHT", row.bar, "RIGHT", -52, 0)
-	row.name:SetJustifyH("LEFT")
-	row.name:SetTextColor(0.93, 0.93, 0.90)
+	row.textLayer = CreateFrame("Frame", nil, row)
+	row.textLayer:SetAllPoints(row)
+	if row.textLayer.SetFrameLevel and row.bar.GetFrameLevel then
+		row.textLayer:SetFrameLevel(row.bar:GetFrameLevel() + 2)
+	end
 
-	row.time = row.bar:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-	row.time:SetPoint("RIGHT", row.bar, "RIGHT", -5, 0)
-	row.time:SetWidth(48)
+	row.textShade = row.textLayer:CreateTexture(nil, "BACKGROUND")
+	row.textShade:SetPoint("LEFT", row.bar, "LEFT", 1, 0)
+	row.textShade:SetPoint("RIGHT", row, "RIGHT", -1, 0)
+	row.textShade:SetHeight(21)
+	row.textShade:SetTexture(FLAT_TEXTURE)
+	row.textShade:SetVertexColor(0, 0, 0, TEXT_SHADE_ALPHA)
+
+	row.time = row.textLayer:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+	row.time:SetPoint("RIGHT", row, "RIGHT", -TIMER_TEXT_RIGHT_PADDING, 0)
+	row.time:SetWidth(TIMER_TIME_WIDTH)
 	row.time:SetJustifyH("RIGHT")
-	row.time:SetTextColor(1, 1, 1)
+	row.time:SetTextColor(1, 1, 1, 1)
+	applyFont(row.time, TIMER_TIME_FONT_SIZE)
+
+	row.warning = row.textLayer:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+	row.warning:SetPoint("RIGHT", row.time, "LEFT", -TIMER_TEXT_WARNING_GAP, 0)
+	row.warning:SetWidth(WARNING_SLOT_WIDTH)
+	row.warning:SetJustifyH("CENTER")
+	row.warning:SetText("!")
+	applyFont(row.warning, WARNING_FONT_SIZE)
+
+	row.name = row.textLayer:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+	row.name:SetPoint("LEFT", row.bar, "LEFT", TIMER_TEXT_LEFT_PADDING, 0)
+	row.name:SetPoint("RIGHT", row.warning, "LEFT", -TIMER_TEXT_WARNING_GAP, 0)
+	row.name:SetJustifyH("LEFT")
+	row.name:SetTextColor(1.00, 1.00, 0.96, 1)
+	applyFont(row.name, TIMER_NAME_FONT_SIZE)
 
 	return row
+end
+
+local function layoutRows()
+	if not frame then
+		return
+	end
+	for index = 1, #rows do
+		local row = rows[index]
+		row:ClearAllPoints()
+		row:SetHeight(ROW_HEIGHT)
+		row:SetPoint("TOPLEFT", frame, "TOPLEFT", PADDING, -PADDING - ((index - 1) * (ROW_HEIGHT + ROW_GAP)))
+		row:SetPoint("RIGHT", frame, "RIGHT", -PADDING, 0)
+	end
+end
+
+local function migrateDefaultStyleSize(ui)
+	if type(ui) ~= "table" or ui.timerStyleVersion == TIMER_STYLE_VERSION then
+		return
+	end
+
+	if not ui.width or ui.width <= OLD_STYLE_DEFAULT_WIDTH + 8 then
+		ui.width = DEFAULT_FRAME_WIDTH
+	end
+	if not ui.height or ui.height <= OLD_STYLE_DEFAULT_HEIGHT_LIMIT then
+		ui.height = defaultFrameHeight()
+	end
+	ui.timerStyleVersion = TIMER_STYLE_VERSION
 end
 
 local function savePosition()
@@ -240,6 +503,7 @@ local function savePosition()
 	end
 	local point, _, relativePoint, x, y = frame:GetPoint(1)
 	local ui = addon.charDB.config.ui
+	ui.timerStyleVersion = TIMER_STYLE_VERSION
 	ui.point = point or ui.point
 	ui.relativePoint = relativePoint or ui.relativePoint
 	ui.x = x or ui.x
@@ -253,9 +517,10 @@ end
 
 local function applyPosition()
 	local ui = addon.charDB.config.ui
+	migrateDefaultStyleSize(ui)
 	frame:ClearAllPoints()
 	frame:SetPoint(ui.point or "CENTER", UIParent, ui.relativePoint or "CENTER", ui.x or 0, ui.y or 180)
-	frame:SetWidth(clamp(ui.width or 300, MIN_FRAME_WIDTH, MAX_FRAME_WIDTH))
+	frame:SetWidth(clamp(ui.width or DEFAULT_FRAME_WIDTH, MIN_FRAME_WIDTH, MAX_FRAME_WIDTH))
 	frame:SetHeight(clamp(ui.height or defaultFrameHeight(), minFrameHeight(), maxFrameHeight()))
 	frame:SetScale(clamp(ui.scale or 1, MIN_SCALE, MAX_SCALE))
 end
@@ -265,8 +530,30 @@ local function currentScaleText()
 	return string.format("%.2fx", clamp(scale, MIN_SCALE, MAX_SCALE))
 end
 
+local function setHeaderVisible(visible, statusText)
+	if not frame then
+		return
+	end
+	if visible then
+		frame.title:Show()
+		frame.status:Show()
+		frame.status:SetText(statusText or currentScaleText())
+	else
+		frame.title:Hide()
+		frame.status:Hide()
+		frame.status:SetText(statusText or "")
+	end
+	if frame.resizeGrip then
+		if canEditFrame() then
+			frame.resizeGrip:Show()
+		else
+			frame.resizeGrip:Hide()
+		end
+	end
+end
+
 function minFrameHeight()
-	return HEADER_HEIGHT + PADDING * 2 + BAR_HEIGHT
+	return PADDING * 2 + ROW_HEIGHT
 end
 
 function maxFrameHeight()
@@ -285,8 +572,8 @@ function visibleRowCapacity()
 		return C.DEFAULT_CONFIG.maxBars
 	end
 
-	local availableHeight = (frame:GetHeight() or defaultFrameHeight()) - HEADER_HEIGHT - PADDING * 2
-	local rowsByHeight = math.floor((availableHeight + BAR_GAP) / (BAR_HEIGHT + BAR_GAP))
+	local availableHeight = (frame:GetHeight() or defaultFrameHeight()) - PADDING * 2
+	local rowsByHeight = math.floor((availableHeight + ROW_GAP) / (ROW_HEIGHT + ROW_GAP))
 	if rowsByHeight < 1 then
 		return 1
 	end
@@ -317,7 +604,7 @@ local function ensureFrame()
 
 	frame = CreateFrame("Frame", "BossTrackerTimerFrame", UIParent)
 	frame:SetHeight(defaultFrameHeight())
-	frame:SetWidth(300)
+	frame:SetWidth(DEFAULT_FRAME_WIDTH)
 	frame:SetMovable(true)
 	if frame.SetResizable then
 		frame:SetResizable(true)
@@ -335,15 +622,14 @@ local function ensureFrame()
 	frame:RegisterForDrag("LeftButton")
 	frame:SetClampedToScreen(true)
 	frame:SetBackdrop({
-		bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
-		edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-		tile = true,
-		tileSize = 16,
-		edgeSize = 12,
-		insets = { left = 3, right = 3, top = 3, bottom = 3 },
+		bgFile = FLAT_TEXTURE,
+		edgeFile = FLAT_TEXTURE,
+		tile = false,
+		edgeSize = 1,
+		insets = { left = 1, right = 1, top = 1, bottom = 1 },
 	})
-	frame:SetBackdropColor(0.04, 0.05, 0.06, 0.78)
-	frame:SetBackdropBorderColor(0.32, 0.36, 0.40, 0.95)
+	frame:SetBackdropColor(0.015, 0.018, 0.024, 0.88)
+	frame:SetBackdropBorderColor(0.30, 0.34, 0.38, 0.95)
 
 	frame.title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
 	frame.title:SetPoint("TOPLEFT", frame, "TOPLEFT", PADDING, -5)
@@ -369,6 +655,7 @@ local function ensureFrame()
 		rows[index] = createRow(frame, index)
 		rows[index]:Hide()
 	end
+	layoutRows()
 
 	frame:SetScript("OnDragStart", function(self)
 		if canEditFrame() then
@@ -420,7 +707,7 @@ function updateRows()
 	if not timers or #timers == 0 then
 		if addon.db and addon.db.config and not addon.db.config.uiLocked then
 			frame:Show()
-			frame.status:SetText(currentScaleText())
+			setHeaderVisible(true, currentScaleText())
 			for index = 1, #rows do
 				rows[index]:Hide()
 			end
@@ -432,25 +719,31 @@ function updateRows()
 	end
 
 	frame:Show()
-	if previewActive and not addon.Capture.EncounterState.isActive() then
-		frame.status:SetText("preview " .. currentScaleText())
-	else
-		frame.status:SetText(currentScaleText())
-	end
+	setHeaderVisible(false)
+	layoutRows()
 	logDisplayState(timers, previewActive)
 
 	local rowCapacity = visibleRowCapacity()
+	local now = Util.now()
 	for index = 1, #rows do
 		local row = rows[index]
 		local timer = timers[index]
 		if timer and index <= rowCapacity then
-			local r, g, b = rowColor(timer)
-			row.bar:SetStatusBarColor(r, g, b, 0.88)
+			local remaining = displayRemaining(timer, now)
+			local r, g, b = rowColor(timer, remaining)
+			local warningMode = timerWarningMode(timer)
+			local borderR, borderG, borderB, borderA = rowBorderColor(timer, warningMode, remaining)
+			local alertR, alertG, alertB, alertA = alertOverlayColor(timer, warningMode, remaining)
+			local timeR, timeG, timeB = timeTextColor(timer, remaining)
+			row:SetBackdropColor(0.025, 0.030, 0.040, ROW_BG_ALPHA)
+			row:SetBackdropBorderColor(borderR, borderG, borderB, borderA)
+			row.iconFrame:SetBackdropBorderColor(borderR, borderG, borderB, math.min(1, borderA + 0.08))
+			row.alert:SetVertexColor(alertR, alertG, alertB, alertA)
+			row.bar:SetStatusBarColor(r, g, b, fillAlpha(timer, remaining))
 			if timer.mode == "hp" then
 				row.bar:SetValue(1)
 			else
-				local remaining = timer.remaining or 0
-				local value = remaining / timer.duration
+				local value = (remaining or 0) / timer.duration
 				if value < 0 then
 					value = 0
 				elseif value > 1 then
@@ -459,9 +752,20 @@ function updateRows()
 				row.bar:SetValue(value)
 			end
 
-			row.icon:SetTexture(Util.spellIconTexture(timer.spellId, timer.spellKey) or QUESTION_ICON)
+			row.icon:SetTexture(timer.iconTexture or Util.spellIconTexture(timer.spellId, timer.spellKey) or QUESTION_ICON)
 			row.name:SetText(shortName(timerDisplayName(timer)))
-			row.time:SetText(formatRemaining(timer))
+			row.name:SetTextColor(1.00, 1.00, 0.96, 1)
+			row.time:SetText(formatDisplayRemaining(timer, remaining))
+			row.time:SetTextColor(timeR, timeG, timeB, 1)
+			if warningMode == "personal" or warningMode == "raid" then
+				local wr, wg, wb = warningTextColor(warningMode)
+				row.warning:SetText("!")
+				row.warning:SetTextColor(wr, wg, wb, 1)
+				row.warning:Show()
+			else
+				row.warning:SetText("")
+				row.warning:Hide()
+			end
 			row:Show()
 		else
 			row:Hide()
@@ -483,11 +787,6 @@ local function onUpdate(self, elapsed)
 		return
 	end
 
-	elapsedSinceUpdate = elapsedSinceUpdate + elapsed
-	if elapsedSinceUpdate < C.TIMER_UPDATE_SECONDS then
-		return
-	end
-	elapsedSinceUpdate = 0
 	updateRows()
 end
 
