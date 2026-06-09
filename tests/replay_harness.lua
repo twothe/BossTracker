@@ -187,6 +187,7 @@ local function loadAddon()
 		"Core/Difficulty.lua",
 		"Core/EvidenceCodec.lua",
 		"Core/EvidenceStore.lua",
+		"Core/SyncTransport.lua",
 		"Core/EvidenceSync.lua",
 		"Core/SavedVariables.lua",
 		"Core/Config.lua",
@@ -264,6 +265,9 @@ function Harness.resetState(name)
 	addon.Core.Config.start()
 	addon.Core.Logger.startRun()
 	addon.Core.EvidenceStore.start()
+	if addon.Core.SyncTransport then
+		addon.Core.SyncTransport.start()
+	end
 	addon.Core.EvidenceSync.start()
 	addon.Core.ModelStore.start()
 	addon.Learning.OccurrenceBuilder.start()

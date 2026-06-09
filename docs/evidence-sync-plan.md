@@ -2,10 +2,11 @@
 
 This document captures the agreed design and current implementation contract for
 persistent encounter evidence and player-to-player synchronization. Version
-1.9.16 includes the local evidence store, the shared packed `EvidenceCodec`,
+1.13.0 includes the local evidence store, the shared packed `EvidenceCodec`,
 completed-segment commit path, evidence rebuild path, interpretation-engine rebuild
-detection, difficulty-aware ability availability, and accepted player-to-player
-sync transport.
+detection, difficulty-aware ability availability, accepted peer sync with hash
+inventory negotiation, and managed group sync through the generic
+`SyncTransport` hash-id plus payload transport.
 
 ## Current Baseline
 
@@ -44,11 +45,16 @@ The current learning path is:
 
 ## Simulation Evidence
 
-The plan was checked against the current replay and C++ simulator coverage on
-2026-06-05:
+The plan was checked against the current replay and sync simulator coverage on
+2026-06-09:
 
 - `lua tests/replay_scenarios.lua`
-  - Result: `replay scenarios passed: 57`
+  - Result: `replay scenarios passed: 87`
+- `lua tests/sync_scenarios.lua`
+  - Result: `sync scenarios passed: 33`
+
+The broader C++ simulator coverage was last checked on 2026-06-05:
+
 - `lua tests/cpp_module_replay.lua --all --quiet`
   - Result: `scripts=316 scenarios=1580 fallbacks=17 events=2258 schedules=2050 actions=1764`
 
@@ -334,21 +340,50 @@ modules so parity can be tested directly.
 
 ## Sync Transport Contract
 
-`/btr sync target`, `/btr sync PlayerName`, `/btr sync group`, and `/btr sync raid`
-request evidence exchange with other BossTracker users. Group and raid requests
-are small broadcast requests only. After approval, both sides whisper their
-available permanent evidence payloads for that session, so large evidence
-payloads are not broadcast to the whole group.
+`/btr sync target` and `/btr sync PlayerName` use the peer transport. After
+approval, both sides whisper their available permanent evidence hash inventory
+for that session. Each peer replies with the hashes it wants, and only those
+missing kill payloads are transferred.
 
-The transport uses the addon-message prefix `BT_SYNC1` and these message
-classes:
+`/btr sync group` and `/btr sync raid` use the managed group transport in
+`Core/SyncTransport.lua`. The initiator is the manager. The manager broadcasts a
+small request, waits a fixed six-second accept window, collects chunked `have`
+manifests from accepted players, builds a stable transfer plan, and assigns one
+provider per hash. Payload groups shared by several receivers are broadcast once
+to party/raid; payloads needed by only one receiver stay whispered. This keeps
+the normal path duplicate-free while preserving targeted retries and provider
+reassignment for failures.
+
+The peer evidence transport uses the addon-message prefix `BT_SYNC1` and these
+message classes:
 
 - `R`: sync request with addon version, evidence revision, and kill count.
 - `A` / `D`: accept or decline.
+- `M` / `m`: hash inventory header and chunks for "this is what I have".
+- `W` / `w`: requested-hash header and chunks for "this is what I want".
 - `H`: transfer header with payload length, hash, chunk count, kill count,
   addon version, optional batch index/count, and total session kill count.
 - `C`: one bounded payload chunk.
 - `N`: no-data or sender-side failure notice.
+
+The managed group transport uses the addon-message prefix `BT_TRN1` and generic
+hash-id plus payload messages:
+
+- `Q`: manager group request.
+- `A` / `D`: accept or decline.
+- `M` / `m`: accepted peer manifest header and chunks for "this is what I
+  have".
+- `P` / `p`: manager plan header and chunks. Plans name outbound groups,
+  expected inbound groups, providers, distributions, and exact item ids.
+- `K`: plan acknowledgement bound to the received plan hash.
+- `X`: manager grant that allows a provider to start one transfer group.
+- `G` / `g`: generic payload header and chunks.
+- `F`: rate-limited receiver flow feedback to the provider.
+- `V`: sparse receiver progress notice to the manager so long broadcasts do not
+  look stalled.
+- `B`: receiver completion acknowledgement to the manager.
+- `E`: provider finished-sending notice.
+- `N` / `Z`: session or transfer-group failure notices.
 
 The wire payload is schema-specific and compact:
 
@@ -357,8 +392,40 @@ The wire payload is schema-specific and compact:
 - inside a kill block, actor and spell references use numeric IDs local to that
   block.
 - large sync sessions are split into multiple complete payload batches; the
-  session must send every exportable permanent kill or fail clearly instead of
-  silently sending only the newest subset.
+  session must send every receiver-requested exportable permanent kill or fail
+  clearly instead of silently sending only the newest subset.
+- peers that support the 1.12.0 hash negotiation exchange canonical local
+  content hashes before payload transfer; older peers fall back to the previous
+  full-transfer behavior.
+- a hash inventory is an all-or-fail view of local permanent evidence. If any
+  stored kill cannot be canonicalized, two stored kills produce the same
+  canonical hash, or the hash list itself exceeds transport limits, the sender
+  reports a clear `N` failure instead of advertising a partial `have` list.
+  Payload exports apply the same canonical-hash uniqueness check before sending
+  kill blocks.
+- wanted-hash lists are bound to the concrete inventory previously advertised to
+  that peer for that session. A peer may request only advertised hashes, and the
+  sender processes one wanted list per advertised manifest.
+- receivers that sent a wanted-hash list validate modern payloads against that
+  exact list before import. Payloads containing unrequested hashes, duplicate
+  requested hashes, or only a partial requested set fail the session instead of
+  importing a partial result.
+- hash-list and payload messages are accepted only for approved/requested peer
+  sessions. Group sessions can have multiple accepted peers, so compatibility
+  checks store peer versions per sender or receiver instead of using only the
+  shared session id.
+- outbound queued sync messages are kept per peer and flushed fairly across
+  active peer queues, so one accepted group member does not block all others.
+- managed group sync keeps outbound payload generation windowed. A provider does
+  not enqueue thousands of chunks at once; it advances active transfer groups at
+  an adaptive chunks-per-second rate, with one chunk per second as the floor.
+- `FLOW` feedback is windowed and rate-limited. Receivers report useful timing
+  and frame-time estimates only after enough chunks or enough time has elapsed,
+  plus final completion, so metadata does not compete with payload traffic.
+- if a provider stops making progress, the manager reassigns the affected
+  transfer group to another accepted participant that advertised every required
+  hash. If no alternate exists, only that transfer group fails and the rest of
+  the plan can continue.
 - multi-batch transfers require both peers to support the batched protocol
   introduced in 1.9.15; a sender must reject large syncs to older peers instead
   of falling back to a partial first payload.
@@ -367,30 +434,35 @@ The wire payload is schema-specific and compact:
   batches arrive with consistent metadata, and discards the staged session on
   corrupt, missing, or inconsistent batch data.
 - events are packed as tuples and chunked below the addon-message size limit.
-- the receiver validates schema, payload length, transfer hash, caps, kill
-  shape, actor references, spell references, authorization, and duplicate
-  content hashes before import.
+- the receiver validates schema, payload length, transfer hash, caps, integer
+  payload metadata, kill shape, actor references, spell references,
+  authorization, wanted-list or managed-plan membership, and duplicate content
+  hashes before import.
 
 Imported evidence is not stored as external data. Accepted kills are merged into
 the normal permanent evidence store, deduplicated by a locally recomputed
 `killHash`, and then `BossTrackerDB.learned` is rebuilt locally from the
-combined evidence. The receiver never accepts calculated rules, confidence
-values, UI settings, warning settings, character backups, diagnostics, or
-incomplete attempts from another player.
+combined evidence. Managed group receivers still store evidence while in combat,
+but defer expensive interpretation and model rebuild until after combat. The
+receiver never accepts calculated rules, confidence values, UI settings, warning
+settings, character backups, diagnostics, or incomplete attempts from another
+player.
 
-If all received kills are duplicates, the sync may still rebuild the local
-learned cache from existing permanent evidence. This repairs sessions where the
-source evidence was already present but the calculated display cache was missing
-or stale.
+If all remote hashes are already present, the sync does not resend evidence
+payloads. It may still rebuild the local learned cache from existing permanent
+evidence. This repairs sessions where the source evidence was already present
+but the calculated display cache was missing or stale.
 
 `tests/sync_scenarios.lua` is the local two-client sync simulator. It loads two
 isolated addon instances, routes addon messages through a deterministic bus, and
 tests complete sync sessions without requiring a second live player. The suite
 covers multi-batch transfers, out-of-order and duplicate chunks, dropped chunks,
 corrupt transport data, tampered payloads with valid transport hashes,
-duplicate-only rebuilds, old peer rejection, simultaneous cross-sync, and group
-request handshakes. It also has a ticked transport mode that flushes only one
-queued addon message per simulated client tick for long-transfer confidence.
+duplicate-only rebuilds, old peer rejection, simultaneous cross-sync, managed
+group convergence, late accepts, broadcast duplicate avoidance, provider
+failure reassignment, rate-limited flow feedback, and combat-deferred rebuilds.
+It also has a ticked transport mode that flushes only one queued addon message
+per simulated client tick for long-transfer confidence.
 
 ## Deduplication
 

@@ -28,6 +28,229 @@ local function withSyncKillLimit(client, limit, fn)
 	return unpackValues(results)
 end
 
+local function withSyncPayloadByteLimit(client, limit, fn)
+	local constants = client.addon.Core.Constants
+	local originalLimit = constants.MAX_SYNC_PAYLOAD_BYTES
+	local results
+	local ok, err = xpcall(function()
+		constants.MAX_SYNC_PAYLOAD_BYTES = limit
+		results = { fn() }
+	end, debug.traceback)
+	constants.MAX_SYNC_PAYLOAD_BYTES = originalLimit
+	if not ok then
+		error(err, 0)
+	end
+	return unpackValues(results)
+end
+
+local function corruptFirstStoredKill(client)
+	local evidence = client.addon.db and client.addon.db.evidence
+	for _, instance in pairs(evidence and evidence.instances or {}) do
+		for _, boss in pairs(instance.bosses or {}) do
+			for hash, kill in pairs(boss.kills or {}) do
+				if type(kill) == "table" then
+					kill.p = "not-a-valid-kill-block"
+				else
+					boss.kills[hash] = "not-a-valid-kill-block"
+				end
+				return true
+			end
+		end
+	end
+	return false
+end
+
+local function duplicateFirstStoredKillBlock(client)
+	local evidence = client.addon.db and client.addon.db.evidence
+	for _, instance in pairs(evidence and evidence.instances or {}) do
+		for _, boss in pairs(instance.bosses or {}) do
+			for _, kill in pairs(boss.kills or {}) do
+				local duplicateBossKey = tostring(boss.key or "boss") .. "_duplicate_hash_shadow"
+				instance.bosses[duplicateBossKey] = {
+					key = duplicateBossKey,
+					name = tostring(boss.name or "Boss") .. " Duplicate Hash Shadow",
+					kills = {
+						duplicate_hash_shadow = kill,
+					},
+				}
+				return true
+			end
+		end
+	end
+	return false
+end
+
+local function deliveredMessages(bus, sender, receiver)
+	local messages = {}
+	local senderName = type(sender) == "table" and sender.name or tostring(sender)
+	local receiverName = type(receiver) == "table" and receiver.name or tostring(receiver)
+	for index = 1, #(bus.delivered or {}) do
+		local message = bus.delivered[index]
+		if message.sender == senderName and message.receiver == receiverName then
+			messages[#messages + 1] = message.message
+		end
+	end
+	return messages
+end
+
+local function countDeliveredMessageType(bus, sender, receiver, messageType)
+	local count = 0
+	local messages = deliveredMessages(bus, sender, receiver)
+	local prefix = tostring(messageType or "") .. "|"
+	for index = 1, #messages do
+		if string.sub(messages[index] or "", 1, #prefix) == prefix then
+			count = count + 1
+		end
+	end
+	return count
+end
+
+local function countEvidencePayloadMessages(bus, sender, receiver)
+	local count = 0
+	local messages = deliveredMessages(bus, sender, receiver)
+	for index = 1, #messages do
+		local messageType = string.sub(messages[index] or "", 1, 1)
+		if messageType == "H" or messageType == "C" then
+			count = count + 1
+		end
+	end
+	return count
+end
+
+local function advanceBus(bus, seconds, options)
+	for _, client in ipairs(bus.clients or {}) do
+		client.now = client.now + (tonumber(seconds) or 0)
+	end
+	return bus:drain(options)
+end
+
+local function withClientConstants(clients, values, fn)
+	local originals = {}
+	for _, client in ipairs(clients or {}) do
+		originals[client] = {}
+		for key, value in pairs(values or {}) do
+			originals[client][key] = client.addon.Core.Constants[key]
+			client.addon.Core.Constants[key] = value
+		end
+	end
+	local results
+	local ok, err = xpcall(function()
+		results = { fn() }
+	end, debug.traceback)
+	for _, client in ipairs(clients or {}) do
+		for key, value in pairs(originals[client] or {}) do
+			client.addon.Core.Constants[key] = value
+		end
+	end
+	if not ok then
+		error(err, 0)
+	end
+	return unpackValues(results)
+end
+
+local function fireAddonEvent(client, eventName)
+	for _, entry in ipairs(client.addon.handlers[eventName] or {}) do
+		entry.handler(eventName)
+	end
+end
+
+local function firstEvidenceHeaderKillCount(bus, sender, receiver)
+	local messages = deliveredMessages(bus, sender, receiver)
+	for index = 1, #messages do
+		local message = messages[index]
+		if string.sub(message or "", 1, 2) == "H|" then
+			local fields = {}
+			for field in string.gmatch(message, "([^|]+)") do
+				fields[#fields + 1] = field
+			end
+			return tonumber(fields[6]) or 0
+		end
+	end
+	return nil
+end
+
+local function queuedEvidencePayloadMessages(bus, sender, receiver)
+	local messages = {}
+	local senderClient = type(sender) == "table" and sender or nil
+	local receiverName = type(receiver) == "table" and receiver.name or tostring(receiver)
+	for index = 1, #(bus.queue or {}) do
+		local message = bus.queue[index]
+		if message.sender == senderClient and message.target == receiverName then
+			local messageType = string.sub(message.message or "", 1, 1)
+			if messageType == "H" or messageType == "C" then
+				messages[#messages + 1] = message.message
+			end
+		end
+	end
+	return messages
+end
+
+local function firstQueuedEvidenceHeaderKillCount(bus, sender, receiver)
+	local messages = queuedEvidencePayloadMessages(bus, sender, receiver)
+	for index = 1, #messages do
+		local message = messages[index]
+		if string.sub(message or "", 1, 2) == "H|" then
+			local fields = {}
+			for field in string.gmatch(message, "([^|]+)") do
+				fields[#fields + 1] = field
+			end
+			return tonumber(fields[6]) or 0
+		end
+	end
+	return nil
+end
+
+local function sendHashList(receiver, sender, listType, sessionId, hashes)
+	hashes = hashes or {}
+	local payload = table.concat(hashes, ",")
+	local chunks = {}
+	if payload ~= "" then
+		chunks[1] = payload
+	end
+	local prefix = receiver.addon.Core.Constants.SYNC_PREFIX
+	receiver.addon.Core.EvidenceSync.handleAddonMessage("CHAT_MSG_ADDON", prefix, table.concat({
+		listType,
+		sessionId,
+		tostring(#payload),
+		receiver.addon.Core.EvidenceCodec.hashString(payload),
+		tostring(#chunks),
+		tostring(#hashes),
+		sender.addon.Core.Constants.VERSION,
+	}, "|"), "WHISPER", sender.name)
+	for index = 1, #chunks do
+		receiver.addon.Core.EvidenceSync.handleAddonMessage("CHAT_MSG_ADDON", prefix, table.concat({
+			string.lower(listType),
+			sessionId,
+			tostring(index),
+			tostring(#chunks),
+			chunks[index],
+		}, "|"), "WHISPER", sender.name)
+	end
+end
+
+local function split(value, separator)
+	local result = {}
+	local startIndex = 1
+	while true do
+		local separatorIndex = string.find(value, separator, startIndex, true)
+		if not separatorIndex then
+			result[#result + 1] = string.sub(value, startIndex)
+			break
+		end
+		result[#result + 1] = string.sub(value, startIndex, separatorIndex - 1)
+		startIndex = separatorIndex + #separator
+	end
+	return result
+end
+
+local function replacePayloadHeaderField(payload, fieldIndex, value)
+	local records = split(payload, "~")
+	local fields = split(records[1] or "", "|")
+	fields[fieldIndex] = value
+	records[1] = table.concat(fields, "|")
+	return table.concat(records, "~")
+end
+
 local function scenarioFullBatchedSyncImportsEverything()
 	local bus, a, b = newPair()
 	local firstBossKey, firstSpell = withSyncKillLimit(a, 2, function()
@@ -171,7 +394,7 @@ local function scenarioTamperedKillBlockWithValidHashRejected()
 	Harness.assertTrue(ok, err)
 
 	Harness.assertEqual(b:permanentKillCount(), 0, "Tampered kill blocks must not import")
-	Harness.assertTrue(b:chatContains("rejected 1 invalid kill"), "Tampered kill blocks should be counted as rejected")
+	Harness.assertTrue(b:chatContains("invalid kill evidence"), "Tampered kill blocks should be rejected before import")
 end
 
 local function scenarioTamperedLaterBatchWithValidHashDoesNotCommitEarlierBatches()
@@ -182,6 +405,7 @@ local function scenarioTamperedLaterBatchWithValidHashDoesNotCommitEarlierBatche
 	end)
 	local tampered = string.gsub(payloads[2].payload, "P|", "P|not-a-valid-kill-block", 1)
 
+	a:setVersion("1.9.15")
 	Harness.openInboundSession(bus, a, b, "tampered-batch")
 	bus:sendPayload(a, b, "tampered-batch.1", payloads[1].payload, {
 		batchIndex = 1,
@@ -220,6 +444,8 @@ local function scenarioDuplicateOnlySyncRebuildsMissingLearnedCache()
 	Harness.assertEqual(b:permanentKillCount(), 1, "Duplicate-only sync should not add evidence")
 	Harness.assertTrue(b:findAbilityByName("Duplicate Rebuild Slam") ~= nil, "Duplicate-only sync should rebuild missing learned data")
 	Harness.assertTrue(b:chatContains("rebuilt local models from existing evidence"), "Duplicate-only sync should explain the rebuild")
+	Harness.assertEqual(countEvidencePayloadMessages(bus, a, b), 0, "Duplicate-only sync should not resend evidence payloads to a peer that already has them")
+	Harness.assertEqual(countEvidencePayloadMessages(bus, b, a), 0, "Duplicate-only reciprocal sync should not resend evidence payloads either")
 end
 
 local function scenarioPartialOverlapImportsOnlyMissingEvidence()
@@ -247,6 +473,56 @@ local function scenarioPartialOverlapImportsOnlyMissingEvidence()
 	Harness.assertEqual(b:permanentKillCount(), 3, "Partial-overlap sync should import only missing evidence")
 	Harness.assertTrue(b:findAbilityByName("Sync Slam 1") ~= nil, "Partial-overlap sync should rebuild the missing older evidence")
 	Harness.assertTrue(not (b.addon.db.config.overrides.zones.sender_only), "Evidence sync must not import sender config overrides")
+	Harness.assertEqual(firstEvidenceHeaderKillCount(bus, a, b), 1, "Partial-overlap sync should send only the one missing evidence hash")
+end
+
+local function scenarioModernPayloadCannotIncludeUnrequestedHashes()
+	local bus, a, b = newPair()
+	a:addKills(2, "Unrequested Payload Boss")
+	local blocks = a.addon.Core.EvidenceStore.collectKillBlocks()
+	Harness.assertTrue(#blocks == 2, "Fixture should create two sender blocks")
+	local seedResult = b.addon.Core.EvidenceStore.importKillBlock(blocks[1].block)
+	Harness.assertTrue(seedResult and seedResult.status == "imported", "Fixture should seed one duplicate block on the receiver")
+	Harness.assertEqual(b:permanentKillCount(), 1, "Fixture should start with one local duplicate")
+
+	local sessionId = "unrequested-modern-payload"
+	Harness.openInboundSession(bus, a, b, sessionId)
+	sendHashList(b, a, "M", sessionId, {
+		blocks[1].hash,
+		blocks[2].hash,
+	})
+	bus:clear()
+
+	local payloads = a:exportPayloads()
+	bus:sendPayload(a, b, sessionId, payloads[1].payload)
+	local ok, err = bus:drain()
+	Harness.assertTrue(ok, err)
+
+	Harness.assertEqual(b:permanentKillCount(), 1, "Modern sync must reject payloads containing hashes the receiver did not request")
+	Harness.assertTrue(b:chatContains("unrequested evidence hash"), "Unrequested payload hashes should be reported")
+end
+
+local function scenarioModernPayloadMustIncludeEveryRequestedHash()
+	local bus, a, b = newPair()
+	a:addKills(2, "Missing Requested Payload Boss")
+	local blocks = a.addon.Core.EvidenceStore.collectKillBlocks()
+	Harness.assertTrue(#blocks == 2, "Fixture should create two sender blocks")
+
+	local sessionId = "missing-requested-modern-payload"
+	Harness.openInboundSession(bus, a, b, sessionId)
+	sendHashList(b, a, "M", sessionId, {
+		blocks[1].hash,
+		blocks[2].hash,
+	})
+	bus:clear()
+
+	local partialPayload = a.addon.Core.EvidenceSync.exportPayload(1)
+	bus:sendPayload(a, b, sessionId, partialPayload)
+	local ok, err = bus:drain()
+	Harness.assertTrue(ok, err)
+
+	Harness.assertEqual(b:permanentKillCount(), 0, "Modern sync must reject incomplete requested payloads transactionally")
+	Harness.assertTrue(b:chatContains("missing requested evidence hash"), "Missing requested payload hashes should be reported")
 end
 
 local function scenarioOldPeerLargeSyncFailsClearly()
@@ -304,15 +580,20 @@ local function scenarioSimultaneousCrossSyncConverges()
 	Harness.assertTrue(b:findAbilityByName("Avelon Only Slam") ~= nil, "Client B should learn A-only evidence")
 end
 
-local function scenarioGroupRequestWhispersAcceptedTransfer()
+local function scenarioManagedGroupSyncConvergesAcceptedRaidPeers()
 	local bus = Harness.newBus()
 	local a = Harness.newClient("Avelon", bus)
 	local b = Harness.newClient("Beloria", bus)
 	local c = Harness.newClient("Cyrene", bus)
 	a:addKill({
-		boss = "Group Sync Sentinel",
-		spell = "Group Sync Slam",
+		boss = "Managed Avelon Sentinel",
+		spell = "Managed Avelon Slam",
 		spellId = 709001,
+	})
+	b:addKill({
+		boss = "Managed Beloria Sentinel",
+		spell = "Managed Beloria Slam",
+		spellId = 709101,
 	})
 	a:setGroup(4, 0)
 	b:setGroup(4, 0)
@@ -322,11 +603,521 @@ local function scenarioGroupRequestWhispersAcceptedTransfer()
 	local ok, err = bus:drain()
 	Harness.assertTrue(ok, err)
 	b:acceptSync(a)
+	c:acceptSync(a)
+	ok, err = bus:drain({ ticked = true, maxPasses = 200 })
+	Harness.assertTrue(ok, err)
+	ok, err = advanceBus(bus, 7, { ticked = true, maxPasses = 2000 })
+	Harness.assertTrue(ok, err)
+
+	Harness.assertEqual(a:permanentKillCount(), 2, "Managed group sync should import peer-only evidence into the manager")
+	Harness.assertEqual(b:permanentKillCount(), 2, "Managed group sync should import manager evidence into accepted peers")
+	Harness.assertEqual(c:permanentKillCount(), 2, "Managed group sync should bring empty accepted peers to the union")
+end
+
+local function scenarioManagedGroupLateAcceptIsExcluded()
+	local bus = Harness.newBus()
+	local a = Harness.newClient("Avelon", bus)
+	local b = Harness.newClient("Beloria", bus)
+	a:addKill({
+		boss = "Late Accept Sentinel",
+		spell = "Late Accept Slam",
+		spellId = 709201,
+	})
+	a:setGroup(4, 0)
+	b:setGroup(4, 0)
+
+	a.addon.Core.EvidenceSync.handleSlash("group")
+	local ok, err = bus:drain()
+	Harness.assertTrue(ok, err)
+	ok, err = advanceBus(bus, 7, { ticked = true, maxPasses = 200 })
+	Harness.assertTrue(ok, err)
+	b:acceptSync(a)
 	ok, err = bus:drain()
 	Harness.assertTrue(ok, err)
 
-	Harness.assertEqual(b:permanentKillCount(), 1, "Group request acceptor should receive whisper evidence transfer")
-	Harness.assertEqual(c:permanentKillCount(), 0, "Non-accepting group peer should not receive evidence payloads")
+	Harness.assertEqual(b:permanentKillCount(), 0, "Late managed group accepts must be excluded from the frozen session")
+end
+
+local function scenarioParallelQueueAdvancesMultiplePeers()
+	local bus = Harness.newBus()
+	local a = Harness.newClient("Avelon", bus)
+	local b = Harness.newClient("Beloria", bus)
+	local c = Harness.newClient("Cyrene", bus)
+	a:addKill({
+		boss = "Parallel Queue Sentinel",
+		spell = "Parallel Queue Slam",
+		spellId = 710001,
+	})
+
+	a:requestSync(b)
+	local sessionB = a:latestSessionTo(b)
+	a:requestSync(c)
+	local sessionC = a:latestSessionTo(c)
+	Harness.assertTrue(sessionB ~= nil and sessionC ~= nil, "Fixture should create two outbound sessions")
+	bus:clear()
+
+	local prefix = a.addon.Core.Constants.SYNC_PREFIX
+	local version = a.addon.Core.Constants.VERSION
+	a.addon.Core.EvidenceSync.handleAddonMessage("CHAT_MSG_ADDON", prefix, "A|" .. sessionB .. "|" .. version, "WHISPER", b.name)
+	a.addon.Core.EvidenceSync.handleAddonMessage("CHAT_MSG_ADDON", prefix, "A|" .. sessionC .. "|" .. version, "WHISPER", c.name)
+	local sent = a.addon.Core.EvidenceSync.flushQueue()
+	Harness.assertEqual(sent, 2, "Default sync flush should advance multiple peer queues in parallel")
+
+	local targetSeen = {}
+	for index = 1, #(bus.queue or {}) do
+		local message = bus.queue[index]
+		if string.sub(message.message or "", 1, 2) == "M|" then
+			targetSeen[message.target] = true
+		end
+	end
+	Harness.assertTrue(targetSeen[b.name] == true and targetSeen[c.name] == true, "Parallel sync flush should send one queued message to each peer")
+end
+
+local function scenarioUnauthorizedHashListCannotTriggerTransfer()
+	local bus = Harness.newBus()
+	local a = Harness.newClient("Avelon", bus)
+	local c = Harness.newClient("Cyrene", bus)
+	a:addKill({
+		boss = "Unauthorized Hash Sentinel",
+		spell = "Unauthorized Hash Slam",
+		spellId = 711001,
+	})
+	a:requestSync(c)
+	local sessionId = a:latestSessionTo(c)
+	Harness.assertTrue(sessionId ~= nil, "Fixture should create a group sync session")
+	bus:clear()
+
+	local blocks = a.addon.Core.EvidenceStore.collectKillBlocks()
+	local wantedPayload = blocks[1] and blocks[1].hash or ""
+	local wantedPayloadHash = a.addon.Core.EvidenceCodec.hashString(wantedPayload)
+	a.addon.Core.EvidenceSync.handleAddonMessage("CHAT_MSG_ADDON", a.addon.Core.Constants.SYNC_PREFIX, table.concat({
+		"W",
+		sessionId,
+		tostring(#wantedPayload),
+		wantedPayloadHash,
+		"1",
+		"1",
+		a.addon.Core.Constants.VERSION,
+	}, "|"), "WHISPER", c.name)
+	a.addon.Core.EvidenceSync.handleAddonMessage("CHAT_MSG_ADDON", a.addon.Core.Constants.SYNC_PREFIX, table.concat({
+		"w",
+		sessionId,
+		"1",
+		"1",
+		wantedPayload,
+	}, "|"), "WHISPER", c.name)
+	local sent = a.addon.Core.EvidenceSync.flushQueue(1000)
+	Harness.assertEqual(sent, 0, "Unauthorized wanted-hash lists must not queue evidence payloads")
+	Harness.assertEqual(countEvidencePayloadMessages(bus, a, c), 0, "Unauthorized group peers must not receive evidence payload messages")
+end
+
+local function scenarioManagedGroupBroadcastAvoidsDuplicateProviderPayloads()
+	local bus = Harness.newBus()
+	local a = Harness.newClient("Avelon", bus)
+	local b = Harness.newClient("Beloria", bus)
+	local c = Harness.newClient("Cyrene", bus)
+	a:setGroup(4, 0)
+	b:setGroup(4, 0)
+	c:setGroup(4, 0)
+	a:addKill({
+		boss = "Broadcast Shared Sentinel",
+		spell = "Broadcast Shared Slam",
+		spellId = 711101,
+	})
+
+	a.addon.Core.EvidenceSync.handleSlash("group")
+	local ok, err = bus:drain()
+	Harness.assertTrue(ok, err)
+	b:acceptSync(a)
+	c:acceptSync(a)
+	ok, err = bus:drain({ ticked = true, maxPasses = 200 })
+	Harness.assertTrue(ok, err)
+	bus:clear()
+	ok, err = advanceBus(bus, 7, { ticked = true, maxPasses = 2000 })
+	Harness.assertTrue(ok, err)
+
+	local transportHeadersFromA = 0
+	for index = 1, #(bus.delivered or {}) do
+		local message = bus.delivered[index]
+		if message.sender == a.name and string.sub(message.message or "", 1, 2) == "G|" then
+			transportHeadersFromA = transportHeadersFromA + 1
+		end
+	end
+	Harness.assertEqual(b:permanentKillCount(), 1, "First accepted peer should import the shared broadcast payload")
+	Harness.assertEqual(c:permanentKillCount(), 1, "Second accepted peer should import the same shared broadcast payload")
+	Harness.assertEqual(transportHeadersFromA, 2, "One RAID header should be delivered to both receivers, not separately planned per receiver")
+end
+
+local function scenarioManagedGroupReassignsFailedProvider()
+	local bus = Harness.newBus()
+	local a = Harness.newClient("Avelon", bus)
+	local b = Harness.newClient("Beloria", bus)
+	local c = Harness.newClient("Cyrene", bus)
+	local d = Harness.newClient("Daelia", bus)
+	local sharedKill = {
+		index = 1,
+		boss = "Reassign Shared Sentinel",
+		guid = "Creature-0-0-0-0-991-reassign-shared",
+		spell = "Reassign Shared Slam",
+		spellId = 711201,
+	}
+	b:addKill(sharedKill)
+	c:addKill(sharedKill)
+	a:setGroup(5, 0)
+	b:setGroup(5, 0)
+	c:setGroup(5, 0)
+	d:setGroup(5, 0)
+
+	withClientConstants({ a, b, c, d }, {
+		SYNC_TRANSPORT_GROUP_NO_PROGRESS_SECONDS = 3,
+		SYNC_TRANSPORT_START_CHUNKS_PER_SECOND = 2,
+	}, function()
+		a.addon.Core.EvidenceSync.handleSlash("group")
+		local ok, err = bus:drain()
+		Harness.assertTrue(ok, err)
+		b:acceptSync(a)
+		c:acceptSync(a)
+		d:acceptSync(a)
+		ok, err = bus:drain({ ticked = true, maxPasses = 200 })
+		Harness.assertTrue(ok, err)
+		ok, err = advanceBus(bus, 7, {
+			ticked = true,
+			maxPasses = 3000,
+			drop = function(message)
+				local messageType = string.sub(message.message or "", 1, 1)
+				return message.sender.name == b.name and (messageType == "G" or messageType == "g" or messageType == "E")
+			end,
+		})
+		Harness.assertTrue(ok, err)
+	end)
+
+	Harness.assertEqual(a:permanentKillCount(), 1, "Manager should receive reassigned evidence from the alternate provider")
+	Harness.assertEqual(d:permanentKillCount(), 1, "Empty receiver should receive reassigned evidence after the first provider fails")
+	Harness.assertTrue(a:chatContains("reassigned sync transfer group"), "Manager should report the provider reassignment")
+end
+
+local function scenarioManagedGroupFlowIsRateLimited()
+	local bus = Harness.newBus()
+	local a = Harness.newClient("Avelon", bus)
+	local b = Harness.newClient("Beloria", bus)
+	a:addKills(4, "Flow Limited Boss")
+	a:setGroup(3, 0)
+	b:setGroup(3, 0)
+
+	withClientConstants({ a, b }, {
+		SYNC_TRANSPORT_FLOW_WINDOW_CHUNKS = 4,
+		SYNC_TRANSPORT_FLOW_MIN_INTERVAL_SECONDS = 4,
+		SYNC_TRANSPORT_START_CHUNKS_PER_SECOND = 4,
+		SYNC_TRANSPORT_MAX_ITEMS_PER_GROUP = 4,
+	}, function()
+		a.addon.Core.EvidenceSync.handleSlash("group")
+		local ok, err = bus:drain()
+		Harness.assertTrue(ok, err)
+		b:acceptSync(a)
+		ok, err = bus:drain({ ticked = true, maxPasses = 200 })
+		Harness.assertTrue(ok, err)
+		ok, err = advanceBus(bus, 7, { ticked = true, maxPasses = 3000 })
+		Harness.assertTrue(ok, err)
+	end)
+
+	local flowCount = 0
+	local chunkCount = 0
+	for index = 1, #(bus.delivered or {}) do
+		local message = bus.delivered[index]
+		if message.sender == b.name and string.sub(message.message or "", 1, 2) == "F|" then
+			flowCount = flowCount + 1
+		elseif message.sender == a.name and string.sub(message.message or "", 1, 2) == "g|" then
+			chunkCount = chunkCount + 1
+		end
+	end
+	Harness.assertTrue(chunkCount > 4, "Fixture should send enough chunks to make per-chunk FLOW visible if it regressed")
+	Harness.assertTrue(flowCount < chunkCount, "FLOW feedback must be windowed/rate-limited instead of sent per chunk")
+	Harness.assertEqual(b:permanentKillCount(), 4, "Rate-limited flow should still complete the transfer")
+end
+
+local function scenarioManagedGroupDefersRebuildInCombat()
+	local bus = Harness.newBus()
+	local a = Harness.newClient("Avelon", bus)
+	local b = Harness.newClient("Beloria", bus)
+	a:addKill({
+		boss = "Combat Deferred Sentinel",
+		spell = "Combat Deferred Slam",
+		spellId = 711301,
+	})
+	a:setGroup(3, 0)
+	b:setGroup(3, 0)
+	b.inCombat = true
+
+	a.addon.Core.EvidenceSync.handleSlash("group")
+	local ok, err = bus:drain()
+	Harness.assertTrue(ok, err)
+	b:acceptSync(a)
+	ok, err = bus:drain({ ticked = true, maxPasses = 200 })
+	Harness.assertTrue(ok, err)
+	ok, err = advanceBus(bus, 7, { ticked = true, maxPasses = 2000 })
+	Harness.assertTrue(ok, err)
+
+	Harness.assertEqual(b:permanentKillCount(), 1, "Combat receiver should still store imported evidence")
+	Harness.assertEqual(b:learnedEncounterCount(), 0, "Combat receiver should defer learned rebuild while in combat")
+	b.inCombat = false
+	fireAddonEvent(b, "PLAYER_REGEN_ENABLED")
+	Harness.assertTrue(b:learnedEncounterCount() > 0, "Deferred sync rebuild should run after combat ends")
+end
+
+local function scenarioRequestedHashSetMustBeComplete()
+	local bus, a, b = newPair()
+	a:addKill({
+		boss = "Missing Requested Hash Sentinel",
+		spell = "Missing Requested Hash Slam",
+		spellId = 712001,
+	})
+
+	a:requestSync(b)
+	local sessionId = a:latestSessionTo(b)
+	Harness.assertTrue(sessionId ~= nil, "Fixture should create an outbound session")
+	bus:clear()
+
+	local prefix = a.addon.Core.Constants.SYNC_PREFIX
+	a.addon.Core.EvidenceSync.handleAddonMessage("CHAT_MSG_ADDON", prefix, "A|" .. sessionId .. "|" .. a.addon.Core.Constants.VERSION, "WHISPER", b.name)
+	bus:clear()
+
+	local blocks = a.addon.Core.EvidenceStore.collectKillBlocks()
+	local limitedPayloads, limitedError = a.addon.Core.EvidenceSync.exportPayloads(0, {
+		[blocks[1].hash] = true,
+	})
+	Harness.assertTrue(limitedPayloads == nil and string.find(tostring(limitedError), "truncate", 1, true) ~= nil, "Requested export limits must fail instead of truncating wanted hashes")
+	local wantedPayload = table.concat({
+		blocks[1].hash,
+		"ffffffffffffffffffffffffffffffff",
+	}, ",")
+	local wantedPayloadHash = a.addon.Core.EvidenceCodec.hashString(wantedPayload)
+	a.addon.Core.EvidenceSync.handleAddonMessage("CHAT_MSG_ADDON", prefix, table.concat({
+		"W",
+		sessionId,
+		tostring(#wantedPayload),
+		wantedPayloadHash,
+		"1",
+		"2",
+		a.addon.Core.Constants.VERSION,
+	}, "|"), "WHISPER", b.name)
+	a.addon.Core.EvidenceSync.handleAddonMessage("CHAT_MSG_ADDON", prefix, table.concat({
+		"w",
+		sessionId,
+		"1",
+		"1",
+		wantedPayload,
+	}, "|"), "WHISPER", b.name)
+	a.addon.Core.EvidenceSync.flushQueue(1000)
+
+	Harness.assertTrue(#queuedEvidencePayloadMessages(bus, a, b) == 0, "Requested sync must not send a partial subset when any wanted hash is unavailable")
+	Harness.assertTrue(b:permanentKillCount() == 0, "The receiver fixture should not import anything from an incomplete requested set")
+end
+
+local function scenarioCorruptLocalEvidenceDoesNotAdvertisePartialInventory()
+	local bus, a, b = newPair()
+	a:addKills(2, "Corrupt Inventory Boss")
+	Harness.assertTrue(corruptFirstStoredKill(a), "Fixture should corrupt one stored kill")
+
+	local remainingBlocks = a.addon.Core.EvidenceStore.collectKillBlocks()
+	Harness.assertEqual(#remainingBlocks, 1, "Fixture should keep one exportable block after corruption")
+	for index = 1, #remainingBlocks do
+		local result = b.addon.Core.EvidenceStore.importKillBlock(remainingBlocks[index].block)
+		Harness.assertTrue(result and result.status == "imported", "Fixture should seed the receiver with the remaining valid block")
+	end
+	Harness.assertEqual(b:permanentKillCount(), 1, "Fixture should seed one receiver-side duplicate")
+
+	Harness.runAcceptedSync(bus, a, b)
+
+	Harness.assertEqual(b:permanentKillCount(), 1, "Corrupt sender evidence must not be hidden behind a partial duplicate-only inventory")
+	Harness.assertEqual(countDeliveredMessageType(bus, a, b, "M"), 0, "Corrupt sender evidence must not advertise a partial hash inventory")
+	Harness.assertTrue(b:chatContains("hash inventory cannot be created"), "Corrupt sender evidence should fail clearly on the receiver")
+end
+
+local function scenarioOversizedHashInventoryFailsBeforeManifestSend()
+	local bus, a, b = newPair()
+	a:addKill({
+		boss = "Oversized Hash Inventory Sentinel",
+		spell = "Oversized Hash Inventory Slam",
+		spellId = 713001,
+	})
+
+	a:requestSync(b)
+	local ok, err = bus:drain()
+	Harness.assertTrue(ok, err)
+	withSyncPayloadByteLimit(a, 20, function()
+		b:acceptSync(a)
+		ok, err = bus:drain()
+		Harness.assertTrue(ok, err)
+	end)
+
+	Harness.assertEqual(b:permanentKillCount(), 0, "Oversized hash inventory should not fall through to evidence payload transfer")
+	Harness.assertEqual(countDeliveredMessageType(bus, a, b, "M"), 0, "Oversized hash inventory should fail before sending a manifest")
+	Harness.assertTrue(b:chatContains("sync hash list exceeds configured limit"), "Oversized hash inventory should fail with a hash-list-specific error")
+end
+
+local function scenarioDuplicateWantedListDoesNotResendPayloads()
+	local bus, a, b = newPair()
+	a:addKill({
+		boss = "Duplicate Wanted Sentinel",
+		spell = "Duplicate Wanted Slam",
+		spellId = 714001,
+	})
+	a:requestSync(b)
+	local sessionId = a:latestSessionTo(b)
+	Harness.assertTrue(sessionId ~= nil, "Fixture should create an outbound session")
+	bus:clear()
+
+	local prefix = a.addon.Core.Constants.SYNC_PREFIX
+	a.addon.Core.EvidenceSync.handleAddonMessage("CHAT_MSG_ADDON", prefix, "A|" .. sessionId .. "|" .. a.addon.Core.Constants.VERSION, "WHISPER", b.name)
+	a.addon.Core.EvidenceSync.flushQueue(1000)
+	bus:clear()
+
+	local blocks = a.addon.Core.EvidenceStore.collectKillBlocks()
+	sendHashList(a, b, "W", sessionId, { blocks[1].hash })
+	a.addon.Core.EvidenceSync.flushQueue(1000)
+	Harness.assertTrue(#queuedEvidencePayloadMessages(bus, a, b) > 0, "First wanted list should queue the requested evidence payload")
+	bus:clear()
+
+	sendHashList(a, b, "W", sessionId, { blocks[1].hash })
+	a.addon.Core.EvidenceSync.flushQueue(1000)
+	Harness.assertEqual(#queuedEvidencePayloadMessages(bus, a, b), 0, "Duplicate wanted lists for one manifest must not resend evidence payloads")
+	local ok, err = bus:drain()
+	Harness.assertTrue(ok, err)
+	Harness.assertTrue(b:chatContains("sync wanted list was already processed"), "Duplicate wanted list rejection should be visible to the peer")
+
+	bus:clear()
+	a.addon.Core.EvidenceSync.handleAddonMessage("CHAT_MSG_ADDON", prefix, "A|" .. sessionId .. "|" .. a.addon.Core.Constants.VERSION, "WHISPER", b.name)
+	a.addon.Core.EvidenceSync.flushQueue(1000)
+	bus:clear()
+	sendHashList(a, b, "W", sessionId, { blocks[1].hash })
+	a.addon.Core.EvidenceSync.flushQueue(1000)
+	Harness.assertEqual(#queuedEvidencePayloadMessages(bus, a, b), 0, "Duplicate accepts must not reopen an already processed wanted list")
+end
+
+local function scenarioWantedListCannotRequestUnadvertisedHash()
+	local bus, a, b = newPair()
+	a:addKill({
+		boss = "Unadvertised Wanted Sentinel",
+		spell = "Unadvertised Wanted Slam",
+		spellId = 715001,
+	})
+	a:requestSync(b)
+	local sessionId = a:latestSessionTo(b)
+	Harness.assertTrue(sessionId ~= nil, "Fixture should create an outbound session")
+	bus:clear()
+
+	local prefix = a.addon.Core.Constants.SYNC_PREFIX
+	a.addon.Core.EvidenceSync.handleAddonMessage("CHAT_MSG_ADDON", prefix, "A|" .. sessionId .. "|" .. a.addon.Core.Constants.VERSION, "WHISPER", b.name)
+	a.addon.Core.EvidenceSync.flushQueue(1000)
+	bus:clear()
+
+	sendHashList(a, b, "W", sessionId, { "ffffffffffffffffffffffffffffffff" })
+	a.addon.Core.EvidenceSync.flushQueue(1000)
+	Harness.assertEqual(#queuedEvidencePayloadMessages(bus, a, b), 0, "Wanted lists must be limited to the sender's advertised manifest")
+	local ok, err = bus:drain()
+	Harness.assertTrue(ok, err)
+	Harness.assertTrue(b:chatContains("unadvertised evidence hash"), "Unadvertised wanted hash rejection should be visible to the peer")
+end
+
+local function scenarioMalformedPayloadMetadataIsRejected()
+	local bus, a, b = newPair()
+	a:addKill({
+		boss = "Malformed Payload Metadata Sentinel",
+		spell = "Malformed Payload Metadata Slam",
+		spellId = 719001,
+	})
+	local payloads = a:exportPayloads()
+	local payload = replacePayloadHeaderField(payloads[1].payload, 9, "1.5")
+	Harness.openInboundSession(bus, a, b, "malformed-payload-metadata")
+	bus:sendPayload(a, b, "malformed-payload-metadata", payload)
+	local ok, err = bus:drain()
+	Harness.assertTrue(ok, err)
+
+	Harness.assertEqual(b:permanentKillCount(), 0, "Malformed payload metadata must not import evidence")
+	Harness.assertTrue(b:chatContains("invalid payload metadata"), "Malformed payload metadata should be reported")
+end
+
+local function scenarioDuplicateCanonicalHashDoesNotAdvertiseCollapsedInventory()
+	local bus, a, b = newPair()
+	a:addKill({
+		boss = "Duplicate Hash Inventory Sentinel",
+		spell = "Duplicate Hash Inventory Slam",
+		spellId = 716001,
+	})
+	Harness.assertTrue(duplicateFirstStoredKillBlock(a), "Fixture should create a duplicate canonical hash in local evidence")
+	local payloads, exportError = a:exportPayloads()
+	Harness.assertTrue(payloads == nil and string.find(tostring(exportError), "duplicate kill hash", 1, true) ~= nil, "Duplicate canonical hashes must block full payload export too")
+
+	Harness.runAcceptedSync(bus, a, b)
+
+	Harness.assertEqual(b:permanentKillCount(), 0, "Duplicate canonical hashes must not collapse into a partial advertised inventory")
+	Harness.assertEqual(countDeliveredMessageType(bus, a, b, "M"), 0, "Duplicate canonical hashes must fail before sending a manifest")
+	Harness.assertTrue(b:chatContains("duplicate kill hash"), "Duplicate canonical hash failure should be visible to the receiver")
+end
+
+local function scenarioMalformedEvidenceChunkIndexIsRejected()
+	local bus, a, b = newPair()
+	a:addKill({
+		boss = "Malformed Evidence Chunk Sentinel",
+		spell = "Malformed Evidence Chunk Slam",
+		spellId = 717001,
+	})
+	local payloads = a:exportPayloads()
+	local payload = payloads[1].payload
+	Harness.openInboundSession(bus, a, b, "malformed-evidence-index")
+
+	local prefix = b.addon.Core.Constants.SYNC_PREFIX
+	b.addon.Core.EvidenceSync.handleAddonMessage("CHAT_MSG_ADDON", prefix, table.concat({
+		"H",
+		"malformed-evidence-index",
+		tostring(#payload),
+		a.addon.Core.EvidenceCodec.hashString(payload),
+		"2",
+		"1",
+		a.addon.Core.Constants.VERSION,
+		"1",
+		"1",
+		"1",
+	}, "|"), "WHISPER", a.name)
+	b.addon.Core.EvidenceSync.handleAddonMessage("CHAT_MSG_ADDON", prefix, "C|malformed-evidence-index|1.5|2|x", "WHISPER", a.name)
+	b.addon.Core.EvidenceSync.handleAddonMessage("CHAT_MSG_ADDON", prefix, "C|malformed-evidence-index|2|2|" .. payload, "WHISPER", a.name)
+
+	Harness.assertEqual(b:permanentKillCount(), 0, "Malformed evidence chunk indexes must not complete or import a payload")
+end
+
+local function scenarioMalformedHashListChunkIndexIsRejected()
+	local bus, a, b = newPair()
+	a:addKill({
+		boss = "Malformed Hash Chunk Sentinel",
+		spell = "Malformed Hash Chunk Slam",
+		spellId = 718001,
+	})
+	a:requestSync(b)
+	local sessionId = a:latestSessionTo(b)
+	Harness.assertTrue(sessionId ~= nil, "Fixture should create an outbound session")
+	bus:clear()
+
+	local prefix = a.addon.Core.Constants.SYNC_PREFIX
+	a.addon.Core.EvidenceSync.handleAddonMessage("CHAT_MSG_ADDON", prefix, "A|" .. sessionId .. "|" .. a.addon.Core.Constants.VERSION, "WHISPER", b.name)
+	a.addon.Core.EvidenceSync.flushQueue(1000)
+	bus:clear()
+
+	local blocks = a.addon.Core.EvidenceStore.collectKillBlocks()
+	local payload = blocks[1].hash
+	a.addon.Core.EvidenceSync.handleAddonMessage("CHAT_MSG_ADDON", prefix, table.concat({
+		"W",
+		sessionId,
+		tostring(#payload),
+		a.addon.Core.EvidenceCodec.hashString(payload),
+		"2",
+		"1",
+		b.addon.Core.Constants.VERSION,
+	}, "|"), "WHISPER", b.name)
+	a.addon.Core.EvidenceSync.handleAddonMessage("CHAT_MSG_ADDON", prefix, "w|" .. sessionId .. "|1.5|2|x", "WHISPER", b.name)
+	a.addon.Core.EvidenceSync.handleAddonMessage("CHAT_MSG_ADDON", prefix, "w|" .. sessionId .. "|2|2|" .. payload, "WHISPER", b.name)
+	a.addon.Core.EvidenceSync.flushQueue(1000)
+
+	Harness.assertEqual(#queuedEvidencePayloadMessages(bus, a, b), 0, "Malformed hash-list chunk indexes must not complete a wanted list")
 end
 
 local scenarios = {
@@ -341,10 +1132,28 @@ local scenarios = {
 	scenarioTamperedLaterBatchWithValidHashDoesNotCommitEarlierBatches,
 	scenarioDuplicateOnlySyncRebuildsMissingLearnedCache,
 	scenarioPartialOverlapImportsOnlyMissingEvidence,
+	scenarioModernPayloadCannotIncludeUnrequestedHashes,
+	scenarioModernPayloadMustIncludeEveryRequestedHash,
 	scenarioOldPeerLargeSyncFailsClearly,
 	scenarioTickedTransportFullSyncImportsEverything,
 	scenarioSimultaneousCrossSyncConverges,
-	scenarioGroupRequestWhispersAcceptedTransfer,
+	scenarioManagedGroupSyncConvergesAcceptedRaidPeers,
+	scenarioManagedGroupLateAcceptIsExcluded,
+	scenarioParallelQueueAdvancesMultiplePeers,
+	scenarioUnauthorizedHashListCannotTriggerTransfer,
+	scenarioManagedGroupBroadcastAvoidsDuplicateProviderPayloads,
+	scenarioManagedGroupReassignsFailedProvider,
+	scenarioManagedGroupFlowIsRateLimited,
+	scenarioManagedGroupDefersRebuildInCombat,
+	scenarioRequestedHashSetMustBeComplete,
+	scenarioCorruptLocalEvidenceDoesNotAdvertisePartialInventory,
+	scenarioOversizedHashInventoryFailsBeforeManifestSend,
+	scenarioDuplicateWantedListDoesNotResendPayloads,
+	scenarioWantedListCannotRequestUnadvertisedHash,
+	scenarioMalformedPayloadMetadataIsRejected,
+	scenarioDuplicateCanonicalHashDoesNotAdvertiseCollapsedInventory,
+	scenarioMalformedEvidenceChunkIndexIsRejected,
+	scenarioMalformedHashListChunkIndexIsRejected,
 }
 
 for index = 1, #scenarios do

@@ -1229,6 +1229,28 @@ function EvidenceStore.collectKillBlocks()
 	return blocks
 end
 
+function EvidenceStore.collectKillHashes()
+	local hashes = {}
+	local blocks = EvidenceStore.collectKillBlocks()
+	local permanentKillCount = EvidenceStore.countPermanentKills()
+	if #blocks < permanentKillCount then
+		return nil, #blocks, "stored evidence contains corrupt kill block(s); hash inventory cannot be created"
+	end
+	local uniqueCount = 0
+	for index = 1, #blocks do
+		local hash = blocks[index].hash
+		if type(hash) ~= "string" or hash == "" then
+			return nil, uniqueCount, "stored evidence contains kill block without canonical hash; hash inventory cannot be created"
+		end
+		if hashes[hash] == true then
+			return nil, uniqueCount, "stored evidence contains duplicate kill hash(es); hash inventory cannot be created"
+		end
+		hashes[hash] = true
+		uniqueCount = uniqueCount + 1
+	end
+	return hashes, #blocks
+end
+
 local function sortedKeys(tbl)
 	local keys = {}
 	for key in pairs(tbl or {}) do

@@ -16,11 +16,17 @@ local inboundTransfers = {}
 local outboundSessions = {}
 local authorizedInboundSessions = {}
 local inboundImportSessions = {}
-local sendQueue = {}
+local inboundHashLists = {}
+local sendQueues = {}
+local sendQueueOrder = {}
+local sendQueueCursor = 1
 local sendFrame
 local sendElapsed = 0
 local sessionCounter = 0
 local RECORD_SEPARATOR = "~"
+local HASH_NEGOTIATION_VERSION = "1.12.0"
+local TRANSPORT_NAMESPACE = "evidence"
+local deferredSyncRebuild = false
 
 local function now()
 	return Util.now()
@@ -99,12 +105,22 @@ local function inboundTransferAuthorized(sender, session)
 end
 
 local function hashString(value)
-	local hash = 5381
+	if addon.Core.EvidenceCodec and type(addon.Core.EvidenceCodec.hashString) == "function" then
+		return addon.Core.EvidenceCodec.hashString(value)
+	end
+	local hashA = 5381
+	local hashB = 2166136261
+	local hashC = 0
+	local hashD = 3141592653
 	value = tostring(value or "")
 	for index = 1, #value do
-		hash = ((hash * 33) + string.byte(value, index)) % 4294967296
+		local byte = string.byte(value, index)
+		hashA = ((hashA * 33) + byte) % 4294967296
+		hashB = ((hashB * 65537) + byte) % 4294967296
+		hashC = ((hashC * 65599) + byte + index) % 4294967296
+		hashD = ((hashD * 131) + byte + (#value - index)) % 4294967296
 	end
-	return string.format("%08x", hash)
+	return string.format("%08x%08x%08x%08x", hashA, hashB, hashC, hashD)
 end
 
 local function newSessionId()
@@ -160,6 +176,37 @@ local function versionAtLeast(version, requiredVersion)
 		return minor > requiredMinor
 	end
 	return patch >= requiredPatch
+end
+
+local function hashNegotiationEnabled(peerVersion)
+	return versionAtLeast(C.VERSION, HASH_NEGOTIATION_VERSION)
+		and versionAtLeast(peerVersion, HASH_NEGOTIATION_VERSION)
+end
+
+local function sessionPeerKey(peer)
+	return normalizedName(peer)
+end
+
+local function setSessionPeerVersion(session, peer, version)
+	if type(session) ~= "table" or not peer then
+		return
+	end
+	session.peerVersions = type(session.peerVersions) == "table" and session.peerVersions or {}
+	session.peerVersions[sessionPeerKey(peer)] = version
+	session.peerVersion = version
+end
+
+local function sessionPeerVersion(session, peer)
+	if type(session) ~= "table" then
+		return nil
+	end
+	if session.peerVersions and peer then
+		local version = session.peerVersions[sessionPeerKey(peer)]
+		if version then
+			return version
+		end
+	end
+	return session.peerVersion
 end
 
 local function escapeField(value)
@@ -220,6 +267,26 @@ local function splitN(value, separator, maxParts)
 	end
 	result[#result + 1] = string.sub(value, startIndex)
 	return result
+end
+
+local function tableKeyCount(tbl)
+	local count = 0
+	for _ in pairs(type(tbl) == "table" and tbl or {}) do
+		count = count + 1
+	end
+	return count
+end
+
+local function isInteger(value)
+	return type(value) == "number" and math.floor(value) == value
+end
+
+local function isNonNegativeInteger(value)
+	return isInteger(value) and value >= 0
+end
+
+local function isPositiveInteger(value)
+	return isInteger(value) and value >= 1
 end
 
 local function unpackLine(recordLine)
@@ -323,7 +390,22 @@ local function buildPayloadsFromBlocks(evidence, killBlocks, totalKills)
 	return payloads, nil
 end
 
-function EvidenceSync.exportPayloads(maxKills)
+local function validateKillBlockHashes(killBlocks)
+	local hashes = {}
+	for index = 1, #(killBlocks or {}) do
+		local hash = killBlocks[index] and killBlocks[index].hash
+		if type(hash) ~= "string" or hash == "" then
+			return false, "stored evidence contains kill block without canonical hash; full sync cannot be created"
+		end
+		if hashes[hash] == true then
+			return false, "stored evidence contains duplicate kill hash(es); full sync cannot be created"
+		end
+		hashes[hash] = true
+	end
+	return true, nil
+end
+
+function EvidenceSync.exportPayloads(maxKills, wantedHashes)
 	local evidence = addon.Core.EvidenceStore and addon.Core.EvidenceStore.ensureDb(addon.db) or nil
 	local storeApi = addon.Core.EvidenceStore
 	if not evidence or not storeApi or type(storeApi.collectKillBlocks) ~= "function" then
@@ -338,11 +420,36 @@ function EvidenceSync.exportPayloads(maxKills)
 	if #killBlocks < permanentKillCount then
 		return nil, "stored evidence contains corrupt kill block(s); full sync cannot be created"
 	end
-	local totalKills = permanentKillCount
+	local validHashes, hashError = validateKillBlockHashes(killBlocks)
+	if not validHashes then
+		return nil, hashError
+	end
+	local requestedHashes = type(wantedHashes) == "table" and wantedHashes or nil
+	local requestedHashCount = requestedHashes and tableKeyCount(requestedHashes) or 0
+	if requestedHashes then
+		local filtered = {}
+		for index = 1, #killBlocks do
+			local hash = killBlocks[index].hash
+			if type(hash) == "string" and requestedHashes[hash] == true then
+				filtered[#filtered + 1] = killBlocks[index]
+			end
+		end
+		killBlocks = filtered
+		if #killBlocks < requestedHashCount then
+			return nil, "requested evidence kill(s) are unavailable"
+		end
+	end
+	local totalKills = requestedHashes and #killBlocks or permanentKillCount
 	local requestedLimit = tonumber(maxKills)
+	if requestedHashes and requestedLimit and requestedLimit >= 0 and requestedLimit < #killBlocks then
+		return nil, "requested evidence kill limit would truncate the requested set"
+	end
 	if requestedLimit and requestedLimit >= 0 and requestedLimit < #killBlocks then
 		while #killBlocks > requestedLimit do
 			table.remove(killBlocks)
+		end
+		if requestedHashes then
+			totalKills = #killBlocks
 		end
 	end
 
@@ -354,8 +461,9 @@ function EvidenceSync.exportPayloads(maxKills)
 		exported = #killBlocks,
 		total = totalKills,
 		skippedTooLarge = 0,
-		truncated = #killBlocks < totalKills,
+		truncated = not requestedHashes and #killBlocks < totalKills,
 		batchCount = #payloads,
+		requested = requestedHashes ~= nil,
 	}
 end
 
@@ -377,18 +485,23 @@ local function parsePayload(payload)
 		batchCount = 1,
 		blocks = {},
 	}
+	local seenHeader = false
 	for _, rawLine in ipairs(split(payload, RECORD_SEPARATOR)) do
 		if rawLine ~= "" then
 			local fields = unpackLine(rawLine)
 			local recordType = fields[1]
 			if recordType == "E" then
+				if seenHeader then
+					return nil, "duplicate payload header"
+				end
+				seenHeader = true
 				parsed.schemaVersion = tonumber(fields[2])
 				parsed.version = fields[3]
-				parsed.revision = tonumber(fields[4]) or 0
+				parsed.revision = tonumber(fields[4])
 				parsed.declaredKills = tonumber(fields[5])
 				parsed.totalKills = tonumber(fields[6])
-				parsed.batchIndex = tonumber(fields[9]) or 1
-				parsed.batchCount = tonumber(fields[10]) or 1
+				parsed.batchIndex = (fields[9] ~= nil and fields[9] ~= "") and tonumber(fields[9]) or 1
+				parsed.batchCount = (fields[10] ~= nil and fields[10] ~= "") and tonumber(fields[10]) or 1
 			elseif recordType == "P" then
 				if fields[2] ~= "" then
 					parsed.blocks[#parsed.blocks + 1] = fields[2]
@@ -402,6 +515,18 @@ local function parsePayload(payload)
 
 	if parsed.schemaVersion ~= C.EVIDENCE_SCHEMA_VERSION then
 		return nil, "unsupported evidence schema"
+	end
+	if not isNonNegativeInteger(parsed.revision)
+		or not isNonNegativeInteger(parsed.declaredKills)
+		or not isNonNegativeInteger(parsed.totalKills or parsed.declaredKills)
+		or not isPositiveInteger(parsed.batchIndex)
+		or not isPositiveInteger(parsed.batchCount)
+		or parsed.batchIndex > parsed.batchCount then
+		return nil, "invalid payload metadata"
+	end
+	parsed.totalKills = parsed.totalKills or parsed.declaredKills
+	if parsed.totalKills < parsed.declaredKills then
+		return nil, "invalid payload kill count"
 	end
 	if parsed.declaredKills ~= nil and parsed.declaredKills ~= #parsed.blocks then
 		return nil, "payload kill count mismatch"
@@ -462,6 +587,39 @@ local function rebuildAfterSyncImport(reason)
 	return nil, "evidence store is not available", false
 end
 
+local function shouldDeferSyncHeavyWork()
+	if type(InCombatLockdown) == "function" and InCombatLockdown() then
+		return true
+	end
+	if type(UnitAffectingCombat) == "function" and UnitAffectingCombat("player") then
+		return true
+	end
+	return false
+end
+
+local function markDeferredSyncRebuild(reason)
+	deferredSyncRebuild = true
+	markSyncRebuildRequired(reason or "evidence_sync_deferred_import")
+end
+
+local function runDeferredSyncRebuild()
+	if not deferredSyncRebuild or shouldDeferSyncHeavyWork() then
+		return false
+	end
+	deferredSyncRebuild = false
+	local rebuilt, errorMessage, handledRefresh = rebuildAfterSyncImport("evidence_sync_deferred_import")
+	if rebuilt == nil then
+		chat("deferred sync evidence import was stored, but learned rebuild failed: " .. tostring(errorMessage or "learned rebuild failed"))
+		refreshAfterImport(true)
+		return false
+	end
+	if not handledRefresh then
+		refreshAfterImport(false)
+	end
+	chat("deferred sync evidence rebuild completed")
+	return true
+end
+
 local function importParsedBlocks(parsed, sender, options)
 	options = type(options) == "table" and options or {}
 	local storeApi = addon.Core.EvidenceStore
@@ -503,6 +661,11 @@ local function importParsedBlocks(parsed, sender, options)
 		if not handledRefresh then
 			refreshAfterImport(rebuildError ~= nil)
 		end
+	elseif valid > 0 and options.deferRebuild then
+		if storeApi.bound then
+			storeApi.bound(evidence)
+		end
+		markDeferredSyncRebuild("evidence_sync_deferred_import")
 	end
 	logInfo("Evidence sync payload imported", {
 		sender = sender,
@@ -552,24 +715,99 @@ local function sendAddonMessage(message, distribution, target)
 	return true
 end
 
+local function sendQueueKey(distribution, target)
+	return tostring(distribution or "") .. "|" .. tostring(target or "")
+end
+
 local function queueMessage(message, distribution, target)
-	sendQueue[#sendQueue + 1] = {
-		message = message,
-		distribution = distribution,
-		target = target,
-	}
+	local key = sendQueueKey(distribution, target)
+	local queue = sendQueues[key]
+	if not queue then
+		queue = {
+			distribution = distribution,
+			target = target,
+			messages = {},
+		}
+		sendQueues[key] = queue
+		sendQueueOrder[#sendQueueOrder + 1] = key
+	end
+	queue.messages[#queue.messages + 1] = message
+end
+
+local function removeSendQueueAt(index)
+	local key = sendQueueOrder[index]
+	if key then
+		sendQueues[key] = nil
+		table.remove(sendQueueOrder, index)
+	end
+	if sendQueueCursor > #sendQueueOrder then
+		sendQueueCursor = 1
+	end
+end
+
+local function queuedMessageCount()
+	local count = 0
+	for _, queue in pairs(sendQueues) do
+		count = count + #(queue.messages or {})
+	end
+	return count
 end
 
 local function flushOneQueuedMessage()
-	if #sendQueue == 0 then
-		return
+	if #sendQueueOrder == 0 then
+		return false
 	end
-	local entry = table.remove(sendQueue, 1)
-	sendAddonMessage(entry.message, entry.distribution, entry.target)
+	if sendQueueCursor > #sendQueueOrder then
+		sendQueueCursor = 1
+	end
+
+	local attempts = #sendQueueOrder
+	while attempts > 0 and #sendQueueOrder > 0 do
+		local key = sendQueueOrder[sendQueueCursor]
+		local queue = key and sendQueues[key] or nil
+		if not queue or #(queue.messages or {}) == 0 then
+			removeSendQueueAt(sendQueueCursor)
+		else
+			local message = table.remove(queue.messages, 1)
+			local distribution = queue.distribution
+			local target = queue.target
+			if #queue.messages == 0 then
+				removeSendQueueAt(sendQueueCursor)
+			else
+				sendQueueCursor = sendQueueCursor + 1
+				if sendQueueCursor > #sendQueueOrder then
+					sendQueueCursor = 1
+				end
+			end
+			sendAddonMessage(message, distribution, target)
+			return true
+		end
+		attempts = attempts - 1
+	end
+	return false
+end
+
+local function flushQueuedMessages(maxMessages)
+	local sent = 0
+	local limit = tonumber(maxMessages)
+	if not limit then
+		limit = math.min(#sendQueueOrder, tonumber(C.SYNC_MAX_PARALLEL_MESSAGES_PER_TICK) or #sendQueueOrder)
+	end
+	while queuedMessageCount() > 0 and sent < limit do
+		if not flushOneQueuedMessage() then
+			break
+		end
+		sent = sent + 1
+	end
+	return sent, queuedMessageCount()
 end
 
 local function sendImmediate(message, distribution, target)
 	sendAddonMessage(message, distribution, target)
+end
+
+local function sendSyncFailure(sessionId, receiver, message)
+	sendImmediate("N|" .. tostring(sessionId or "") .. "|" .. escapeField(message or "sync failed"), "WHISPER", receiver)
 end
 
 local function cleanupExpired()
@@ -590,6 +828,11 @@ local function cleanupExpired()
 			inboundImportSessions[key] = nil
 		end
 	end
+	for key, transfer in pairs(inboundHashLists) do
+		if tonumber(transfer.updatedAt) and transfer.updatedAt < cutoffTransfer then
+			inboundHashLists[key] = nil
+		end
+	end
 	for key, session in pairs(outboundSessions) do
 		if tonumber(session.startedAt) and session.startedAt < cutoffTransfer then
 			outboundSessions[key] = nil
@@ -607,7 +850,7 @@ local function onUpdate(_, elapsed)
 	sendElapsed = sendElapsed + (elapsed or 0)
 	if sendElapsed >= C.SYNC_SEND_INTERVAL_SECONDS then
 		sendElapsed = 0
-		flushOneQueuedMessage()
+		flushQueuedMessages()
 		cleanupExpired()
 	end
 end
@@ -629,22 +872,468 @@ local function chunkPayload(payload)
 	return chunks
 end
 
-local function startTransfer(sessionId, receiver)
+local startTransfer
+
+local function sortedHashList(hashSet)
+	local hashes = {}
+	for hash in pairs(type(hashSet) == "table" and hashSet or {}) do
+		if type(hash) == "string" and hash ~= "" then
+			hashes[#hashes + 1] = hash
+		end
+	end
+	table.sort(hashes)
+	return hashes
+end
+
+local function hashListSet(hashList)
+	local hashSet = {}
+	for index = 1, #(hashList or {}) do
+		local hash = hashList[index]
+		if type(hash) == "string" and hash ~= "" then
+			hashSet[hash] = true
+		end
+	end
+	return hashSet
+end
+
+local function hashNegotiationState(session, peer)
+	if type(session) ~= "table" or not peer then
+		return nil
+	end
+	session.hashNegotiation = type(session.hashNegotiation) == "table" and session.hashNegotiation or {}
+	local key = sessionPeerKey(peer)
+	session.hashNegotiation[key] = type(session.hashNegotiation[key]) == "table" and session.hashNegotiation[key] or {}
+	return session.hashNegotiation[key]
+end
+
+local function recordAdvertisedHashes(sessionId, receiver, hashList)
+	local session = outboundSessions[sessionId]
+	local state = hashNegotiationState(session, receiver)
+	if not state then
+		return
+	end
+	local wantedProcessed = state.wantedProcessed == true
+	state.advertisedHashes = hashListSet(hashList)
+	state.wantedProcessed = wantedProcessed or nil
+end
+
+local function acceptWantedHashes(sessionId, sender, hashList)
+	local session = outboundSessions[sessionId]
+	local state = hashNegotiationState(session, sender)
+	if not state or type(state.advertisedHashes) ~= "table" then
+		return false, "sync wanted list arrived before local inventory was advertised"
+	end
+	if state.wantedProcessed == true then
+		return false, "sync wanted list was already processed"
+	end
+	for index = 1, #(hashList or {}) do
+		if state.advertisedHashes[hashList[index]] ~= true then
+			return false, "sync wanted list contains unadvertised evidence hash"
+		end
+	end
+	state.wantedProcessed = true
+	return true, nil
+end
+
+local function recordRequestedHashes(sessionId, sender, hashList)
+	local session = outboundSessions[sessionId]
+	local state = hashNegotiationState(session, sender)
+	if not state then
+		return
+	end
+	state.requestedHashes = hashListSet(hashList)
+	state.requestedHashCount = #(hashList or {})
+end
+
+local function requestedHashState(sender, sessionId)
+	local baseSession = splitBatchSession(sessionId)
+	local session = outboundSessions[baseSession]
+	if not hashNegotiationEnabled(sessionPeerVersion(session, sender)) then
+		return nil, false, nil
+	end
+	local state = hashNegotiationState(session, sender)
+	if not state or type(state.requestedHashes) ~= "table" then
+		return nil, true, "sync payload arrived before local wanted list was sent"
+	end
+	return state, true, nil
+end
+
+local function validateRequestedPayloadHashes(sender, sessionId, blockHashes, requireComplete)
+	local state, enabled, stateError = requestedHashState(sender, sessionId)
+	if not enabled then
+		return true, nil
+	end
+	if not state then
+		return false, stateError or "sync payload arrived without a matching wanted list"
+	end
+	local seen = {}
+	local receivedCount = 0
+	for index = 1, #(blockHashes or {}) do
+		local hash = blockHashes[index]
+		if state.requestedHashes[hash] ~= true then
+			return false, "sync payload contains unrequested evidence hash"
+		end
+		if seen[hash] == true then
+			return false, "sync payload contains duplicate requested evidence hash"
+		end
+		seen[hash] = true
+		receivedCount = receivedCount + 1
+	end
+	if requireComplete then
+		local requestedCount = tonumber(state.requestedHashCount) or tableKeyCount(state.requestedHashes)
+		if receivedCount ~= requestedCount then
+			return false, "sync payload is missing requested evidence hash(es)"
+		end
+		for hash in pairs(state.requestedHashes) do
+			if seen[hash] ~= true then
+				return false, "sync payload is missing requested evidence hash(es)"
+			end
+		end
+	end
+	return true, nil
+end
+
+local function markRequestedPayloadComplete(sender, sessionId)
+	local state = requestedHashState(sender, sessionId)
+	if not state then
+		return
+	end
+	state.requestedHashes = nil
+	state.requestedHashCount = nil
+end
+
+local function localEvidenceHashes()
+	local storeApi = addon.Core.EvidenceStore
+	if storeApi and type(storeApi.collectKillHashes) == "function" then
+		local hashes, count, hashError = storeApi.collectKillHashes()
+		if not hashes then
+			return nil, count or 0, hashError or "evidence hash inventory is unavailable"
+		end
+		return hashes, count or 0, nil
+	end
+	return nil, 0, "evidence store is not available"
+end
+
+local function sendHashList(listType, sessionId, receiver, hashList)
+	hashList = type(hashList) == "table" and hashList or {}
+	local payload = table.concat(hashList, ",")
+	local chunks = chunkPayload(payload)
+	if #payload > C.MAX_SYNC_PAYLOAD_BYTES then
+		return false, "sync hash list exceeds configured limit"
+	end
+	if #chunks > C.MAX_SYNC_CHUNKS then
+		return false, "sync hash list has too many chunks"
+	end
+
+	local messages = {}
+	messages[#messages + 1] = table.concat({
+		listType,
+		sessionId,
+		tostring(#payload),
+		hashString(payload),
+		tostring(#chunks),
+		tostring(#hashList),
+		C.VERSION,
+	}, "|")
+	for index = 1, #chunks do
+		messages[#messages + 1] = table.concat({
+			string.lower(listType),
+			sessionId,
+			tostring(index),
+			tostring(#chunks),
+			chunks[index],
+		}, "|")
+	end
+	for index = 1, #messages do
+		if #messages[index] > 255 then
+			return false, "sync hash list message exceeds addon message limit"
+		end
+	end
+	for index = 1, #messages do
+		queueMessage(messages[index], "WHISPER", receiver)
+	end
+	return true, nil
+end
+
+local function sendInventory(sessionId, receiver)
+	local localHashes, _, hashError = localEvidenceHashes()
+	if not localHashes then
+		local message = hashError or "evidence hash inventory is unavailable"
+		sendSyncFailure(sessionId, receiver, message)
+		chat("cannot sync evidence inventory to " .. tostring(receiver) .. ": " .. tostring(message))
+		logWarn("Evidence sync inventory unavailable", {
+			receiver = receiver,
+			session = sessionId,
+			error = message,
+		})
+		return false
+	end
+	local hashes = sortedHashList(localHashes)
+	local sent, sendError = sendHashList("M", sessionId, receiver, hashes)
+	if not sent then
+		sendSyncFailure(sessionId, receiver, sendError)
+		chat("cannot sync evidence inventory to " .. tostring(receiver) .. ": " .. tostring(sendError))
+		logWarn("Evidence sync inventory send failed", {
+			receiver = receiver,
+			session = sessionId,
+			hashCount = #hashes,
+			error = sendError,
+		})
+		return false
+	end
+	recordAdvertisedHashes(sessionId, receiver, hashes)
+	logInfo("Evidence sync inventory sent", {
+		receiver = receiver,
+		session = sessionId,
+		hashCount = #hashes,
+	})
+	return true
+end
+
+local function sendWantedHashes(sessionId, receiver, wantedHashes)
+	local sent, sendError = sendHashList("W", sessionId, receiver, wantedHashes)
+	if not sent then
+		sendSyncFailure(sessionId, receiver, sendError)
+		chat("cannot send requested evidence hash list to " .. tostring(receiver) .. ": " .. tostring(sendError))
+		logWarn("Evidence sync wanted list send failed", {
+			receiver = receiver,
+			session = sessionId,
+			hashCount = #(wantedHashes or {}),
+			error = sendError,
+		})
+		return false
+	end
+	logInfo("Evidence sync wanted list sent", {
+		receiver = receiver,
+		session = sessionId,
+		hashCount = #(wantedHashes or {}),
+	})
+	return true
+end
+
+local function maybeRebuildFromExistingEvidence(sender)
+	local storeApi = addon.Core.EvidenceStore
+	local killCount = storeApi and storeApi.countPermanentKills and storeApi.countPermanentKills() or 0
+	if killCount <= 0 then
+		chat("sync complete with " .. tostring(sender) .. ": no missing evidence kills requested")
+		return
+	end
+	local rebuilt, errorMessage = rebuildAfterSyncImport("evidence_sync_manifest")
+	if rebuilt == nil then
+		chat("sync complete with " .. tostring(sender) .. ": no missing evidence kills requested, but learned rebuild failed: " .. tostring(errorMessage or "learned rebuild failed"))
+	elseif rebuilt > 0 then
+		chat("sync complete with " .. tostring(sender) .. ": no missing evidence kills requested; rebuilt local models from existing evidence")
+	else
+		chat("sync complete with " .. tostring(sender) .. ": no missing evidence kills requested")
+	end
+end
+
+local function parseHashListPayload(payload, declaredCount)
+	local hashes = {}
+	local seen = {}
+	if payload ~= "" then
+		for _, hash in ipairs(split(payload, ",")) do
+			if hash ~= "" then
+				if not string.match(hash, "^[0-9a-f]+$") or #hash < 8 or #hash > 64 then
+					return nil, "invalid evidence hash in sync list"
+				end
+				if seen[hash] == true then
+					return nil, "duplicate evidence hash in sync list"
+				end
+				seen[hash] = true
+				hashes[#hashes + 1] = hash
+			end
+		end
+	end
+	if tonumber(declaredCount) ~= #hashes then
+		return nil, "sync hash list count mismatch"
+	end
+	return hashes
+end
+
+local function hashListTransferAuthorized(sender, sessionId)
+	local authorized = inboundTransferAuthorized(sender, sessionId)
+	if not authorized then
+		return false
+	end
+	local session = outboundSessions[sessionId]
+	return hashNegotiationEnabled(sessionPeerVersion(session, sender))
+end
+
+local function completeHashListTransfer(transferKey, transfer)
+	local payload = table.concat(transfer.chunks)
+	inboundHashLists[transferKey] = nil
+	if #payload ~= transfer.length or hashString(payload) ~= transfer.hash then
+		chat("sync hash list from " .. tostring(transfer.sender) .. " failed integrity check")
+		logWarn("Sync hash list integrity check failed", {
+			sender = transfer.sender,
+			session = transfer.session,
+			listType = transfer.listType,
+			expectedLength = transfer.length,
+			actualLength = #payload,
+			expectedHash = transfer.hash,
+			actualHash = hashString(payload),
+		})
+		return
+	end
+	local hashes, parseError = parseHashListPayload(payload, transfer.hashCount)
+	if not hashes then
+		chat("sync hash list from " .. tostring(transfer.sender) .. " failed: " .. tostring(parseError))
+		logWarn("Sync hash list parse failed", {
+			sender = transfer.sender,
+			session = transfer.session,
+			listType = transfer.listType,
+			error = parseError,
+		})
+		return
+	end
+
+	if transfer.listType == "M" then
+		local localHashes, _, hashError = localEvidenceHashes()
+		if not localHashes then
+			local message = hashError or "evidence hash inventory is unavailable"
+			sendSyncFailure(transfer.session, transfer.sender, message)
+			chat("sync inventory from " .. tostring(transfer.sender) .. " failed: " .. tostring(message))
+			logWarn("Evidence sync local inventory unavailable while processing remote inventory", {
+				sender = transfer.sender,
+				session = transfer.session,
+				error = message,
+			})
+			return
+		end
+		local wanted = {}
+		for index = 1, #hashes do
+			if localHashes[hashes[index]] ~= true then
+				wanted[#wanted + 1] = hashes[index]
+			end
+		end
+		chat("sync inventory from " .. tostring(transfer.sender) .. ": they have " .. tostring(#hashes) .. " kill(s), requesting " .. tostring(#wanted))
+		if not sendWantedHashes(transfer.session, transfer.sender, wanted) then
+			return
+		end
+		recordRequestedHashes(transfer.session, transfer.sender, wanted)
+		if #wanted == 0 then
+			maybeRebuildFromExistingEvidence(transfer.sender)
+		end
+	elseif transfer.listType == "W" then
+		local acceptedWanted, wantedError = acceptWantedHashes(transfer.session, transfer.sender, hashes)
+		if not acceptedWanted then
+			sendSyncFailure(transfer.session, transfer.sender, wantedError)
+			chat("sync wanted list from " .. tostring(transfer.sender) .. " failed: " .. tostring(wantedError))
+			logWarn("Rejected sync wanted list", {
+				sender = transfer.sender,
+				session = transfer.session,
+				error = wantedError,
+			})
+			return
+		end
+		if #hashes == 0 then
+			chat(tostring(transfer.sender) .. " already has the local BossTracker evidence")
+			return
+		end
+		startTransfer(transfer.session, transfer.sender, hashListSet(hashes))
+	end
+end
+
+local function receiveHashListHeader(sender, parts, listType)
+	local sessionId = parts[2]
+	local length = tonumber(parts[3])
+	local payloadHash = parts[4]
+	local chunkCount = tonumber(parts[5])
+	local hashCount = tonumber(parts[6])
+	if not sessionId or not length or not chunkCount or not hashCount
+		or not isNonNegativeInteger(length)
+		or not isNonNegativeInteger(chunkCount)
+		or not isNonNegativeInteger(hashCount)
+		or (length == 0 and chunkCount ~= 0)
+		or (length > 0 and chunkCount <= 0)
+		or chunkCount > C.MAX_SYNC_CHUNKS
+		or length > C.MAX_SYNC_PAYLOAD_BYTES
+		or type(payloadHash) ~= "string"
+		or not string.match(payloadHash, "^[0-9a-f]+$")
+		or #payloadHash < 8
+		or #payloadHash > 64
+		or hashCount < 0 then
+		logWarn("Rejected invalid sync hash list header", {
+			sender = sender,
+			session = sessionId,
+			listType = listType,
+			length = length,
+			chunkCount = chunkCount,
+			hashCount = hashCount,
+		})
+		return
+	end
+	if not hashListTransferAuthorized(sender, sessionId) then
+		logWarn("Rejected unauthorized sync hash list header", {
+			sender = sender,
+			session = sessionId,
+			listType = listType,
+		})
+		return
+	end
+
+	local transferKey = requestKey(sender, listType .. ":" .. sessionId)
+	inboundHashLists[transferKey] = {
+		sender = sender,
+		session = sessionId,
+		listType = listType,
+		length = length,
+		hash = payloadHash,
+		chunkCount = chunkCount,
+		hashCount = hashCount,
+		chunks = {},
+		received = 0,
+		startedAt = now(),
+		updatedAt = now(),
+	}
+	if chunkCount == 0 then
+		completeHashListTransfer(transferKey, inboundHashLists[transferKey])
+	end
+end
+
+local function receiveHashListChunk(sender, message, listType)
+	local parts = splitN(message, "|", 5)
+	local sessionId = parts[2]
+	local index = tonumber(parts[3])
+	local total = tonumber(parts[4])
+	local body = parts[5] or ""
+	local transferKey = requestKey(sender, string.upper(listType) .. ":" .. sessionId)
+	local transfer = inboundHashLists[transferKey]
+	if not transfer
+		or not isPositiveInteger(index)
+		or index > transfer.chunkCount
+		or not isPositiveInteger(total)
+		or total ~= transfer.chunkCount then
+		return
+	end
+	if not transfer.chunks[index] then
+		transfer.chunks[index] = body
+		transfer.received = transfer.received + 1
+		transfer.updatedAt = now()
+	end
+	if transfer.received >= transfer.chunkCount then
+		completeHashListTransfer(transferKey, transfer)
+	end
+end
+
+function startTransfer(sessionId, receiver, wantedHashes)
 	local session = outboundSessions[sessionId]
 	if not session then
 		return false
 	end
-	local payloads, statsOrError = EvidenceSync.exportPayloads()
+	local payloads, statsOrError = EvidenceSync.exportPayloads(nil, wantedHashes)
 	if not payloads then
 		sendImmediate("N|" .. sessionId .. "|" .. escapeField(statsOrError), "WHISPER", receiver)
 		return false
 	end
 	local stats = statsOrError
 	if stats.exported == 0 then
-		sendImmediate("N|" .. sessionId .. "|no evidence kills available", "WHISPER", receiver)
+		local message = wantedHashes and "requested evidence kills are unavailable" or "no evidence kills available"
+		sendImmediate("N|" .. sessionId .. "|" .. escapeField(message), "WHISPER", receiver)
 		return false
 	end
-	if #payloads > 1 and not versionAtLeast(session.peerVersion, "1.9.15") then
+	if #payloads > 1 and not versionAtLeast(sessionPeerVersion(session, receiver), "1.9.15") then
 		local message = "batched sync requires BossTracker 1.9.15 or newer on both players"
 		sendImmediate("N|" .. sessionId .. "|" .. escapeField(message), "WHISPER", receiver)
 		chat("cannot sync all evidence to " .. tostring(receiver) .. ": " .. message)
@@ -706,7 +1395,7 @@ local function showRequestPopup(request)
 		return false
 	end
 	StaticPopupDialogs.BOSSTRACKER_EVIDENCE_SYNC_REQUEST = {
-		text = "%s wants to exchange BossTracker completed encounter evidence with you.\n\nTheir evidence records: %s\n\nAccept and merge completed records into both local evidence stores?",
+		text = "%s wants to exchange BossTracker completed encounter evidence with you.\n\nTheir evidence records: %s\n\nAccept to compare evidence hashes and exchange only missing records?",
 		button1 = "Accept",
 		button2 = "Decline",
 		OnAccept = function(_, data)
@@ -762,6 +1451,11 @@ end
 function EvidenceSync.acceptRequest(sender, session)
 	local key, request = findPendingRequest(sender, session)
 	if not request then
+		if addon.Core.SyncTransport
+			and type(addon.Core.SyncTransport.acceptRequest) == "function"
+			and addon.Core.SyncTransport.acceptRequest(TRANSPORT_NAMESPACE, sender, session) then
+			return true
+		end
 		chat("no pending sync request from " .. tostring(sender))
 		return false
 	end
@@ -775,8 +1469,12 @@ function EvidenceSync.acceptRequest(sender, session)
 		target = request.sender,
 		reciprocal = true,
 	}
-	outboundSessions[request.session].peerVersion = request.version
-	startTransfer(request.session, request.sender)
+	setSessionPeerVersion(outboundSessions[request.session], request.sender, request.version)
+	if hashNegotiationEnabled(request.version) then
+		sendInventory(request.session, request.sender)
+	else
+		startTransfer(request.session, request.sender)
+	end
 	chat("accepted BossTracker evidence sync from " .. tostring(request.sender))
 	return true
 end
@@ -784,6 +1482,11 @@ end
 function EvidenceSync.declineRequest(sender, session)
 	local key, request = findPendingRequest(sender, session)
 	if not request then
+		if addon.Core.SyncTransport
+			and type(addon.Core.SyncTransport.declineRequest) == "function"
+			and addon.Core.SyncTransport.declineRequest(TRANSPORT_NAMESPACE, sender, session) then
+			return true
+		end
 		chat("no pending sync request from " .. tostring(sender))
 		return false
 	end
@@ -797,9 +1500,13 @@ local function receiveAccept(sender, sessionId, version)
 	if not outboundSessions[sessionId] then
 		return
 	end
-	outboundSessions[sessionId].peerVersion = version
+	setSessionPeerVersion(outboundSessions[sessionId], sender, version)
 	authorizeInboundTransfer(sender, sessionId, "requested_sync")
-	startTransfer(sessionId, sender)
+	if hashNegotiationEnabled(version) then
+		sendInventory(sessionId, sender)
+	else
+		startTransfer(sessionId, sender)
+	end
 end
 
 local function receiveHeader(sender, parts)
@@ -807,18 +1514,26 @@ local function receiveHeader(sender, parts)
 	local length = tonumber(parts[3])
 	local payloadHash = parts[4]
 	local chunkCount = tonumber(parts[5])
-	local killCount = tonumber(parts[6]) or 0
+	local killCount = tonumber(parts[6])
 	local batchIndex = tonumber(parts[8])
 	local batchCount = tonumber(parts[9])
 	local totalKills = tonumber(parts[10]) or killCount
 	local baseSession, batchFromSession = splitBatchSession(sessionId)
 	batchIndex = batchIndex or batchFromSession or 1
 	batchCount = batchCount or 1
-	if not sessionId or not length or not chunkCount or chunkCount <= 0
+	if not sessionId
+		or not isNonNegativeInteger(length)
+		or not isPositiveInteger(chunkCount)
+		or not isNonNegativeInteger(killCount)
+		or not isNonNegativeInteger(totalKills)
 		or chunkCount > C.MAX_SYNC_CHUNKS
 		or length > C.MAX_SYNC_PAYLOAD_BYTES
-		or batchIndex < 1
-		or batchCount < 1
+		or type(payloadHash) ~= "string"
+		or not string.match(payloadHash, "^[0-9a-f]+$")
+		or #payloadHash < 8
+		or #payloadHash > 64
+		or not isPositiveInteger(batchIndex)
+		or not isPositiveInteger(batchCount)
 		or batchIndex > batchCount then
 		logWarn("Rejected invalid sync header", {
 			sender = sender,
@@ -880,17 +1595,154 @@ local function cleanupInboundImportSession(sender, session)
 	end
 end
 
-local function validateParsedBlocks(parsed)
+local function canonicalBlockHashes(parsed)
 	local codec = addon.Core.EvidenceCodec
-	if not codec or type(codec.decodeKillBlock) ~= "function" or type(codec.validDecodedKill) ~= "function" then
+	if not codec
+		or type(codec.decodeKillBlock) ~= "function"
+		or type(codec.validDecodedKill) ~= "function"
+		or type(codec.hashKill) ~= "function" then
 		return nil, "evidence codec is unavailable"
 	end
+	local hashes = {}
 	for index = 1, #(parsed.blocks or {}) do
 		local decoded, decodeError = codec.decodeKillBlock(parsed.blocks[index])
 		if not decoded or not codec.validDecodedKill(decoded) then
 			return nil, "invalid kill evidence in batch " .. tostring(parsed.batchIndex or "?") .. " block " .. tostring(index) .. ": " .. tostring(decodeError or "invalid kill evidence")
 		end
+		local hash = codec.hashKill(decoded.instance, decoded.boss, decoded.kill)
+		if type(hash) ~= "string" or hash == "" then
+			return nil, "missing canonical kill hash in batch " .. tostring(parsed.batchIndex or "?") .. " block " .. tostring(index)
+		end
+		hashes[#hashes + 1] = hash
 	end
+	return hashes, nil
+end
+
+local function validateParsedBlocks(parsed)
+	local blockHashes, validationError = canonicalBlockHashes(parsed)
+	if not blockHashes then
+		return nil, validationError
+	end
+	return true, nil, blockHashes
+end
+
+local function transportPayloadIds(payload)
+	local parsed, parseError = parsePayload(payload)
+	if not parsed then
+		return nil, parseError
+	end
+	local valid, validationError, blockHashes = validateParsedBlocks(parsed)
+	if not valid then
+		return nil, validationError
+	end
+	return blockHashes, nil
+end
+
+local function transportListItems()
+	local evidence = addon.Core.EvidenceStore and addon.Core.EvidenceStore.ensureDb(addon.db) or nil
+	local storeApi = addon.Core.EvidenceStore
+	if not evidence or not storeApi or type(storeApi.collectKillBlocks) ~= "function" then
+		return nil, "evidence store is not available"
+	end
+	local killBlocks = storeApi.collectKillBlocks()
+	local permanentKillCount = storeApi.countPermanentKills and storeApi.countPermanentKills() or #killBlocks
+	if #killBlocks < permanentKillCount then
+		return nil, "stored evidence contains corrupt kill block(s); full sync cannot be created"
+	end
+	local validHashes, hashError = validateKillBlockHashes(killBlocks)
+	if not validHashes then
+		return nil, hashError
+	end
+	local items = {}
+	for index = 1, #killBlocks do
+		items[#items + 1] = {
+			id = killBlocks[index].hash,
+			size = #(killBlocks[index].block or ""),
+		}
+	end
+	return items, nil
+end
+
+local function transportExportPayloads(itemIds)
+	local wanted = hashListSet(itemIds)
+	local payloads, statsOrError = EvidenceSync.exportPayloads(nil, wanted)
+	if not payloads then
+		return nil, statsOrError
+	end
+	local result = {}
+	for index = 1, #payloads do
+		local ids, idError = transportPayloadIds(payloads[index].payload)
+		if not ids then
+			return nil, idError
+		end
+		result[#result + 1] = {
+			payload = payloads[index].payload,
+			ids = ids,
+			itemCount = #ids,
+		}
+	end
+	return result, nil
+end
+
+local function transportImportPayload(payload, context)
+	context = type(context) == "table" and context or {}
+	local parsed, parseError = parsePayload(payload)
+	if not parsed then
+		return nil, parseError
+	end
+	local stats, importError = importParsedBlocks(parsed, context.sender, {
+		deferRebuild = context.deferHeavyWork == true,
+	})
+	return stats, importError
+end
+
+local function showManagedRequestPopup(request)
+	if not StaticPopupDialogs or not StaticPopup_Show then
+		chat(tostring(request.sender) .. " wants to start managed BossTracker group sync. Use /btr sync accept " .. tostring(request.sender) .. " to accept.")
+		return false
+	end
+	StaticPopupDialogs.BOSSTRACKER_EVIDENCE_SYNC_REQUEST = {
+		text = "%s wants to start managed BossTracker group evidence sync.\n\nAccept to compare evidence hashes and receive only missing records?",
+		button1 = "Accept",
+		button2 = "Decline",
+		OnAccept = function(_, data)
+			if data then
+				EvidenceSync.acceptRequest(data.sender, data.session)
+			end
+		end,
+		OnCancel = function(_, data)
+			if data then
+				EvidenceSync.declineRequest(data.sender, data.session)
+			end
+		end,
+		timeout = 0,
+		whileDead = 1,
+		hideOnEscape = 1,
+	}
+	StaticPopup_Show("BOSSTRACKER_EVIDENCE_SYNC_REQUEST", request.sender, nil, request)
+	return true
+end
+
+local function registerTransportAdapter()
+	if not addon.Core.SyncTransport or type(addon.Core.SyncTransport.registerProtocol) ~= "function" then
+		return false
+	end
+	addon.Core.SyncTransport.registerProtocol(TRANSPORT_NAMESPACE, {
+		listItems = transportListItems,
+		exportPayloads = transportExportPayloads,
+		payloadIds = transportPayloadIds,
+		importPayload = transportImportPayload,
+		deferHeavyWork = shouldDeferSyncHeavyWork,
+		onRequest = showManagedRequestPopup,
+		onDuplicateOnly = function(context)
+			maybeRebuildFromExistingEvidence(context and context.manager or "group sync")
+		end,
+		onPayloadImported = function(stats)
+			if stats and stats.valid and stats.valid > 0 and stats.rebuildError then
+				chat("managed group sync imported evidence, but learned rebuild failed: " .. tostring(stats.rebuildError))
+			end
+		end,
+	})
 	return true
 end
 
@@ -921,14 +1773,24 @@ local function aggregateBatchPayload(transfer, parsed)
 		return nil, "batch metadata mismatch"
 	end
 
-	local validBlocks, validationError = validateParsedBlocks(parsed)
+	local validBlocks, validationError, blockHashes = validateParsedBlocks(parsed)
 	if not validBlocks then
 		return nil, validationError
+	end
+	local requestedValid, requestedError = validateRequestedPayloadHashes(
+		transfer.sender,
+		transfer.baseSession or transfer.session,
+		blockHashes,
+		false
+	)
+	if not requestedValid then
+		return nil, requestedError
 	end
 
 	if not sessionStats.batches[transfer.batchIndex] then
 		sessionStats.batches[transfer.batchIndex] = {
 			blocks = parsed.blocks or {},
+			hashes = blockHashes or {},
 			killCount = #(parsed.blocks or {}),
 		}
 		sessionStats.completed = sessionStats.completed + 1
@@ -949,8 +1811,25 @@ local function aggregateBatchPayload(transfer, parsed)
 		if sessionStats.totalKills ~= #blocks then
 			return nil, "batch kill count mismatch"
 		end
+		local blockHashes = {}
+		for batchIndex = 1, sessionStats.batchCount do
+			local batch = sessionStats.batches[batchIndex]
+			for hashIndex = 1, #(batch.hashes or {}) do
+				blockHashes[#blockHashes + 1] = batch.hashes[hashIndex]
+			end
+		end
+		local requestedValid, requestedError = validateRequestedPayloadHashes(
+			transfer.sender,
+			transfer.baseSession or transfer.session,
+			blockHashes,
+			true
+		)
+		if not requestedValid then
+			return nil, requestedError
+		end
 		sessionStats.blocks = blocks
 		inboundImportSessions[sessionKey] = nil
+		markRequestedPayloadComplete(transfer.sender, transfer.baseSession or transfer.session)
 		return sessionStats, true
 	end
 	return sessionStats, false
@@ -1062,6 +1941,36 @@ local function completeTransfer(transferKey, transfer)
 		return
 	end
 
+	local _, requestedValidationEnabled = requestedHashState(transfer.sender, transfer.baseSession or transfer.session)
+	if requestedValidationEnabled then
+		local validBlocks, validationError, blockHashes = validateParsedBlocks(parsed)
+		if not validBlocks then
+			chat("sync from " .. tostring(transfer.sender) .. " failed: " .. tostring(validationError))
+			logWarn("Sync payload validation failed", {
+				sender = transfer.sender,
+				session = transfer.session,
+				error = validationError,
+			})
+			return
+		end
+		local requestedValid, requestedError = validateRequestedPayloadHashes(
+			transfer.sender,
+			transfer.baseSession or transfer.session,
+			blockHashes,
+			true
+		)
+		if not requestedValid then
+			chat("sync from " .. tostring(transfer.sender) .. " failed: " .. tostring(requestedError))
+			logWarn("Sync payload requested-hash validation failed", {
+				sender = transfer.sender,
+				session = transfer.session,
+				error = requestedError,
+			})
+			return
+		end
+		markRequestedPayloadComplete(transfer.sender, transfer.baseSession or transfer.session)
+	end
+
 	local stats, importError = importParsedBlocks(parsed, transfer.sender)
 	if not stats then
 		chat("sync from " .. tostring(transfer.sender) .. " failed: " .. tostring(importError))
@@ -1093,7 +2002,11 @@ local function receiveChunk(sender, message)
 	local body = parts[5] or ""
 	local transferKey = requestKey(sender, sessionId)
 	local transfer = inboundTransfers[transferKey]
-	if not transfer or not index or index < 1 or index > transfer.chunkCount or total ~= transfer.chunkCount then
+	if not transfer
+		or not isPositiveInteger(index)
+		or index > transfer.chunkCount
+		or not isPositiveInteger(total)
+		or total ~= transfer.chunkCount then
 		return
 	end
 	if not transfer.chunks[index] then
@@ -1129,6 +2042,14 @@ local function handleAddonMessage(_, prefix, message, distribution, sender)
 		receiveHeader(sender, splitN(message, "|", 10))
 	elseif messageType == "C" then
 		receiveChunk(sender, message)
+	elseif messageType == "M" then
+		receiveHashListHeader(sender, splitN(message, "|", 7), "M")
+	elseif messageType == "m" then
+		receiveHashListChunk(sender, message, "M")
+	elseif messageType == "W" then
+		receiveHashListHeader(sender, splitN(message, "|", 7), "W")
+	elseif messageType == "w" then
+		receiveHashListChunk(sender, message, "W")
 	elseif messageType == "N" then
 		local parts = splitN(message, "|", 3)
 		chat("sync from " .. tostring(sender) .. " did not send evidence: " .. tostring(unescapeField(parts[3])))
@@ -1211,6 +2132,14 @@ local function requestSync(target)
 		return false
 	end
 
+	if distribution ~= "WHISPER" then
+		if addon.Core.SyncTransport and type(addon.Core.SyncTransport.startManagedExchange) == "function" then
+			return addon.Core.SyncTransport.startManagedExchange(TRANSPORT_NAMESPACE, distribution)
+		end
+		chat("managed group sync is unavailable until the client is fully restarted after this BossTracker update")
+		return false
+	end
+
 	local sessionId = newSessionId()
 	outboundSessions[sessionId] = {
 		session = sessionId,
@@ -1245,13 +2174,13 @@ function EvidenceSync.handleSlash(rest)
 end
 
 function EvidenceSync.flushQueue(maxMessages)
-	local sent = 0
-	maxMessages = tonumber(maxMessages)
-	while #sendQueue > 0 and (not maxMessages or sent < maxMessages) do
-		flushOneQueuedMessage()
-		sent = sent + 1
+	local sent, remaining = flushQueuedMessages(maxMessages)
+	if addon.Core.SyncTransport and type(addon.Core.SyncTransport.flushQueue) == "function" then
+		local transportSent, transportRemaining = addon.Core.SyncTransport.flushQueue(maxMessages)
+		sent = (tonumber(sent) or 0) + (tonumber(transportSent) or 0)
+		remaining = (tonumber(remaining) or 0) + (tonumber(transportRemaining) or 0)
 	end
-	return sent, #sendQueue
+	return sent, remaining
 end
 
 function EvidenceSync.start()
@@ -1260,8 +2189,13 @@ function EvidenceSync.start()
 	outboundSessions = {}
 	authorizedInboundSessions = {}
 	inboundImportSessions = {}
-	sendQueue = {}
+	inboundHashLists = {}
+	sendQueues = {}
+	sendQueueOrder = {}
+	sendQueueCursor = 1
 	sendElapsed = 0
+	deferredSyncRebuild = false
+	registerTransportAdapter()
 	ensureSendFrame()
 	if type(RegisterAddonMessagePrefix) == "function" then
 		RegisterAddonMessagePrefix(C.SYNC_PREFIX)
@@ -1270,4 +2204,7 @@ function EvidenceSync.start()
 		addon.UnregisterModuleEvents("EvidenceSync")
 	end
 	addon.RegisterEvent("CHAT_MSG_ADDON", "EvidenceSync", handleAddonMessage)
+	addon.RegisterEvent("PLAYER_REGEN_ENABLED", "EvidenceSync", function()
+		runDeferredSyncRebuild()
+	end)
 end

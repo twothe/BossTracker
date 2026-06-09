@@ -2452,6 +2452,7 @@ local function scenarioEvidenceHashUsesAllEventFacts()
 	local firstHash = addon.Core.EvidenceStore.killHashForEvidence("zone:hash_lab", "boss:hash_sentinel", "tier:normal", firstEvents, actors, spells, 2000, "unit_died")
 	local secondHash = addon.Core.EvidenceStore.killHashForEvidence("zone:hash_lab", "boss:hash_sentinel", "tier:normal", secondEvents, actors, spells, 2000, "unit_died")
 	Harness.assertTrue(firstHash ~= nil and secondHash ~= nil and firstHash ~= secondHash, "Evidence content hashes must include late event facts beyond the first 160 events")
+	Harness.assertTrue(string.len(firstHash) >= 32, "Evidence content hashes must be stronger than the old 32-bit sync key")
 end
 
 local function scenarioEvidenceCountsAreSegmentLocal()
@@ -2848,16 +2849,46 @@ local function scenarioEvidenceSyncRoundTripRebuildsModel()
 
 	Harness.clearAddonMessages()
 	addon.Core.EvidenceSync.handleAddonMessage("CHAT_MSG_ADDON", addon.Core.Constants.SYNC_PREFIX, "A|" .. sessionId .. "|" .. addon.Core.Constants.VERSION, "WHISPER", "PeerSyncTarget")
-	addon.Core.EvidenceSync.flushQueue()
+	addon.Core.EvidenceSync.flushQueue(1000)
 	messages = Harness.sentAddonMessages()
-	Harness.assertTrue(#messages >= 2, "Accepted sync should send a header and at least one payload chunk")
-	Harness.assertTrue(string.sub(messages[1].message, 1, 2) == "H|", "Accepted sync should start with a transfer header")
+	Harness.assertTrue(#messages >= 1, "Accepted sync should send an evidence inventory")
+	Harness.assertTrue(string.sub(messages[1].message, 1, 2) == "M|", "Accepted sync should start with a hash inventory")
+	for index = 1, #messages do
+		Harness.assertTrue(#messages[index].message <= 255, "Sync inventory message " .. tostring(index) .. " should stay below the client limit")
+	end
+
+	local wantedPayload = originalHash
+	local wantedPayloadHash = addon.Core.EvidenceCodec.hashString(wantedPayload)
+	Harness.clearAddonMessages()
+	addon.Core.EvidenceSync.handleAddonMessage("CHAT_MSG_ADDON", addon.Core.Constants.SYNC_PREFIX, table.concat({
+		"W",
+		sessionId,
+		tostring(#wantedPayload),
+		wantedPayloadHash,
+		"1",
+		"1",
+		addon.Core.Constants.VERSION,
+	}, "|"), "WHISPER", "PeerSyncTarget")
+	addon.Core.EvidenceSync.handleAddonMessage("CHAT_MSG_ADDON", addon.Core.Constants.SYNC_PREFIX, table.concat({
+		"w",
+		sessionId,
+		"1",
+		"1",
+		wantedPayload,
+	}, "|"), "WHISPER", "PeerSyncTarget")
+	addon.Core.EvidenceSync.flushQueue(1000)
+	messages = Harness.sentAddonMessages()
+	Harness.assertTrue(#messages >= 2, "Requested sync should send a header and at least one payload chunk")
+	Harness.assertTrue(string.sub(messages[1].message, 1, 2) == "H|", "Requested sync should start with a transfer header")
 	for index = 1, #messages do
 		Harness.assertTrue(#messages[index].message <= 255, "Sync addon message " .. tostring(index) .. " should stay below the client limit")
 	end
 
 	addon.Core.SavedVariables.clearLearnedData("Test clears local data before chunked sync receive.")
 	Harness.assertTrue(addon.Core.EvidenceStore.countPermanentKills() == 0, "Test setup should clear local evidence before chunked receive")
+	addon.Core.EvidenceSync.handleAddonMessage("CHAT_MSG_ADDON", addon.Core.Constants.SYNC_PREFIX, "R|" .. sessionId .. "|1.9.15|1|0", "WHISPER", "PeerSyncTarget")
+	addon.Core.EvidenceSync.acceptRequest("PeerSyncTarget", sessionId)
+	Harness.clearAddonMessages()
 	for index = 1, #messages do
 		addon.Core.EvidenceSync.handleAddonMessage("CHAT_MSG_ADDON", addon.Core.Constants.SYNC_PREFIX, messages[index].message, "WHISPER", "Intruder")
 	end
@@ -2873,17 +2904,47 @@ local function scenarioEvidenceSyncRoundTripRebuildsModel()
 	Harness.clearAddonMessages()
 	addon.Core.EvidenceSync.handleAddonMessage("CHAT_MSG_ADDON", addon.Core.Constants.SYNC_PREFIX, "R|peer-session|" .. addon.Core.Constants.VERSION .. "|2|7", "WHISPER", "PeerSyncTarget")
 	addon.Core.EvidenceSync.acceptRequest("PeerSyncTarget", "peer-session")
-	addon.Core.EvidenceSync.flushQueue()
+	addon.Core.EvidenceSync.flushQueue(1000)
 	messages = Harness.sentAddonMessages()
 	Harness.assertTrue(messages[1] ~= nil and messages[1].message == "A|peer-session|" .. addon.Core.Constants.VERSION, "Accepting a sync request should acknowledge the sender")
+	local reciprocalInventory
+	for index = 1, #messages do
+		if string.sub(messages[index].message, 1, 2) == "M|" then
+			reciprocalInventory = messages[index]
+		end
+		Harness.assertTrue(#messages[index].message <= 255, "Reciprocal sync message " .. tostring(index) .. " should stay below the client limit")
+	end
+	Harness.assertTrue(reciprocalInventory ~= nil and reciprocalInventory.distribution == "WHISPER", "Accepting a sync request should whisper local evidence inventory back")
+
+	local reciprocalWantedPayload = firstEvidenceKillHash()
+	local reciprocalWantedHash = addon.Core.EvidenceCodec.hashString(reciprocalWantedPayload)
+	Harness.clearAddonMessages()
+	addon.Core.EvidenceSync.handleAddonMessage("CHAT_MSG_ADDON", addon.Core.Constants.SYNC_PREFIX, table.concat({
+		"W",
+		"peer-session",
+		tostring(#reciprocalWantedPayload),
+		reciprocalWantedHash,
+		"1",
+		"1",
+		addon.Core.Constants.VERSION,
+	}, "|"), "WHISPER", "PeerSyncTarget")
+	addon.Core.EvidenceSync.handleAddonMessage("CHAT_MSG_ADDON", addon.Core.Constants.SYNC_PREFIX, table.concat({
+		"w",
+		"peer-session",
+		"1",
+		"1",
+		reciprocalWantedPayload,
+	}, "|"), "WHISPER", "PeerSyncTarget")
+	addon.Core.EvidenceSync.flushQueue(1000)
+	messages = Harness.sentAddonMessages()
 	local reciprocalHeader
 	for index = 1, #messages do
 		if string.sub(messages[index].message, 1, 2) == "H|" then
 			reciprocalHeader = messages[index]
 		end
-		Harness.assertTrue(#messages[index].message <= 255, "Reciprocal sync message " .. tostring(index) .. " should stay below the client limit")
+		Harness.assertTrue(#messages[index].message <= 255, "Requested reciprocal sync message " .. tostring(index) .. " should stay below the client limit")
 	end
-	Harness.assertTrue(reciprocalHeader ~= nil and reciprocalHeader.distribution == "WHISPER", "Accepting a sync request should also whisper local evidence back")
+	Harness.assertTrue(reciprocalHeader ~= nil and reciprocalHeader.distribution == "WHISPER", "Requested reciprocal sync should whisper local evidence back")
 
 	addon.Core.SavedVariables.clearLearnedData("Test allows sync request without local evidence.")
 	Harness.assertTrue(addon.Core.EvidenceStore.countPermanentKills() == 0, "Test setup should have no local evidence before empty request")
@@ -2900,7 +2961,9 @@ local function scenarioEvidenceSyncRoundTripRebuildsModel()
 	addon.Core.EvidenceSync.handleSlash("group")
 	messages = Harness.sentAddonMessages()
 	lastMessage = messages[#messages]
-	Harness.assertTrue(lastMessage ~= nil and lastMessage.distribution == "PARTY", "Group sync should use party distribution outside raids")
+	Harness.assertTrue(lastMessage ~= nil and lastMessage.prefix == addon.Core.Constants.SYNC_TRANSPORT_PREFIX, "Group sync should use the managed transport prefix")
+	Harness.assertTrue(string.sub(lastMessage.message, 1, 2) == "Q|", "Group sync should send a managed transport request")
+	Harness.assertTrue(lastMessage.distribution == "PARTY", "Group sync should use party distribution outside raids")
 	Harness.assertTrue(lastMessage.target == nil, "Group sync request should not whisper a single target")
 
 	Harness.clearAddonMessages()
@@ -2908,7 +2971,9 @@ local function scenarioEvidenceSyncRoundTripRebuildsModel()
 	addon.Core.EvidenceSync.handleSlash("raid")
 	messages = Harness.sentAddonMessages()
 	lastMessage = messages[#messages]
-	Harness.assertTrue(lastMessage ~= nil and lastMessage.distribution == "RAID", "Raid sync should use raid distribution")
+	Harness.assertTrue(lastMessage ~= nil and lastMessage.prefix == addon.Core.Constants.SYNC_TRANSPORT_PREFIX, "Raid sync should use the managed transport prefix")
+	Harness.assertTrue(string.sub(lastMessage.message, 1, 2) == "Q|", "Raid sync should send a managed transport request")
+	Harness.assertTrue(lastMessage.distribution == "RAID", "Raid sync should use raid distribution")
 	Harness.assertTrue(lastMessage.target == nil, "Raid sync request should not whisper a single target")
 end
 
@@ -2953,7 +3018,35 @@ local function scenarioEvidenceSyncTransfersAllBatches()
 
 	Harness.clearAddonMessages()
 	addon.Core.EvidenceSync.handleAddonMessage("CHAT_MSG_ADDON", constants.SYNC_PREFIX, "A|" .. sessionId .. "|" .. constants.VERSION, "WHISPER", "PeerBatchTarget")
-	addon.Core.EvidenceSync.flushQueue()
+	addon.Core.EvidenceSync.flushQueue(1000)
+	messages = Harness.sentAddonMessages()
+	Harness.assertTrue(messages[1] ~= nil and string.sub(messages[1].message, 1, 2) == "M|", "Batched sync should negotiate hash inventory before payload transfer")
+
+	local wantedHashes = {}
+	local blocks = addon.Core.EvidenceStore.collectKillBlocks()
+	for index = 1, #blocks do
+		wantedHashes[#wantedHashes + 1] = blocks[index].hash
+	end
+	local wantedPayload = table.concat(wantedHashes, ",")
+	local wantedPayloadHash = addon.Core.EvidenceCodec.hashString(wantedPayload)
+	Harness.clearAddonMessages()
+	addon.Core.EvidenceSync.handleAddonMessage("CHAT_MSG_ADDON", constants.SYNC_PREFIX, table.concat({
+		"W",
+		sessionId,
+		tostring(#wantedPayload),
+		wantedPayloadHash,
+		"1",
+		tostring(#wantedHashes),
+		constants.VERSION,
+	}, "|"), "WHISPER", "PeerBatchTarget")
+	addon.Core.EvidenceSync.handleAddonMessage("CHAT_MSG_ADDON", constants.SYNC_PREFIX, table.concat({
+		"w",
+		sessionId,
+		"1",
+		"1",
+		wantedPayload,
+	}, "|"), "WHISPER", "PeerBatchTarget")
+	addon.Core.EvidenceSync.flushQueue(1000)
 	messages = Harness.sentAddonMessages()
 	constants.MAX_SYNC_KILLS_PER_PAYLOAD = originalKillsPerPayload
 
@@ -2974,6 +3067,9 @@ local function scenarioEvidenceSyncTransfersAllBatches()
 
 	addon.Core.SavedVariables.clearLearnedData("Test clears local data before batched sync receive.")
 	Harness.assertTrue(addon.Core.EvidenceStore.countPermanentKills() == 0, "Test setup should clear local evidence before batched receive")
+	addon.Core.EvidenceSync.handleAddonMessage("CHAT_MSG_ADDON", constants.SYNC_PREFIX, "R|" .. sessionId .. "|1.9.15|5|0", "WHISPER", "PeerBatchTarget")
+	addon.Core.EvidenceSync.acceptRequest("PeerBatchTarget", sessionId)
+	Harness.clearAddonMessages()
 	for index = 1, #messages do
 		addon.Core.EvidenceSync.handleAddonMessage("CHAT_MSG_ADDON", constants.SYNC_PREFIX, messages[index].message, "WHISPER", "Intruder")
 	end

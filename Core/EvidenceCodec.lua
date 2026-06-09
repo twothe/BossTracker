@@ -25,12 +25,19 @@ local function copyTable(value)
 end
 
 local function hashString(value)
-	local hash = 5381
+	local hashA = 5381
+	local hashB = 2166136261
+	local hashC = 0
+	local hashD = 3141592653
 	value = tostring(value or "")
 	for index = 1, #value do
-		hash = ((hash * 33) + string.byte(value, index)) % 4294967296
+		local byte = string.byte(value, index)
+		hashA = ((hashA * 33) + byte) % 4294967296
+		hashB = ((hashB * 65537) + byte) % 4294967296
+		hashC = ((hashC * 65599) + byte + index) % 4294967296
+		hashD = ((hashD * 131) + byte + (#value - index)) % 4294967296
 	end
-	return string.format("%08x", hash)
+	return string.format("%08x%08x%08x%08x", hashA, hashB, hashC, hashD)
 end
 
 local function nonEmpty(value)
@@ -706,15 +713,16 @@ function EvidenceCodec.decodeStoredKill(instance, boss, storedKill)
 end
 
 function EvidenceCodec.storedKillBlock(instance, boss, storedKill)
-	if type(storedKill) == "table" and type(storedKill.p) == "string" and storedKill.p ~= "" then
-		return storedKill.p, storedKill.h or storedKill.hash, storedKill.t or storedKill.capturedAt
-	end
 	local decoded, decodeError = EvidenceCodec.decodeStoredKill(instance, boss, storedKill)
 	if not decoded then
 		return nil, nil, nil, decodeError
 	end
-	local block, blockError = EvidenceCodec.encodeKillBlock(decoded.instance, decoded.boss, decoded.kill, decoded.kill.hash)
-	return block, decoded.kill and decoded.kill.hash, decoded.kill and decoded.kill.capturedAt, blockError
+	local canonicalHash = EvidenceCodec.hashKill(decoded.instance or instance, decoded.boss or boss, decoded.kill)
+	if type(canonicalHash) ~= "string" or canonicalHash == "" then
+		return nil, nil, nil, "missing canonical kill hash"
+	end
+	local block, blockError = EvidenceCodec.encodeKillBlock(decoded.instance, decoded.boss, decoded.kill, canonicalHash)
+	return block, canonicalHash, decoded.kill and decoded.kill.capturedAt, blockError
 end
 
 function EvidenceCodec.storedKillHash(storedKill)

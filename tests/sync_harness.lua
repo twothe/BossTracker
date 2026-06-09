@@ -12,6 +12,7 @@ local ADDON_FILES = {
 	"Core/Difficulty.lua",
 	"Core/EvidenceCodec.lua",
 	"Core/EvidenceStore.lua",
+	"Core/SyncTransport.lua",
 	"Core/EvidenceSync.lua",
 	"Core/SavedVariables.lua",
 	"Core/Config.lua",
@@ -54,15 +55,6 @@ local function countKeys(tbl)
 		end
 	end
 	return count
-end
-
-local function hashString(value)
-	local hash = 5381
-	value = tostring(value or "")
-	for index = 1, #value do
-		hash = ((hash * 33) + string.byte(value, index)) % 4294967296
-	end
-	return string.format("%08x", hash)
 end
 
 local function payloadKillCount(payload)
@@ -326,7 +318,7 @@ function Bus:sendPayload(sender, receiver, sessionId, payload, options)
 		"H",
 		sessionId,
 		tostring(#payload),
-		hashString(payload),
+		sender.addon.Core.EvidenceCodec.hashString(payload),
 		tostring(#chunks),
 		tostring(payloadKillCount(payload)),
 		sender.addon.Core.Constants.VERSION,
@@ -367,6 +359,8 @@ function Harness.newClient(name, bus)
 		registeredPrefixes = {},
 		partyMembers = 0,
 		raidMembers = 0,
+		inCombat = false,
+		fps = 60,
 	}, Client)
 	client.env = client:createEnvironment()
 	client:loadAddon()
@@ -421,7 +415,16 @@ function Client:createEnvironment()
 		return client.unitState[unit] and client.unitState[unit].classification or nil
 	end
 	env.UnitAffectingCombat = function(unit)
+		if unit == "player" then
+			return client.inCombat == true
+		end
 		return client.unitState[unit] and client.unitState[unit].combat == true or false
+	end
+	env.InCombatLockdown = function()
+		return client.inCombat == true
+	end
+	env.GetFramerate = function()
+		return client.fps or 60
 	end
 	env.UnitCanAttack = function(_, unit)
 		return client.unitState[unit] and client.unitState[unit].attackable ~= false or false
@@ -497,6 +500,8 @@ function Client:reset(options)
 	self.dynamicDifficulty = options.dynamicDifficulty or 0
 	self.isDynamic = options.isDynamic or false
 	self.unitState = {}
+	self.inCombat = options.inCombat == true
+	self.fps = options.fps or 60
 	self.chat.messages = {}
 	self.env.DEFAULT_CHAT_FRAME.messages = self.chat.messages
 	self.env.BossTrackerDB = copyTable(options.db or {})
@@ -505,6 +510,9 @@ function Client:reset(options)
 	self.addon.Core.Config.start()
 	self.addon.Core.Logger.startRun()
 	self.addon.Core.EvidenceStore.start()
+	if self.addon.Core.SyncTransport then
+		self.addon.Core.SyncTransport.start()
+	end
 	self.addon.Core.EvidenceSync.start()
 	self.addon.Core.ModelStore.start()
 	self.addon.Learning.OccurrenceBuilder.start()
@@ -547,6 +555,15 @@ function Client:receiveAddonMessage(message)
 		message.distribution,
 		message.sender.name
 	)
+	if self.addon.Core.SyncTransport then
+		self.addon.Core.SyncTransport.handleAddonMessage(
+			"CHAT_MSG_ADDON",
+			message.prefix,
+			message.message,
+			message.distribution,
+			message.sender.name
+		)
+	end
 end
 
 function Client:hostileFlags()

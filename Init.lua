@@ -13,6 +13,11 @@ local function startModules()
 	else
 		addon.Core.Logger.chat("BossTracker update needs a full client restart before evidence storage is available.")
 	end
+	if addon.Core.SyncTransport then
+		boundary.safeStart("SyncTransport", addon.Core.SyncTransport)
+	else
+		addon.Core.Logger.chat("BossTracker update needs a full client restart before managed group sync is available.")
+	end
 	if addon.Core.EvidenceSync then
 		boundary.safeStart("EvidenceSync", addon.Core.EvidenceSync)
 	else

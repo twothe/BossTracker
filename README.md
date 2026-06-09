@@ -99,7 +99,7 @@ Most players only need `/pull 10`, `/btr config`, `/btr preview`, and `/btr pani
 - Fight bosses normally. You do not need to target the boss all the time.
 - If a boss is wiped at low health, the pull can still help BossTracker learn.
 - If a timer looks wrong after a patch or unusual pull, let the addon observe more attempts. Delayed predictions are kept as bounded diagnostics, not synced learned rules.
-- Use `/btr sync target` or `/btr sync group` to exchange completed encounter evidence with another BossTracker user. Sync does not copy their calculated timer settings.
+- Use `/btr sync target` to exchange completed encounter evidence with one player, or `/btr sync group` in a party or raid. Group sync is manager-planned: accepted players compare evidence hashes first, then BossTracker broadcasts shared missing records once where possible and whispers one-off records. It does not copy calculated timer settings.
 - If bad data was clearly learned from trash or a broken run, delete that boss in `/btr config`.
 - If everything looks contaminated, use `/btr clearlearned` and start fresh.
 
