@@ -228,6 +228,56 @@ local function sendHashList(receiver, sender, listType, sessionId, hashes)
 	end
 end
 
+local function latestManagedSession(bus, sender)
+	for index = #(bus.queue or {}), 1, -1 do
+		local message = bus.queue[index]
+		if message.sender == sender and string.sub(message.message or "", 1, 2) == "Q|" then
+			return string.match(message.message, "^Q|([^|]+)|")
+		end
+	end
+	return nil
+end
+
+local function sendTransportPlan(receiver, sender, sessionId, payload, recordCount)
+	local prefix = receiver.addon.Core.Constants.SYNC_TRANSPORT_PREFIX
+	local payloadHash = receiver.addon.Core.EvidenceCodec.hashString(payload)
+	receiver.addon.Core.SyncTransport.handleAddonMessage("CHAT_MSG_ADDON", prefix, table.concat({
+		"P",
+		sessionId,
+		"evidence",
+		tostring(#payload),
+		payloadHash,
+		"1",
+		tostring(recordCount or 1),
+		"1",
+	}, "|"), "WHISPER", sender.name)
+	receiver.addon.Core.SyncTransport.handleAddonMessage("CHAT_MSG_ADDON", prefix, table.concat({
+		"p",
+		sessionId,
+		"1",
+		"1",
+		payload,
+	}, "|"), "WHISPER", sender.name)
+end
+
+local function queuedTransportPayloadMessages(bus, sender, receiver)
+	local messages = {}
+	local senderClient = type(sender) == "table" and sender or nil
+	local receiverName = type(receiver) == "table" and receiver.name or tostring(receiver)
+	for index = 1, #(bus.queue or {}) do
+		local message = bus.queue[index]
+		if message.sender == senderClient
+			and message.target == receiverName
+			and message.prefix == sender.addon.Core.Constants.SYNC_TRANSPORT_PREFIX then
+			local messageType = string.sub(message.message or "", 1, 1)
+			if messageType == "G" or messageType == "g" then
+				messages[#messages + 1] = message.message
+			end
+		end
+	end
+	return messages
+end
+
 local function split(value, separator)
 	local result = {}
 	local startIndex = 1
@@ -249,6 +299,20 @@ local function replacePayloadHeaderField(payload, fieldIndex, value)
 	fields[fieldIndex] = value
 	records[1] = table.concat(fields, "|")
 	return table.concat(records, "~")
+end
+
+local function transportPayloadBatchIndex(message)
+	local fields = split(message or "", "|")
+	if fields[1] == "G" then
+		return tonumber(fields[8]) or 1
+	end
+	if fields[1] == "g" then
+		if fields[7] ~= nil then
+			return tonumber(fields[4]) or 1
+		end
+		return 1
+	end
+	return 1
 end
 
 local function scenarioFullBatchedSyncImportsEverything()
@@ -737,15 +801,234 @@ local function scenarioManagedGroupBroadcastAvoidsDuplicateProviderPayloads()
 	Harness.assertTrue(ok, err)
 
 	local transportHeadersFromA = 0
+	local whisperHeadersFromA = 0
 	for index = 1, #(bus.delivered or {}) do
 		local message = bus.delivered[index]
 		if message.sender == a.name and string.sub(message.message or "", 1, 2) == "G|" then
 			transportHeadersFromA = transportHeadersFromA + 1
+			if message.distribution == "WHISPER" then
+				whisperHeadersFromA = whisperHeadersFromA + 1
+			end
+			Harness.assertEqual(message.distribution, "PARTY", "Shared managed payload headers should use group broadcast distribution")
+			Harness.assertTrue(message.target == nil or message.target == "", "Shared managed payload headers should not target one receiver")
 		end
 	end
 	Harness.assertEqual(b:permanentKillCount(), 1, "First accepted peer should import the shared broadcast payload")
 	Harness.assertEqual(c:permanentKillCount(), 1, "Second accepted peer should import the same shared broadcast payload")
 	Harness.assertEqual(transportHeadersFromA, 2, "One RAID header should be delivered to both receivers, not separately planned per receiver")
+	Harness.assertEqual(whisperHeadersFromA, 0, "Shared managed payloads must not be sent as duplicate whispers")
+end
+
+local function scenarioUnauthorizedManagedPlanAndGrantCannotTriggerTransfer()
+	local bus = Harness.newBus()
+	local a = Harness.newClient("Avelon", bus)
+	local b = Harness.newClient("Beloria", bus)
+	local c = Harness.newClient("Cyrene", bus)
+	b:addKill({
+		boss = "Unauthorized Managed Plan Sentinel",
+		spell = "Unauthorized Managed Plan Slam",
+		spellId = 711121,
+	})
+	a:setGroup(4, 0)
+	b:setGroup(4, 0)
+	c:setGroup(4, 0)
+
+	a.addon.Core.EvidenceSync.handleSlash("group")
+	local sessionId = latestManagedSession(bus, a)
+	Harness.assertTrue(sessionId ~= nil, "Fixture should create a managed group session")
+	local ok, err = bus:drain()
+	Harness.assertTrue(ok, err)
+	b:acceptSync(a, sessionId)
+	bus:clear()
+
+	local blocks = b.addon.Core.EvidenceStore.collectKillBlocks()
+	Harness.assertTrue(blocks[1] and blocks[1].hash, "Fixture should create provider evidence")
+	local maliciousPlan = table.concat({
+		"O",
+		"g999",
+		"WHISPER",
+		c.name,
+		blocks[1].hash,
+	}, "^")
+	sendTransportPlan(b, c, sessionId, maliciousPlan, 1)
+	b.addon.Core.SyncTransport.handleAddonMessage(
+		"CHAT_MSG_ADDON",
+		b.addon.Core.Constants.SYNC_TRANSPORT_PREFIX,
+		"X|" .. sessionId .. "|evidence|g999|4",
+		"WHISPER",
+		c.name
+	)
+	b.addon.Core.EvidenceSync.flushQueue(1000)
+
+	Harness.assertEqual(#queuedTransportPayloadMessages(bus, b, c), 0, "Unauthorized managed plans and grants must not queue payloads")
+	Harness.assertTrue(b.addon.Core.SyncTransport.debugOutboundGroup(sessionId, "g999") == nil, "Unauthorized managed grants must not create outbound groups")
+end
+
+local function scenarioManagedGroupMultiBatchCompletesAfterAllBatches()
+	local bus = Harness.newBus()
+	local a = Harness.newClient("Avelon", bus)
+	local b = Harness.newClient("Beloria", bus)
+	a:addKills(3, "Managed Multi Batch Boss")
+	a:setGroup(3, 0)
+	b:setGroup(3, 0)
+
+	withClientConstants({ a, b }, {
+		MAX_SYNC_KILLS_PER_PAYLOAD = 1,
+		SYNC_TRANSPORT_MAX_ITEMS_PER_GROUP = 3,
+	}, function()
+		a.addon.Core.EvidenceSync.handleSlash("group")
+		local ok, err = bus:drain()
+		Harness.assertTrue(ok, err)
+		b:acceptSync(a)
+		ok, err = bus:drain({ ticked = true, maxPasses = 200 })
+		Harness.assertTrue(ok, err)
+		ok, err = advanceBus(bus, 7, { ticked = true, maxPasses = 3000 })
+		Harness.assertTrue(ok, err)
+	end)
+
+	Harness.assertEqual(b:permanentKillCount(), 3, "Managed multi-batch sync should import every planned batch")
+end
+
+local function scenarioManagedGroupDroppedLaterBatchDoesNotPartiallyImport()
+	local bus = Harness.newBus()
+	local a = Harness.newClient("Avelon", bus)
+	local b = Harness.newClient("Beloria", bus)
+	a:addKills(3, "Managed Dropped Batch Boss")
+	a:setGroup(3, 0)
+	b:setGroup(3, 0)
+
+	withClientConstants({ a, b }, {
+		MAX_SYNC_KILLS_PER_PAYLOAD = 1,
+		SYNC_TRANSPORT_MAX_ITEMS_PER_GROUP = 3,
+		SYNC_TRANSPORT_GROUP_NO_PROGRESS_SECONDS = 3,
+	}, function()
+		a.addon.Core.EvidenceSync.handleSlash("group")
+		local ok, err = bus:drain()
+		Harness.assertTrue(ok, err)
+		b:acceptSync(a)
+		ok, err = bus:drain({ ticked = true, maxPasses = 200 })
+		Harness.assertTrue(ok, err)
+		ok, err = advanceBus(bus, 10, {
+			ticked = true,
+			maxPasses = 4000,
+			drop = function(message)
+				local messageType = string.sub(message.message or "", 1, 1)
+				return message.sender.name == a.name
+					and (messageType == "G" or messageType == "g")
+					and transportPayloadBatchIndex(message.message) > 1
+			end,
+		})
+		Harness.assertTrue(ok, err)
+	end)
+
+	Harness.assertEqual(b:permanentKillCount(), 0, "Managed sync must not commit the first batch when a later batch is missing")
+	Harness.assertTrue(a:chatContains("failed transfer group"), "Manager should fail the incomplete managed transfer group")
+end
+
+local function scenarioManagedGroupCorruptLaterBatchDoesNotPartiallyImport()
+	local bus = Harness.newBus()
+	local a = Harness.newClient("Avelon", bus)
+	local b = Harness.newClient("Beloria", bus)
+	a:addKills(3, "Managed Corrupt Batch Boss")
+	a:setGroup(3, 0)
+	b:setGroup(3, 0)
+
+	withClientConstants({ a, b }, {
+		MAX_SYNC_KILLS_PER_PAYLOAD = 1,
+		SYNC_TRANSPORT_MAX_ITEMS_PER_GROUP = 3,
+		SYNC_TRANSPORT_GROUP_NO_PROGRESS_SECONDS = 3,
+	}, function()
+		a.addon.Core.EvidenceSync.handleSlash("group")
+		local ok, err = bus:drain()
+		Harness.assertTrue(ok, err)
+		b:acceptSync(a)
+		ok, err = bus:drain({ ticked = true, maxPasses = 200 })
+		Harness.assertTrue(ok, err)
+		ok, err = advanceBus(bus, 10, {
+			ticked = true,
+			maxPasses = 4000,
+			mutate = function(message, _, state)
+				if not state.corruptedManagedSecondBatch
+					and message.sender.name == a.name
+					and string.sub(message.message or "", 1, 2) == "g|"
+					and transportPayloadBatchIndex(message.message) == 2 then
+					message.message = message.message .. "x"
+					state.corruptedManagedSecondBatch = true
+				end
+				return message
+			end,
+		})
+		Harness.assertTrue(ok, err)
+	end)
+
+	Harness.assertEqual(b:permanentKillCount(), 0, "Managed sync must discard staged batches when a later batch is corrupt")
+	Harness.assertTrue(b:chatContains("failed integrity check"), "Corrupt managed batch should report an integrity failure")
+end
+
+local function scenarioManagedGroupOutOfOrderDuplicateChunksStillImportsOnce()
+	local bus = Harness.newBus()
+	local a = Harness.newClient("Avelon", bus)
+	local b = Harness.newClient("Beloria", bus)
+	a:addKill({
+		boss = "Managed Chunk Storm Sentinel",
+		spell = "Managed Chunk Storm",
+		spellId = 711151,
+		extraSpell = "Managed Chunk Echo",
+		extraSpellId = 711152,
+	})
+	a:setGroup(3, 0)
+	b:setGroup(3, 0)
+
+	withClientConstants({ a, b }, {
+		SYNC_TRANSPORT_CHUNK_BYTES = 25,
+	}, function()
+		a.addon.Core.EvidenceSync.handleSlash("group")
+		local ok, err = bus:drain()
+		Harness.assertTrue(ok, err)
+		b:acceptSync(a)
+		ok, err = bus:drain({ ticked = true, maxPasses = 200 })
+		Harness.assertTrue(ok, err)
+		ok, err = advanceBus(bus, 7, {
+			ticked = true,
+			maxPasses = 3000,
+			reverseChunks = true,
+			duplicateChunks = true,
+		})
+		Harness.assertTrue(ok, err)
+	end)
+
+	Harness.assertEqual(b:permanentKillCount(), 1, "Managed out-of-order duplicate chunks should import once")
+	Harness.assertTrue(b:findAbilityByName("Managed Chunk Storm") ~= nil, "Managed chunk chaos should still rebuild learned data")
+end
+
+local function scenarioManagedGroupDuplicateOnlyRebuildsAcceptedPeer()
+	local bus = Harness.newBus()
+	local a = Harness.newClient("Avelon", bus)
+	local b = Harness.newClient("Beloria", bus)
+	local sharedKill = {
+		index = 1,
+		boss = "Managed Duplicate Rebuild Sentinel",
+		guid = "Creature-0-0-0-0-993-managed-duplicate-rebuild",
+		spell = "Managed Duplicate Rebuild Slam",
+		spellId = 711171,
+	}
+	a:addKill(sharedKill)
+	b:addKill(sharedKill)
+	b:clearLearnedOnly()
+	a:setGroup(3, 0)
+	b:setGroup(3, 0)
+
+	a.addon.Core.EvidenceSync.handleSlash("group")
+	local ok, err = bus:drain()
+	Harness.assertTrue(ok, err)
+	b:acceptSync(a)
+	ok, err = bus:drain({ ticked = true, maxPasses = 200 })
+	Harness.assertTrue(ok, err)
+	ok, err = advanceBus(bus, 7, { ticked = true, maxPasses = 1000 })
+	Harness.assertTrue(ok, err)
+
+	Harness.assertEqual(b:permanentKillCount(), 1, "Duplicate-only managed sync should not add evidence")
+	Harness.assertTrue(b:findAbilityByName("Managed Duplicate Rebuild Slam") ~= nil, "Duplicate-only managed sync should rebuild accepted peer cache")
 end
 
 local function scenarioManagedGroupReassignsFailedProvider()
@@ -794,6 +1077,101 @@ local function scenarioManagedGroupReassignsFailedProvider()
 	Harness.assertEqual(a:permanentKillCount(), 1, "Manager should receive reassigned evidence from the alternate provider")
 	Harness.assertEqual(d:permanentKillCount(), 1, "Empty receiver should receive reassigned evidence after the first provider fails")
 	Harness.assertTrue(a:chatContains("reassigned sync transfer group"), "Manager should report the provider reassignment")
+end
+
+local function scenarioManagedGroupReassignWaitsForPlanAck()
+	local bus = Harness.newBus()
+	local a = Harness.newClient("Avelon", bus)
+	local b = Harness.newClient("Beloria", bus)
+	local c = Harness.newClient("Cyrene", bus)
+	local d = Harness.newClient("Daelia", bus)
+	local sharedKill = {
+		index = 1,
+		boss = "Reassign Ack Sentinel",
+		guid = "Creature-0-0-0-0-994-reassign-ack",
+		spell = "Reassign Ack Slam",
+		spellId = 711251,
+	}
+	b:addKill(sharedKill)
+	c:addKill(sharedKill)
+	a:setGroup(5, 0)
+	b:setGroup(5, 0)
+	c:setGroup(5, 0)
+	d:setGroup(5, 0)
+
+	withClientConstants({ a, b, c, d }, {
+		SYNC_TRANSPORT_GROUP_NO_PROGRESS_SECONDS = 3,
+		SYNC_TRANSPORT_PLAN_ACK_TIMEOUT_SECONDS = 3,
+	}, function()
+		a.addon.Core.EvidenceSync.handleSlash("group")
+		local ok, err = bus:drain()
+		Harness.assertTrue(ok, err)
+		b:acceptSync(a)
+		c:acceptSync(a)
+		d:acceptSync(a)
+		ok, err = bus:drain({ ticked = true, maxPasses = 200 })
+		Harness.assertTrue(ok, err)
+		local providerFailureSeen = false
+		ok, err = advanceBus(bus, 12, {
+			ticked = true,
+			maxPasses = 5000,
+			drop = function(message)
+				local messageType = string.sub(message.message or "", 1, 1)
+				if message.sender.name == b.name and (messageType == "G" or messageType == "g" or messageType == "E") then
+					providerFailureSeen = true
+					return true
+				end
+				if providerFailureSeen and message.sender.name == a.name and (messageType == "P" or messageType == "p") then
+					return true
+				end
+				return false
+			end,
+		})
+		Harness.assertTrue(ok, err)
+	end)
+
+	for index = 1, #(bus.delivered or {}) do
+		local message = bus.delivered[index]
+		Harness.assertTrue(not (message.sender == c.name and string.sub(message.message or "", 1, 2) == "G|"), "Replacement provider must not send payloads before reassignment plan ACKs")
+	end
+	Harness.assertEqual(d:permanentKillCount(), 0, "Receiver must not import reassigned payloads without the plan update")
+	Harness.assertTrue(a:chatContains("failed transfer group"), "Manager should fail a reassignment whose plan update is not acknowledged")
+end
+
+local function scenarioManagedManagerProviderFlowPreventsFalseTimeout()
+	local bus = Harness.newBus()
+	local a = Harness.newClient("Avelon", bus)
+	local b = Harness.newClient("Beloria", bus)
+	a:addKill({
+		boss = "Manager Provider Flow Sentinel",
+		spell = "Manager Provider Flow Slam",
+		spellId = 711271,
+		extraSpell = "Manager Provider Flow Echo",
+		extraSpellId = 711272,
+	})
+	a:setGroup(3, 0)
+	b:setGroup(3, 0)
+
+	withClientConstants({ a, b }, {
+		SYNC_TRANSPORT_CHUNK_BYTES = 45,
+		SYNC_TRANSPORT_GROUP_NO_PROGRESS_SECONDS = 2,
+		SYNC_TRANSPORT_FLOW_MIN_INTERVAL_SECONDS = 0.5,
+		SYNC_TRANSPORT_FLOW_WINDOW_CHUNKS = 1000,
+		SYNC_TRANSPORT_START_CHUNKS_PER_SECOND = 1,
+		SYNC_TRANSPORT_MAX_CHUNK_CREDIT = 2,
+	}, function()
+		a.addon.Core.EvidenceSync.handleSlash("group")
+		local ok, err = bus:drain()
+		Harness.assertTrue(ok, err)
+		b:acceptSync(a)
+		ok, err = bus:drain({ ticked = true, maxPasses = 200 })
+		Harness.assertTrue(ok, err)
+		ok, err = advanceBus(bus, 7, { ticked = true, maxPasses = 6000 })
+		Harness.assertTrue(ok, err)
+	end)
+
+	Harness.assertEqual(b:permanentKillCount(), 1, "Long manager-provided transfers should still import")
+	Harness.assertTrue(not a:chatContains("failed transfer group"), "Receiver FLOW should prevent false no-progress failure while the manager is provider")
 end
 
 local function scenarioManagedGroupFlowIsRateLimited()
@@ -1142,7 +1520,15 @@ local scenarios = {
 	scenarioParallelQueueAdvancesMultiplePeers,
 	scenarioUnauthorizedHashListCannotTriggerTransfer,
 	scenarioManagedGroupBroadcastAvoidsDuplicateProviderPayloads,
+	scenarioUnauthorizedManagedPlanAndGrantCannotTriggerTransfer,
+	scenarioManagedGroupMultiBatchCompletesAfterAllBatches,
+	scenarioManagedGroupDroppedLaterBatchDoesNotPartiallyImport,
+	scenarioManagedGroupCorruptLaterBatchDoesNotPartiallyImport,
+	scenarioManagedGroupOutOfOrderDuplicateChunksStillImportsOnce,
+	scenarioManagedGroupDuplicateOnlyRebuildsAcceptedPeer,
 	scenarioManagedGroupReassignsFailedProvider,
+	scenarioManagedGroupReassignWaitsForPlanAck,
+	scenarioManagedManagerProviderFlowPreventsFalseTimeout,
 	scenarioManagedGroupFlowIsRateLimited,
 	scenarioManagedGroupDefersRebuildInCombat,
 	scenarioRequestedHashSetMustBeComplete,

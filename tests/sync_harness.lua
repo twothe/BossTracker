@@ -218,7 +218,8 @@ local function orderedMessages(messages, options)
 	local ordered = {}
 	local chunks = {}
 	for index = 1, #messages do
-		if string.sub(messages[index].message or "", 1, 2) == "C|" then
+		local messageType = string.sub(messages[index].message or "", 1, 2)
+		if messageType == "C|" or messageType == "g|" then
 			chunks[#chunks + 1] = messages[index]
 		else
 			ordered[#ordered + 1] = messages[index]
@@ -251,13 +252,13 @@ function Bus:deliver(message, recipient, options, state)
 	}
 	if options and options.corruptFirstChunk
 		and not state.corruptedChunk
-		and string.sub(delivered.message or "", 1, 2) == "C|" then
+		and (string.sub(delivered.message or "", 1, 2) == "C|" or string.sub(delivered.message or "", 1, 2) == "g|") then
 		delivered.message = delivered.message .. "x"
 		state.corruptedChunk = true
 	end
 	if options and options.dropFirstChunk
 		and not state.droppedChunk
-		and string.sub(delivered.message or "", 1, 2) == "C|" then
+		and (string.sub(delivered.message or "", 1, 2) == "C|" or string.sub(delivered.message or "", 1, 2) == "g|") then
 		state.droppedChunk = true
 		self.dropped[#self.dropped + 1] = delivered
 		return
@@ -274,10 +275,13 @@ function Bus:deliver(message, recipient, options, state)
 	self.delivered[#self.delivered + 1] = {
 		sender = delivered.sender.name,
 		receiver = recipient.name,
+		prefix = delivered.prefix,
 		message = delivered.message,
+		distribution = delivered.distribution,
+		target = delivered.target,
 	}
 	if options and options.duplicateChunks
-		and string.sub(delivered.message or "", 1, 2) == "C|" then
+		and (string.sub(delivered.message or "", 1, 2) == "C|" or string.sub(delivered.message or "", 1, 2) == "g|") then
 		recipient:receiveAddonMessage(delivered)
 	end
 end

@@ -1696,6 +1696,57 @@ local function transportImportPayload(payload, context)
 	return stats, importError
 end
 
+local function sameHashList(actual, expected)
+	if #(actual or {}) ~= #(expected or {}) then
+		return false
+	end
+	local actualSet = hashListSet(actual)
+	if tableKeyCount(actualSet) ~= #(expected or {}) then
+		return false
+	end
+	for index = 1, #(expected or {}) do
+		if actualSet[expected[index]] ~= true then
+			return false
+		end
+	end
+	return true
+end
+
+local function transportImportPayloads(entries, context)
+	context = type(context) == "table" and context or {}
+	local blocks = {}
+	local allHashes = {}
+	for index = 1, #(entries or {}) do
+		local entry = entries[index]
+		local parsed, parseError = parsePayload(entry and entry.payload)
+		if not parsed then
+			return nil, parseError
+		end
+		local valid, validationError, blockHashes = validateParsedBlocks(parsed)
+		if not valid then
+			return nil, validationError
+		end
+		for blockIndex = 1, #(parsed.blocks or {}) do
+			blocks[#blocks + 1] = parsed.blocks[blockIndex]
+		end
+		for hashIndex = 1, #(blockHashes or {}) do
+			allHashes[#allHashes + 1] = blockHashes[hashIndex]
+		end
+	end
+	if context.expectedIds and not sameHashList(allHashes, context.expectedIds) then
+		return nil, "payload batch set does not match the sync plan"
+	end
+	return importParsedBlocks({
+		blocks = blocks,
+		batchIndex = #(entries or {}),
+		batchCount = #(entries or {}),
+		totalKills = #blocks,
+		declaredKills = #blocks,
+	}, context.sender, {
+		deferRebuild = context.deferHeavyWork == true,
+	})
+end
+
 local function showManagedRequestPopup(request)
 	if not StaticPopupDialogs or not StaticPopup_Show then
 		chat(tostring(request.sender) .. " wants to start managed BossTracker group sync. Use /btr sync accept " .. tostring(request.sender) .. " to accept.")
@@ -1732,6 +1783,7 @@ local function registerTransportAdapter()
 		exportPayloads = transportExportPayloads,
 		payloadIds = transportPayloadIds,
 		importPayload = transportImportPayload,
+		importPayloads = transportImportPayloads,
 		deferHeavyWork = shouldDeferSyncHeavyWork,
 		onRequest = showManagedRequestPopup,
 		onDuplicateOnly = function(context)

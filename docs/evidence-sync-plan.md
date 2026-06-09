@@ -2,7 +2,7 @@
 
 This document captures the agreed design and current implementation contract for
 persistent encounter evidence and player-to-player synchronization. Version
-1.13.0 includes the local evidence store, the shared packed `EvidenceCodec`,
+1.13.1 includes the local evidence store, the shared packed `EvidenceCodec`,
 completed-segment commit path, evidence rebuild path, interpretation-engine rebuild
 detection, difficulty-aware ability availability, accepted peer sync with hash
 inventory negotiation, and managed group sync through the generic
@@ -51,7 +51,7 @@ The plan was checked against the current replay and sync simulator coverage on
 - `lua tests/replay_scenarios.lua`
   - Result: `replay scenarios passed: 87`
 - `lua tests/sync_scenarios.lua`
-  - Result: `sync scenarios passed: 33`
+  - Result: `sync scenarios passed: 41`
 
 The broader C++ simulator coverage was last checked on 2026-06-05:
 
@@ -374,16 +374,26 @@ hash-id plus payload messages:
 - `M` / `m`: accepted peer manifest header and chunks for "this is what I
   have".
 - `P` / `p`: manager plan header and chunks. Plans name outbound groups,
-  expected inbound groups, providers, distributions, and exact item ids.
+  expected inbound groups, providers, distributions, and exact item ids. A
+  participant accepts plans only from the manager it explicitly accepted for that
+  session.
 - `K`: plan acknowledgement bound to the received plan hash.
-- `X`: manager grant that allows a provider to start one transfer group.
-- `G` / `g`: generic payload header and chunks.
+- `X`: manager grant that allows a provider to start one transfer group. Grants
+  are ignored unless they come from the accepted manager for the session.
+- `G` / `g`: generic payload header and batch-indexed chunks.
 - `F`: rate-limited receiver flow feedback to the provider.
 - `V`: sparse receiver progress notice to the manager so long broadcasts do not
-  look stalled.
-- `B`: receiver completion acknowledgement to the manager.
-- `E`: provider finished-sending notice.
-- `N` / `Z`: session or transfer-group failure notices.
+  look stalled. Manager-owned provider transfers use only planned receiver flow
+  as progress evidence.
+- `B`: receiver completion acknowledgement to the manager. It counts only from
+  receivers in the transfer group's plan.
+- `Y`: manager no-op completion notice for accepted peers that have no missing
+  payloads but may still need a local rebuild from existing evidence.
+- `E`: provider finished-sending notice. It is trusted only from the planned
+  provider.
+- `N` / `Z`: session or transfer-group failure notices. A planned provider `Z`
+  lets the manager reassign or fail the group immediately instead of waiting for
+  the progress timeout.
 
 The wire payload is schema-specific and compact:
 
@@ -419,20 +429,26 @@ The wire payload is schema-specific and compact:
 - managed group sync keeps outbound payload generation windowed. A provider does
   not enqueue thousands of chunks at once; it advances active transfer groups at
   an adaptive chunks-per-second rate, with one chunk per second as the floor.
+- managed group payload protocols must expose a payload-id validator. The
+  transport imports neither single-batch nor multi-batch payloads unless it can
+  recompute the payload's item ids and match them to the manager's plan.
 - `FLOW` feedback is windowed and rate-limited. Receivers report useful timing
   and frame-time estimates only after enough chunks or enough time has elapsed,
   plus final completion, so metadata does not compete with payload traffic.
 - if a provider stops making progress, the manager reassigns the affected
   transfer group to another accepted participant that advertised every required
-  hash. If no alternate exists, only that transfer group fails and the rest of
-  the plan can continue.
+  hash. The replacement provider and every receiver must acknowledge the
+  reassignment plan before the replacement is granted permission to send. If no
+  alternate exists or the plan update is not acknowledged, only that transfer
+  group fails and the rest of the plan can continue.
 - multi-batch transfers require both peers to support the batched protocol
   introduced in 1.9.15; a sender must reject large syncs to older peers instead
   of falling back to a partial first payload.
-- inbound multi-batch transfers are transactional: the receiver stages every
-  validated payload batch in memory, commits to permanent evidence only after all
-  batches arrive with consistent metadata, and discards the staged session on
-  corrupt, missing, or inconsistent batch data.
+- inbound multi-batch transfers are transactional for both legacy peer sync and
+  managed group sync: the receiver stages every validated payload batch in
+  memory, commits to permanent evidence only after all batches arrive with
+  consistent metadata and exactly match the requested or planned hash set, and
+  discards the staged session on corrupt, missing, or inconsistent batch data.
 - events are packed as tuples and chunked below the addon-message size limit.
 - the receiver validates schema, payload length, transfer hash, caps, integer
   payload metadata, kill shape, actor references, spell references,
@@ -460,7 +476,10 @@ covers multi-batch transfers, out-of-order and duplicate chunks, dropped chunks,
 corrupt transport data, tampered payloads with valid transport hashes,
 duplicate-only rebuilds, old peer rejection, simultaneous cross-sync, managed
 group convergence, late accepts, broadcast duplicate avoidance, provider
-failure reassignment, rate-limited flow feedback, and combat-deferred rebuilds.
+failure reassignment, managed multi-batch atomicity, managed chunk disorder,
+unauthorized managed plan/grant rejection, reassignment plan acknowledgement,
+manager-provider no-progress protection through receiver flow, rate-limited flow
+feedback, and combat-deferred rebuilds.
 It also has a ticked transport mode that flushes only one queued addon message
 per simulated client tick for long-transfer confidence.
 

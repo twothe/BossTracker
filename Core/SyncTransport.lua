@@ -16,6 +16,7 @@ local sessions = {}
 local inboundLists = {}
 local inboundPlans = {}
 local inboundPayloads = {}
+local inboundPayloadBatches = {}
 local outboundGroups = {}
 local sendQueues = {}
 local sendQueueOrder = {}
@@ -166,6 +167,18 @@ local function tableKeyCount(tbl)
 	return count
 end
 
+local function isInteger(value)
+	return type(value) == "number" and math.floor(value) == value
+end
+
+local function isNonNegativeInteger(value)
+	return isInteger(value) and value >= 0
+end
+
+local function isPositiveInteger(value)
+	return isInteger(value) and value >= 1
+end
+
 local function sortedKeys(tbl)
 	local keys = {}
 	for key in pairs(type(tbl) == "table" and tbl or {}) do
@@ -192,6 +205,21 @@ local function listSet(list)
 		end
 	end
 	return set
+end
+
+local function normalizedNameSet(list)
+	local set = {}
+	for index = 1, #(list or {}) do
+		local value = list[index]
+		if type(value) == "string" and value ~= "" then
+			set[normalizedName(value)] = true
+		end
+	end
+	return set
+end
+
+local function nameInSet(name, set)
+	return type(set) == "table" and set[normalizedName(name)] == true
 end
 
 local function encodeIdList(ids)
@@ -222,6 +250,9 @@ local function decodeIdList(payload)
 end
 
 local function sameIdSet(actual, expected)
+	if #(actual or {}) ~= #(expected or {}) then
+		return false
+	end
 	local actualSet = listSet(actual)
 	if tableKeyCount(actualSet) ~= #(expected or {}) then
 		return false
@@ -320,7 +351,7 @@ local function activeManagerWorkCount()
 	for _, session in pairs(sessions) do
 		if session.role == "manager" and session.state == "transferring" then
 			for _, group in ipairs(session.groups or {}) do
-				if group.state == "active" then
+				if group.state == "active" or group.state == "awaiting_reassign_plan_acks" then
 					count = count + 1
 				end
 			end
@@ -498,8 +529,14 @@ local function receiveChunkedHeader(sender, parts, storage, listType)
 	local payloadHash = parts[5]
 	local chunkCount = tonumber(parts[6])
 	local declaredCount = tonumber(parts[7])
-	if not sessionId or not namespace or not length or not payloadHash or not chunkCount or not declaredCount
-		or length < 0 or chunkCount < 0 or declaredCount < 0 then
+	if not sessionId or not namespace
+		or not isNonNegativeInteger(length)
+		or type(payloadHash) ~= "string"
+		or not string.match(payloadHash, "^[0-9a-f]+$")
+		or not isPositiveInteger(chunkCount)
+		or not isNonNegativeInteger(declaredCount)
+		or chunkCount > (tonumber(C.MAX_SYNC_TRANSPORT_CHUNKS) or tonumber(C.MAX_SYNC_CHUNKS) or 1000)
+		or length > (tonumber(C.MAX_SYNC_TRANSPORT_PAYLOAD_BYTES) or tonumber(C.MAX_SYNC_PAYLOAD_BYTES) or 180000) then
 		return nil
 	end
 	local key = sessionPeerKey(sender, listType .. ":" .. sessionId)
@@ -530,7 +567,11 @@ local function receiveChunkedPayload(sender, message, storage, listType, onCompl
 	local body = parts[5] or ""
 	local key = sessionPeerKey(sender, listType .. ":" .. tostring(sessionId or ""))
 	local transfer = storage[key]
-	if not transfer or not index or index < 1 or index > transfer.chunkCount or total ~= transfer.chunkCount then
+	if not transfer
+		or not isPositiveInteger(index)
+		or index > transfer.chunkCount
+		or not isPositiveInteger(total)
+		or total ~= transfer.chunkCount then
 		return
 	end
 	if not transfer.chunks[index] then
@@ -740,7 +781,7 @@ local function createPlan(session)
 						distribution = distribution,
 						target = target,
 						receivers = receivers,
-						receiverSet = listSet(receivers),
+						receiverSet = normalizedNameSet(receivers),
 						ids = {},
 					}
 					groupsByKey[key] = group
@@ -850,6 +891,42 @@ local function completeLocalDuplicateOnly(session)
 	end
 end
 
+local function peerReceivesAnyGroup(session, peerName)
+	local peerKey = normalizedName(peerName)
+	for _, group in ipairs(session.groups or {}) do
+		for index = 1, #(group.receivers or {}) do
+			if normalizedName(group.receivers[index]) == peerKey then
+				return true
+			end
+		end
+	end
+	return false
+end
+
+local function sendDuplicateOnlyNotice(session, peerName)
+	if normalizedName(peerName) == normalizedName(playerName()) then
+		completeLocalDuplicateOnly(session)
+		return
+	end
+	queueMessage(table.concat({
+		"Y",
+		session.session,
+		session.namespace,
+		"duplicate",
+	}, "|"), "WHISPER", peerName)
+end
+
+local function notifyDuplicateOnlyParticipants(session)
+	if not peerReceivesAnyGroup(session, playerName()) then
+		sendDuplicateOnlyNotice(session, playerName())
+	end
+	for _, peer in pairs(session.participants or {}) do
+		if peer.itemSet and not peerReceivesAnyGroup(session, peer.name) then
+			sendDuplicateOnlyNotice(session, peer.name)
+		end
+	end
+end
+
 local function buildAndSendManagedPlan(session)
 	local localItems, itemError = collectLocalItems(session.namespace)
 	if not localItems then
@@ -893,11 +970,12 @@ local function buildAndSendManagedPlan(session)
 	session.groups = splitGroups
 	if #session.groups == 0 then
 		chat("group sync complete: no missing data found")
-		completeLocalDuplicateOnly(session)
+		notifyDuplicateOnlyParticipants(session)
 		session.state = "complete"
 		return
 	end
 	sendParticipantPlans(session)
+	notifyDuplicateOnlyParticipants(session)
 	chat("group sync plan created with " .. tostring(#session.groups) .. " transfer group(s)")
 end
 
@@ -913,7 +991,14 @@ local function grantGroup(session, group)
 	local provider = group.provider
 	if normalizedName(provider) == normalizedName(playerName()) then
 		if startOutboundGroup then
-			startOutboundGroup(session.session, group.groupId, C.SYNC_TRANSPORT_START_CHUNKS_PER_SECOND or 4)
+			local started = startOutboundGroup(session.session, group.groupId, C.SYNC_TRANSPORT_START_CHUNKS_PER_SECOND or 4)
+			if not started then
+				group.state = "failed"
+				group.failedAt = now()
+				group.failReason = "local provider could not start outbound transfer"
+				completeSessionIfTerminal(session)
+				return false
+			end
 		end
 	else
 		queueMessage(table.concat({
@@ -929,6 +1014,7 @@ local function grantGroup(session, group)
 	group.updatedAt = now()
 	session.activeGroups = session.activeGroups or {}
 	session.activeGroups[group.groupId] = true
+	return true
 end
 
 local function advanceManagerGrants(session)
@@ -952,9 +1038,10 @@ local function advanceManagerGrants(session)
 		end
 		local providerKey = normalizedName(group.provider)
 		if not group.state and not activeProviders[providerKey] then
-			grantGroup(session, group)
-			activeProviders[providerKey] = true
-			activeCount = activeCount + 1
+			if grantGroup(session, group) then
+				activeProviders[providerKey] = true
+				activeCount = activeCount + 1
+			end
 		end
 	end
 end
@@ -1029,7 +1116,15 @@ end
 
 local function completeManagerGroup(session, groupId, receiver)
 	local group = managerGroupById(session, groupId)
-	if not group or group.state == "complete" then
+	if not group or group.state == "complete" or group.state == "failed" then
+		return
+	end
+	if receiver and not nameInSet(receiver, group.receiverSet) then
+		logWarn("Ignored sync group completion from non-receiver", {
+			session = session and session.session,
+			groupId = groupId,
+			receiver = receiver,
+		})
 		return
 	end
 	group.receiverAcks = group.receiverAcks or {}
@@ -1107,11 +1202,12 @@ local function mergeLocalPlanRecords(session, records)
 end
 
 local function sendPlanRecords(session, peerName, records)
+	local payload = encodePlan(records)
+	local payloadHash = hashString(payload)
 	if normalizedName(peerName) == normalizedName(playerName()) then
 		mergeLocalPlanRecords(session, records)
-		return true
+		return true, payloadHash
 	end
-	local payload = encodePlan(records)
 	local sent, sendError = sendChunkedTransfer("P", "p", session.session, session.namespace, peerName, payload, #records)
 	if not sent then
 		logWarn("Failed to send sync transport plan update", {
@@ -1120,10 +1216,13 @@ local function sendPlanRecords(session, peerName, records)
 			error = sendError,
 		})
 	end
-	return sent
+	return sent, payloadHash
 end
 
 local function sendGroupPlanUpdate(session, group)
+	group.planUpdatePeers = {}
+	group.planUpdateHashes = {}
+	group.planUpdateAcks = {}
 	local outboundRecord = {
 		"O",
 		group.groupId,
@@ -1137,10 +1236,53 @@ local function sendGroupPlanUpdate(session, group)
 		escapeValue(group.provider),
 		encodeIdList(group.ids),
 	}
-	sendPlanRecords(session, group.provider, { outboundRecord })
-	for index = 1, #(group.receivers or {}) do
-		sendPlanRecords(session, group.receivers[index], { inboundRecord })
+	local ok = true
+	local providerSent, providerHash = sendPlanRecords(session, group.provider, { outboundRecord })
+	ok = providerSent and ok
+	if providerSent then
+		local providerKey = normalizedName(group.provider)
+		group.planUpdatePeers[providerKey] = true
+		group.planUpdateHashes[providerKey] = providerHash
+		if providerKey == normalizedName(playerName()) then
+			group.planUpdateAcks[providerKey] = true
+		end
 	end
+	for index = 1, #(group.receivers or {}) do
+		local receiver = group.receivers[index]
+		local receiverSent, receiverHash = sendPlanRecords(session, receiver, { inboundRecord })
+		ok = receiverSent and ok
+		if receiverSent then
+			local receiverKeyName = normalizedName(receiver)
+			group.planUpdatePeers[receiverKeyName] = true
+			group.planUpdateHashes[receiverKeyName] = receiverHash
+			if receiverKeyName == normalizedName(playerName()) then
+				group.planUpdateAcks[receiverKeyName] = true
+			end
+		end
+	end
+	return ok
+end
+
+local function groupPlanUpdateExpectedAckCount(group)
+	return tableKeyCount(group and group.planUpdatePeers)
+end
+
+local function groupPlanUpdateAckCount(group)
+	return tableKeyCount(group and group.planUpdateAcks)
+end
+
+local function maybeGrantReassignedGroup(session, group)
+	if not group or group.state ~= "awaiting_reassign_plan_acks" then
+		return false
+	end
+	if groupPlanUpdateAckCount(group) < groupPlanUpdateExpectedAckCount(group) then
+		return false
+	end
+	group.planUpdatePeers = nil
+	group.planUpdateHashes = nil
+	group.planUpdateAcks = nil
+	grantGroup(session, group)
+	return true
 end
 
 local function markGroupFailed(session, group, reason)
@@ -1162,18 +1304,22 @@ local function reassignGroup(session, group)
 		return false
 	end
 	group.provider = replacement
-	group.state = nil
+	group.state = "awaiting_reassign_plan_acks"
 	group.receiverAcks = nil
 	group.reassignedAt = now()
 	group.updatedAt = now()
-	sendGroupPlanUpdate(session, group)
-	grantGroup(session, group)
+	if not sendGroupPlanUpdate(session, group) then
+		markGroupFailed(session, group, "could not send reassignment plan")
+		return false
+	end
+	maybeGrantReassignedGroup(session, group)
 	chat("reassigned sync transfer group " .. tostring(group.groupId) .. " to " .. tostring(replacement))
 	return true
 end
 
 local function handleStalledGroups(session)
 	local timeout = tonumber(C.SYNC_TRANSPORT_GROUP_NO_PROGRESS_SECONDS) or 20
+	local planTimeout = tonumber(C.SYNC_TRANSPORT_PLAN_ACK_TIMEOUT_SECONDS) or 5
 	for _, group in ipairs(session.groups or {}) do
 		if group.state == "active" and now() - (group.updatedAt or group.grantedAt or now()) >= timeout then
 			if group.reassignedAt then
@@ -1181,6 +1327,9 @@ local function handleStalledGroups(session)
 			else
 				reassignGroup(session, group)
 			end
+		elseif group.state == "awaiting_reassign_plan_acks"
+			and now() - (group.updatedAt or group.reassignedAt or now()) >= planTimeout then
+			markGroupFailed(session, group, "reassignment plan acknowledgement timed out")
 		end
 	end
 end
@@ -1193,15 +1342,24 @@ local function receivePlan(transfer, payload)
 	end
 	local session = sessions[transfer.session]
 	if not session then
-		session = {
+		logWarn("Ignored sync plan for unknown session", {
+			sender = transfer.sender,
 			session = transfer.session,
 			namespace = transfer.namespace,
-			role = "participant",
-			manager = transfer.sender,
-			state = "planned",
-			startedAt = now(),
-		}
-		sessions[transfer.session] = session
+		})
+		return
+	end
+	if session.role ~= "participant"
+		or session.namespace ~= transfer.namespace
+		or normalizedName(session.manager) ~= normalizedName(transfer.sender) then
+		logWarn("Ignored unauthorized sync plan", {
+			sender = transfer.sender,
+			session = transfer.session,
+			namespace = transfer.namespace,
+			manager = session.manager,
+			role = session.role,
+		})
+		return
 	end
 	session.outboundPlan = session.outboundPlan or {}
 	session.expectedPlan = session.expectedPlan or {}
@@ -1219,6 +1377,16 @@ local function receivePlan(transfer, payload)
 		transfer.namespace,
 		tostring(transfer.hash or ""),
 	}, "|"), "WHISPER", transfer.sender)
+end
+
+local function parsePayloadBatchMetadata(parts)
+	if parts[9] ~= nil then
+		return tonumber(parts[8]), tonumber(parts[9])
+	end
+	if parts[8] ~= nil and parts[8] ~= "" and parts[8] ~= PROTOCOL_VERSION then
+		return nil, nil
+	end
+	return 1, 1
 end
 
 local function encodePayloadHeader(sessionId, groupId, payload, chunks, itemCount, batchIndex, batchCount)
@@ -1288,6 +1456,16 @@ local function queueCurrentOutboundHeader(group)
 		return false
 	end
 	group.chunks = chunkPayload(payloadInfo.payload)
+	if #group.chunks == 0 then
+		sendImmediate(table.concat({
+			"Z",
+			group.session,
+			group.namespace,
+			group.groupId,
+			"transport payload is empty",
+		}, "|"), "WHISPER", group.manager)
+		return false
+	end
 	if #group.chunks > (tonumber(C.MAX_SYNC_TRANSPORT_CHUNKS) or tonumber(C.MAX_SYNC_CHUNKS) or 1000) then
 		sendImmediate(table.concat({
 			"Z",
@@ -1343,6 +1521,7 @@ local function advanceOutboundGroups(elapsed)
 						"g",
 						group.session,
 						group.groupId,
+						tostring(group.payloadIndex),
 						tostring(group.nextChunk),
 						tostring(#group.chunks),
 						group.chunks[group.nextChunk],
@@ -1449,88 +1628,59 @@ local function maybeSendFlow(transfer, done)
 	transfer.lastFlowReceived = transfer.received
 end
 
-local function receivePayloadHeader(sender, parts)
-	local sessionId = parts[2]
-	local groupId = parts[3]
-	local length = tonumber(parts[4])
-	local payloadHash = parts[5]
-	local chunkCount = tonumber(parts[6])
-	local itemCount = tonumber(parts[7])
-	local batchIndex = tonumber(parts[8]) or 1
-	local batchCount = tonumber(parts[9]) or 1
-	local session = sessions[sessionId]
-	local expectedPlan = session and (session.expectedPlan or session.localExpectedPlan)
-	if not session or not expectedPlan or not expectedPlan[groupId] then
-		return
-	end
-	local expected = expectedPlan[groupId]
-	if normalizedName(expected.provider) ~= normalizedName(sender) then
-		return
-	end
-	if not length or length < 0 or not chunkCount or chunkCount < 0 or not itemCount or itemCount < 0 then
-		return
-	end
-	local key = sessionPeerKey(sender, "G:" .. tostring(sessionId) .. ":" .. tostring(groupId) .. ":" .. tostring(batchIndex))
-	inboundPayloads[key] = {
-		sender = sender,
-		session = sessionId,
-		namespace = session.namespace,
-		groupId = groupId,
-		length = length,
-		hash = payloadHash,
-		chunkCount = chunkCount,
-		itemCount = itemCount,
-		batchIndex = batchIndex,
-		batchCount = batchCount,
-		chunks = {},
-		received = 0,
-		startedAt = now(),
-		updatedAt = now(),
-	}
+local function inboundPayloadBatchKey(sender, sessionId, groupId)
+	return sessionPeerKey(sender, "B:" .. tostring(sessionId or "") .. ":" .. tostring(groupId or ""))
 end
 
-local function importCompletedPayload(transfer, payload)
-	local session = sessions[transfer.session]
-	local protocol = safeProtocol(transfer.namespace)
-	if not session or not protocol then
-		return
-	end
-	local expectedPlan = session.expectedPlan or session.localExpectedPlan
-	local expected = expectedPlan and expectedPlan[transfer.groupId]
-	if not expected then
-		return
-	end
-	if type(protocol.payloadIds) == "function" then
-		local ids, idError = protocol.payloadIds(payload)
-		if not ids then
-			chat("sync payload from " .. tostring(transfer.sender) .. " failed: " .. tostring(idError))
-			return
-		end
-		if not sameIdSet(ids, expected.ids) and transfer.batchCount <= 1 then
-			chat("sync payload from " .. tostring(transfer.sender) .. " failed: payload does not match the sync plan")
-			return
-		end
-		if transfer.batchCount > 1 then
-			for index = 1, #(ids or {}) do
-				if expected.idSet[ids[index]] ~= true then
-					chat("sync payload from " .. tostring(transfer.sender) .. " failed: payload contains unplanned item")
-					return
-				end
-			end
-		end
-	end
-	local stats, importError = protocol.importPayload(payload, {
+local function cleanupInboundPayloadBatch(sender, sessionId, groupId)
+	inboundPayloadBatches[inboundPayloadBatchKey(sender, sessionId, groupId)] = nil
+end
+
+local function aggregateImportStats(target, source)
+	target.imported = (tonumber(target.imported) or 0) + (tonumber(source and source.imported) or 0)
+	target.duplicates = (tonumber(target.duplicates) or 0) + (tonumber(source and source.duplicates) or 0)
+	target.rejected = (tonumber(target.rejected) or 0) + (tonumber(source and source.rejected) or 0)
+	target.valid = (tonumber(target.valid) or 0) + (tonumber(source and source.valid) or 0)
+	target.promoted = (tonumber(target.promoted) or 0) + (tonumber(source and source.promoted) or 0)
+	target.rebuildError = target.rebuildError or (source and source.rebuildError)
+	return target
+end
+
+local function importPayloadEntries(protocol, transfer, entries, expected)
+	local context = {
 		sender = transfer.sender,
 		session = transfer.session,
 		groupId = transfer.groupId,
-		batchIndex = transfer.batchIndex,
-		batchCount = transfer.batchCount,
+		batchCount = #entries,
+		expectedIds = expected and copyList(expected.ids) or {},
 		deferHeavyWork = type(protocol.deferHeavyWork) == "function" and protocol.deferHeavyWork() or false,
-	})
-	if not stats then
-		chat("sync payload from " .. tostring(transfer.sender) .. " failed: " .. tostring(importError))
-		return
+	}
+	if type(protocol.importPayloads) == "function" then
+		return protocol.importPayloads(entries, context)
 	end
+	if type(protocol.importPayload) ~= "function" then
+		return nil, "sync transport importer is unavailable"
+	end
+	local aggregate = {
+		imported = 0,
+		duplicates = 0,
+		rejected = 0,
+		valid = 0,
+		promoted = 0,
+		batchCount = #entries,
+	}
+	for index = 1, #entries do
+		context.batchIndex = entries[index].batchIndex or index
+		local stats, importError = protocol.importPayload(entries[index].payload, context)
+		if not stats then
+			return nil, importError
+		end
+		aggregateImportStats(aggregate, stats)
+	end
+	return aggregate, nil
+end
+
+local function acknowledgeImportedPayloads(session, transfer, protocol, stats)
 	session.completedGroups = session.completedGroups or {}
 	session.completedGroups[transfer.groupId] = true
 	if session.role == "manager" and normalizedName(session.manager or playerName()) == normalizedName(playerName()) then
@@ -1555,23 +1705,224 @@ local function importCompletedPayload(transfer, payload)
 	end
 end
 
-local function receivePayloadChunk(sender, message)
-	local parts = splitN(message, "|", 6)
-	local sessionId = parts[2]
-	local groupId = parts[3]
-	local index = tonumber(parts[4])
-	local total = tonumber(parts[5])
-	local body = parts[6] or ""
-	local matchedKey
-	local transfer
-	for key, candidate in pairs(inboundPayloads) do
-		if candidate.sender == sender and candidate.session == sessionId and candidate.groupId == groupId then
-			matchedKey = key
-			transfer = candidate
-			break
+local function importValidatedPayloadEntries(session, transfer, protocol, expected, entries)
+	local stats, importError = importPayloadEntries(protocol, transfer, entries, expected)
+	if not stats then
+		chat("sync payload from " .. tostring(transfer.sender) .. " failed: " .. tostring(importError))
+		return false
+	end
+	acknowledgeImportedPayloads(session, transfer, protocol, stats)
+	return true
+end
+
+local function receiveCompletedPayload(transfer, payload)
+	local session = sessions[transfer.session]
+	local protocol = safeProtocol(transfer.namespace)
+	if not session or not protocol then
+		return
+	end
+	local expectedPlan = session.expectedPlan or session.localExpectedPlan
+	local expected = expectedPlan and expectedPlan[transfer.groupId]
+	if not expected then
+		return
+	end
+	if normalizedName(expected.provider) ~= normalizedName(transfer.sender) then
+		return
+	end
+
+	local ids
+	if type(protocol.payloadIds) ~= "function" then
+		chat("sync payload from " .. tostring(transfer.sender) .. " failed: payload id validator is unavailable")
+		cleanupInboundPayloadBatch(transfer.sender, transfer.session, transfer.groupId)
+		return
+	end
+	local idError
+	ids, idError = protocol.payloadIds(payload)
+	if not ids then
+		chat("sync payload from " .. tostring(transfer.sender) .. " failed: " .. tostring(idError))
+		cleanupInboundPayloadBatch(transfer.sender, transfer.session, transfer.groupId)
+		return
+	end
+	if #ids ~= transfer.itemCount then
+		chat("sync payload from " .. tostring(transfer.sender) .. " failed: payload item count mismatch")
+		cleanupInboundPayloadBatch(transfer.sender, transfer.session, transfer.groupId)
+		return
+	end
+
+	if transfer.batchCount <= 1 then
+		if not sameIdSet(ids, expected.ids) then
+			chat("sync payload from " .. tostring(transfer.sender) .. " failed: payload does not match the sync plan")
+			return
+		end
+		importValidatedPayloadEntries(session, transfer, protocol, expected, {
+			{
+				payload = payload,
+				ids = ids or {},
+				batchIndex = 1,
+			},
+		})
+		return
+	end
+
+	if not isPositiveInteger(transfer.batchIndex)
+		or not isPositiveInteger(transfer.batchCount)
+		or transfer.batchIndex > transfer.batchCount then
+		chat("sync payload from " .. tostring(transfer.sender) .. " failed: invalid payload batch metadata")
+		cleanupInboundPayloadBatch(transfer.sender, transfer.session, transfer.groupId)
+		return
+	end
+	for index = 1, #ids do
+		if expected.idSet[ids[index]] ~= true then
+			chat("sync payload from " .. tostring(transfer.sender) .. " failed: payload contains unplanned item")
+			cleanupInboundPayloadBatch(transfer.sender, transfer.session, transfer.groupId)
+			return
 		end
 	end
-	if not transfer or not index or index < 1 or index > transfer.chunkCount or total ~= transfer.chunkCount then
+
+	local stageKey = inboundPayloadBatchKey(transfer.sender, transfer.session, transfer.groupId)
+	local stage = inboundPayloadBatches[stageKey]
+	if not stage
+		or stage.batchCount ~= transfer.batchCount
+		or stage.namespace ~= transfer.namespace then
+		stage = {
+			sender = transfer.sender,
+			session = transfer.session,
+			namespace = transfer.namespace,
+			groupId = transfer.groupId,
+			batchCount = transfer.batchCount,
+			completed = 0,
+			payloads = {},
+			startedAt = now(),
+			updatedAt = now(),
+		}
+		inboundPayloadBatches[stageKey] = stage
+	end
+	if not stage.payloads[transfer.batchIndex] then
+		stage.payloads[transfer.batchIndex] = {
+			payload = payload,
+			ids = ids,
+			batchIndex = transfer.batchIndex,
+		}
+		stage.completed = stage.completed + 1
+		stage.updatedAt = now()
+	end
+	if stage.completed < stage.batchCount then
+		return
+	end
+
+	local entries = {}
+	local allIds = {}
+	for batchIndex = 1, stage.batchCount do
+		local entry = stage.payloads[batchIndex]
+		if not entry then
+			chat("sync payload from " .. tostring(transfer.sender) .. " failed: missing payload batch")
+			inboundPayloadBatches[stageKey] = nil
+			return
+		end
+		entries[#entries + 1] = entry
+		for idIndex = 1, #(entry.ids or {}) do
+			allIds[#allIds + 1] = entry.ids[idIndex]
+		end
+	end
+	if not sameIdSet(allIds, expected.ids) then
+		chat("sync payload from " .. tostring(transfer.sender) .. " failed: payload does not match the complete sync plan")
+		inboundPayloadBatches[stageKey] = nil
+		return
+	end
+	inboundPayloadBatches[stageKey] = nil
+	importValidatedPayloadEntries(session, transfer, protocol, expected, entries)
+end
+
+local function receivePayloadHeader(sender, parts)
+	local sessionId = parts[2]
+	local groupId = parts[3]
+	local length = tonumber(parts[4])
+	local payloadHash = parts[5]
+	local chunkCount = tonumber(parts[6])
+	local itemCount = tonumber(parts[7])
+	local batchIndex, batchCount = parsePayloadBatchMetadata(parts)
+	local session = sessions[sessionId]
+	local expectedPlan = session and (session.expectedPlan or session.localExpectedPlan)
+	if not session or not expectedPlan or not expectedPlan[groupId] then
+		return
+	end
+	local expected = expectedPlan[groupId]
+	if normalizedName(expected.provider) ~= normalizedName(sender) then
+		return
+	end
+	if not isNonNegativeInteger(length)
+		or not isPositiveInteger(chunkCount)
+		or not isNonNegativeInteger(itemCount)
+		or type(payloadHash) ~= "string"
+		or not string.match(payloadHash, "^[0-9a-f]+$")
+		or not isPositiveInteger(batchIndex)
+		or not isPositiveInteger(batchCount)
+		or batchIndex > batchCount
+		or chunkCount > (tonumber(C.MAX_SYNC_TRANSPORT_CHUNKS) or tonumber(C.MAX_SYNC_CHUNKS) or 1000)
+		or length > (tonumber(C.MAX_SYNC_TRANSPORT_PAYLOAD_BYTES) or tonumber(C.MAX_SYNC_PAYLOAD_BYTES) or 180000) then
+		return
+	end
+	local key = sessionPeerKey(sender, "G:" .. tostring(sessionId) .. ":" .. tostring(groupId) .. ":" .. tostring(batchIndex))
+	inboundPayloads[key] = {
+		sender = sender,
+		session = sessionId,
+		namespace = session.namespace,
+		groupId = groupId,
+		length = length,
+		hash = payloadHash,
+		chunkCount = chunkCount,
+		itemCount = itemCount,
+		batchIndex = batchIndex,
+		batchCount = batchCount,
+		chunks = {},
+		received = 0,
+		startedAt = now(),
+		updatedAt = now(),
+	}
+end
+
+local function receivePayloadChunk(sender, message)
+	local parts = splitN(message, "|", 7)
+	local sessionId = parts[2]
+	local groupId = parts[3]
+	local batchIndex
+	local index
+	local total
+	local body
+	if parts[7] ~= nil then
+		batchIndex = tonumber(parts[4])
+		index = tonumber(parts[5])
+		total = tonumber(parts[6])
+		body = parts[7] or ""
+	else
+		index = tonumber(parts[4])
+		total = tonumber(parts[5])
+		body = parts[6] or ""
+	end
+	local matchedKey
+	local transfer
+	local matches = 0
+	for key, candidate in pairs(inboundPayloads) do
+		if candidate.sender == sender
+			and candidate.session == sessionId
+			and candidate.groupId == groupId
+			and (not batchIndex or candidate.batchIndex == batchIndex) then
+			matchedKey = key
+			transfer = candidate
+			matches = matches + 1
+		end
+	end
+	if not batchIndex and matches ~= 1 then
+		return
+	end
+	if not batchIndex and transfer and transfer.batchCount > 1 then
+		return
+	end
+	if not transfer
+		or not isPositiveInteger(index)
+		or index > transfer.chunkCount
+		or not isPositiveInteger(total)
+		or total ~= transfer.chunkCount then
 		return
 	end
 	if not transfer.chunks[index] then
@@ -1585,10 +1936,11 @@ local function receivePayloadChunk(sender, message)
 		inboundPayloads[matchedKey] = nil
 		if #payload ~= transfer.length or hashString(payload) ~= transfer.hash then
 			chat("sync payload from " .. tostring(sender) .. " failed integrity check")
+			cleanupInboundPayloadBatch(sender, transfer.session, transfer.groupId)
 			return
 		end
 		maybeSendFlow(transfer, true)
-		importCompletedPayload(transfer, payload)
+		receiveCompletedPayload(transfer, payload)
 	end
 end
 
@@ -1602,6 +1954,16 @@ local function handleFlow(sender, parts)
 	local group = outboundGroups[key]
 	if not group then
 		return
+	end
+	local managerSession = sessionForManager(sessionId)
+	if managerSession then
+		local plannedGroup = managerGroupById(managerSession, groupId)
+		if not plannedGroup
+			or normalizedName(plannedGroup.provider) ~= normalizedName(playerName())
+			or not nameInSet(sender, plannedGroup.receiverSet) then
+			return
+		end
+		plannedGroup.updatedAt = now()
 	end
 	local current = tonumber(group.cps) or tonumber(C.SYNC_TRANSPORT_START_CHUNKS_PER_SECOND) or 4
 	if suggested and suggested < current then
@@ -1678,6 +2040,11 @@ local function cleanupExpired()
 	for key, transfer in pairs(inboundPayloads) do
 		if tonumber(transfer.updatedAt) and transfer.updatedAt < transferCutoff then
 			inboundPayloads[key] = nil
+		end
+	end
+	for key, transfer in pairs(inboundPayloadBatches) do
+		if tonumber(transfer.updatedAt) and transfer.updatedAt < transferCutoff then
+			inboundPayloadBatches[key] = nil
 		end
 	end
 	for key, session in pairs(sessions) do
@@ -1870,15 +2237,35 @@ function SyncTransport.handleAddonMessage(_, prefix, message, distribution, send
 		if session and session.namespace == parts[3] then
 			local senderKey = normalizedName(sender)
 			local expectedHash = session.planHashes and session.planHashes[senderKey]
+			local handled = false
 			if expectedHash and expectedHash == parts[4] then
 				session.planAcks = session.planAcks or {}
 				session.planAcks[senderKey] = true
 				session.updatedAt = now()
+				handled = true
+			end
+			if not handled then
+				for _, group in ipairs(session.groups or {}) do
+					local groupHash = group.planUpdateHashes and group.planUpdateHashes[senderKey]
+					if groupHash and groupHash == parts[4] then
+						group.planUpdateAcks = group.planUpdateAcks or {}
+						group.planUpdateAcks[senderKey] = true
+						group.updatedAt = now()
+						maybeGrantReassignedGroup(session, group)
+						break
+					end
+				end
 			end
 		end
 	elseif messageType == "X" then
 		local parts = splitN(message, "|", 5)
-		startOutboundGroup(parts[2], parts[4], tonumber(parts[5]))
+		local session = sessions[parts[2]]
+		if session
+			and session.role == "participant"
+			and session.namespace == parts[3]
+			and normalizedName(session.manager) == normalizedName(sender) then
+			startOutboundGroup(parts[2], parts[4], tonumber(parts[5]))
+		end
 	elseif messageType == "G" then
 		receivePayloadHeader(sender, splitN(message, "|", 10))
 	elseif messageType == "g" then
@@ -1890,7 +2277,7 @@ function SyncTransport.handleAddonMessage(_, prefix, message, distribution, send
 		local session = sessionForManager(parts[2])
 		if session and session.namespace == parts[3] then
 			local group = managerGroupById(session, parts[4])
-			if group and group.state == "active" then
+			if group and group.state == "active" and nameInSet(sender, group.receiverSet) then
 				group.updatedAt = now()
 			end
 		end
@@ -1900,12 +2287,28 @@ function SyncTransport.handleAddonMessage(_, prefix, message, distribution, send
 		if session and session.namespace == parts[3] and parts[5] == "ok" then
 			completeManagerGroup(session, parts[4], sender)
 		end
+	elseif messageType == "Y" then
+		local parts = splitN(message, "|", 4)
+		local session = sessions[parts[2]]
+		if session
+			and session.namespace == parts[3]
+			and normalizedName(session.manager) == normalizedName(sender) then
+			local protocol = safeProtocol(session.namespace)
+			if protocol and type(protocol.onDuplicateOnly) == "function" then
+				protocol.onDuplicateOnly({
+					session = session.session,
+					manager = sender,
+				})
+			end
+			session.state = "complete"
+			session.updatedAt = now()
+		end
 	elseif messageType == "E" then
 		local parts = splitN(message, "|", 4)
 		local session = sessionForManager(parts[2])
 		if session and session.namespace == parts[3] then
 			local group = managerGroupById(session, parts[4])
-			if group then
+			if group and normalizedName(group.provider) == normalizedName(sender) then
 				group.providerCompletedAt = now()
 				group.updatedAt = now()
 			end
@@ -1916,6 +2319,19 @@ function SyncTransport.handleAddonMessage(_, prefix, message, distribution, send
 	elseif messageType == "Z" then
 		local parts = splitN(message, "|", 5)
 		chat("sync transport group " .. tostring(parts[4]) .. " from " .. tostring(sender) .. " failed: " .. tostring(unescapeValue(parts[5] or "")))
+		local session = sessionForManager(parts[2])
+		if session and session.namespace == parts[3] then
+			local group = managerGroupById(session, parts[4])
+			if group
+				and group.state == "active"
+				and normalizedName(group.provider) == normalizedName(sender) then
+				if group.reassignedAt then
+					markGroupFailed(session, group, unescapeValue(parts[5] or "") or "provider failed")
+				else
+					reassignGroup(session, group)
+				end
+			end
+		end
 	end
 end
 
@@ -1958,6 +2374,7 @@ function SyncTransport.start()
 	inboundLists = {}
 	inboundPlans = {}
 	inboundPayloads = {}
+	inboundPayloadBatches = {}
 	outboundGroups = {}
 	sendQueues = {}
 	sendQueueOrder = {}
