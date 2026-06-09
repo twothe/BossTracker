@@ -691,6 +691,10 @@ local function componentCompletionReason(component)
 	return #component > 0 and completionReason or nil
 end
 
+function EvidenceStore.componentCompletionReason(component)
+	return componentCompletionReason(component)
+end
+
 local function fallbackBossStateFromContext(context)
 	if type(context) ~= "table" then
 		return nil

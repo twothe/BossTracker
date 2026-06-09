@@ -125,6 +125,36 @@ local function ensureEncounter(zone, encounterKey, encounterName)
 	return encounter
 end
 
+local function clearAbilityLegacyMarker(ability)
+	if type(ability) ~= "table" then
+		return
+	end
+	ability.legacyAfterRebuild = nil
+	ability.rebuildCoverage = nil
+	ability.legacyPreservedAt = nil
+end
+
+local function refreshEncounterLegacyCoverage(encounter)
+	if type(encounter) ~= "table" then
+		return
+	end
+	local legacyAbilityCount = 0
+	for _, ability in pairs(encounter.abilities or {}) do
+		if type(ability) == "table" and ability.legacyAfterRebuild == true then
+			legacyAbilityCount = legacyAbilityCount + 1
+		end
+	end
+	encounter.legacyAfterRebuild = nil
+	encounter.legacyPreservedAt = nil
+	if legacyAbilityCount > 0 then
+		encounter.legacyAbilityCount = legacyAbilityCount
+		encounter.rebuildCoverage = "partial"
+	else
+		encounter.legacyAbilityCount = nil
+		encounter.rebuildCoverage = nil
+	end
+end
+
 local function ensureActor(encounter, bossState, decision)
 	local actor = encounter.actors[bossState.bossKey]
 	if not actor then
@@ -435,13 +465,18 @@ function ModelStore.getEncounter(zoneKey, encounterKey)
 	return encounter
 end
 
-function ModelStore.promoteComponent(pullState, component)
+function ModelStore.promoteComponent(pullState, component, options)
 	if not addon.db or not pullState or type(component) ~= "table" or #component == 0 then
 		return nil
 	end
+	options = type(options) == "table" and options or {}
 
 	local zone = ensureZone(pullState.zone)
 	local encounter = ensureEncounter(zone, component.encounterKey, component.encounterName)
+	local revalidateLegacy = options.evidenceCompletionReason ~= nil
+	if revalidateLegacy then
+		refreshEncounterLegacyCoverage(encounter)
+	end
 	encounter.pullCount = (encounter.pullCount or 0) + 1
 	encounter.confidence = math.max(encounter.confidence or 0, averageComponentConfidence(component))
 	encounter.actorCount = countKeys(encounter.actors)
@@ -454,6 +489,9 @@ function ModelStore.promoteComponent(pullState, component)
 		for _, pullAbility in pairs(bossState.abilities or {}) do
 			if pullAbility.activationCount and pullAbility.activationCount > 0 then
 				local ability = ensureAbility(encounter, bossState, pullAbility)
+				if revalidateLegacy then
+					clearAbilityLegacyMarker(ability)
+				end
 				addon.Learning.RuleLearner.mergePullAbility(ability, pullAbility)
 				if addon.Core.Difficulty and addon.Core.Difficulty.noteAbilitySeen then
 					addon.Core.Difficulty.noteAbilitySeen(ability, pullState.zone)
@@ -462,6 +500,9 @@ function ModelStore.promoteComponent(pullState, component)
 		end
 	end
 
+	if revalidateLegacy then
+		refreshEncounterLegacyCoverage(encounter)
+	end
 	encounter.actorCount = countKeys(encounter.actors)
 	encounter.abilityCount = countKeys(encounter.abilities)
 	normalizeContainedSingleActorEncounters(zone)

@@ -2711,6 +2711,76 @@ local function scenarioEngineRebuildPreservesLearnedOnlyLegacy()
 	Harness.assertTrue((addon.db.learnedMeta.rebuildLegacyPreservedEncounters or 0) >= 1, "Partial rebuild should count preserved legacy encounters")
 end
 
+local function scenarioLiveCompletedPullClearsRevalidatedLegacy()
+	Harness.resetState("Replay Live Legacy Revalidation")
+	local boss = "Legacy Evidence Sentinel"
+	local guid = Harness.makeGuid(boss, 1907)
+	local bossKey = addon.Core.Util.bossKey(boss, guid)
+	local zoneKey = addon.Core.Util.zoneInfo().key
+	local legacyLearned, recoveredAbilityKey = manualLearnedData(zoneKey, bossKey, "Recovered Slam")
+	local legacyEncounter = legacyLearned.zones[zoneKey].encounters[bossKey]
+	local staleSpellKey = addon.Core.Util.timerAbilityKey(nil, "Stale Only")
+	local staleAbilityKey = addon.Core.ModelStore.abilityModelKey(bossKey, staleSpellKey)
+	legacyEncounter.legacyAfterRebuild = true
+	legacyEncounter.rebuildCoverage = "missing_permanent_evidence"
+	legacyEncounter.legacyPreservedAt = 1
+	legacyEncounter.legacyAbilityCount = 2
+	legacyEncounter.abilities[recoveredAbilityKey].legacyAfterRebuild = true
+	legacyEncounter.abilities[recoveredAbilityKey].rebuildCoverage = "missing_permanent_evidence"
+	legacyEncounter.abilities[recoveredAbilityKey].legacyPreservedAt = 1
+	legacyEncounter.abilities[staleAbilityKey] = copyTable(legacyEncounter.abilities[recoveredAbilityKey])
+	legacyEncounter.abilities[staleAbilityKey].key = staleAbilityKey
+	legacyEncounter.abilities[staleAbilityKey].spellKey = staleSpellKey
+	legacyEncounter.abilities[staleAbilityKey].spellName = "Stale Only"
+	addon.db.learned.zones[zoneKey] = legacyLearned.zones[zoneKey]
+
+	Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = guid, spellName = "Recovered Slam", hp = 100 })
+	Harness.emitSpell({ t = 30, sourceName = boss, sourceGUID = guid, spellName = "Recovered Slam", hp = 20 })
+	Harness.finishPull(45, "unit_died")
+
+	local refreshed = addon.db.learned.zones[zoneKey].encounters[bossKey]
+	local recovered = Harness.ability(refreshed, bossKey, "Recovered Slam")
+	local stale = refreshed.abilities[staleAbilityKey]
+	Harness.assertTrue(refreshed.legacyAfterRebuild ~= true, "A completed live pull should reactivate the legacy encounter it revalidates")
+	Harness.assertTrue(addon.Core.ModelStore.getEncounter(zoneKey, bossKey) == refreshed, "Revalidated legacy encounter should feed runtime lookup again")
+	Harness.assertTrue(recovered ~= nil and recovered.legacyAfterRebuild ~= true, "Observed legacy ability should no longer need evidence")
+	Harness.assertTrue(stale ~= nil and stale.legacyAfterRebuild == true, "Unobserved legacy abilities should still need fresh evidence")
+	Harness.assertTrue(refreshed.rebuildCoverage == "partial", "Partially revalidated encounters should keep partial coverage")
+	Harness.assertTrue(refreshed.legacyAbilityCount == 1, "Partial coverage should count only remaining legacy abilities")
+end
+
+local function scenarioNewEvidenceAfterPartialRebuildRefreshesLegacyOnStartup()
+	Harness.resetState("Replay Partial Evidence Refresh")
+	local boss = "Deferred Legacy Sentinel"
+	local guid = Harness.makeGuid(boss, 1908)
+	local bossKey = addon.Core.Util.bossKey(boss, guid)
+	Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = guid, spellName = "Deferred Slam", hp = 100 })
+	Harness.emitSpell({ t = 30, sourceName = boss, sourceGUID = guid, spellName = "Deferred Slam", hp = 20 })
+	Harness.finishPull(45, "unit_died")
+
+	local zoneKey = addon.Core.Util.zoneInfo().key
+	local legacyLearned, abilityKey = manualLearnedData(zoneKey, bossKey, "Deferred Slam")
+	local legacyEncounter = legacyLearned.zones[zoneKey].encounters[bossKey]
+	legacyEncounter.legacyAfterRebuild = true
+	legacyEncounter.rebuildCoverage = "missing_permanent_evidence"
+	legacyEncounter.legacyPreservedAt = 1
+	legacyEncounter.legacyAbilityCount = 1
+	legacyEncounter.abilities[abilityKey].legacyAfterRebuild = true
+	legacyEncounter.abilities[abilityKey].rebuildCoverage = "missing_permanent_evidence"
+	addon.db.learned.zones[zoneKey] = legacyLearned.zones[zoneKey]
+	addon.db.learnedMeta.interpretationEngineVersion = addon.Core.Constants.INTERPRETATION_ENGINE_VERSION
+	addon.db.learnedMeta.rebuildRequired = nil
+	addon.db.learnedMeta.rebuildCoverage = "partial"
+	addon.db.learnedMeta.rebuiltFromEvidenceKills = 0
+
+	local rebuiltNow, promoted = addon.Core.SavedVariables.rebuildLearnedIfNeeded()
+	local refreshed = Harness.encounter(bossKey)
+	local ability = Harness.ability(refreshed, bossKey, "Deferred Slam")
+	Harness.assertTrue(rebuiltNow == true and promoted >= 1, "New permanent evidence after a partial rebuild should trigger startup refresh")
+	Harness.assertTrue(refreshed ~= nil and refreshed.legacyAfterRebuild ~= true, "Startup refresh should reactivate the evidence-backed encounter")
+	Harness.assertTrue(ability ~= nil and ability.legacyAfterRebuild ~= true, "Startup refresh should clear legacy state from evidence-backed abilities")
+end
+
 local function scenarioOldBackupRestorePreservesLegacyAfterEngineRebuild()
 	Harness.resetState("Replay Old Backup Restore Legacy")
 	local C = addon.Core.Constants
@@ -3319,6 +3389,8 @@ local scenarios = {
 	scenarioEvidenceRebuildPreservesPlayerAuraPhase,
 	scenarioEvidenceEngineVersionRebuildsFinalData,
 	scenarioEngineRebuildPreservesLearnedOnlyLegacy,
+	scenarioLiveCompletedPullClearsRevalidatedLegacy,
+	scenarioNewEvidenceAfterPartialRebuildRefreshesLegacyOnStartup,
 	scenarioOldBackupRestorePreservesLegacyAfterEngineRebuild,
 	scenarioMissingEvidenceEngineVersionRebuildsForFutureEngines,
 	scenarioEvidenceSyncRoundTripRebuildsModel,

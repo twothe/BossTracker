@@ -186,7 +186,13 @@ function AbilityLearner.finishPull(pull, reason)
 	local decisions, components = addon.Learning.EncounterModel.scorePull(pullState, pull, reason)
 	local promotedCount = 0
 	for index = 1, #components do
-		local encounter = addon.Core.ModelStore.promoteComponent(pullState, components[index])
+		local completionReason = addon.Core.EvidenceStore
+			and addon.Core.EvidenceStore.componentCompletionReason
+			and addon.Core.EvidenceStore.componentCompletionReason(components[index])
+			or nil
+		local encounter = addon.Core.ModelStore.promoteComponent(pullState, components[index], {
+			evidenceCompletionReason = completionReason,
+		})
 		if encounter then
 			promotedCount = promotedCount + 1
 			logDecision(pullState, components[index], encounter)

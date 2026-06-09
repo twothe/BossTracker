@@ -1030,6 +1030,10 @@ local function learnedRebuildNeed(db)
 	if storedEngineVersion ~= currentEngineVersion then
 		return true, "interpretation_engine"
 	end
+	if meta.rebuildCoverage == "partial"
+		and evidenceKillCount(db) > (tonumber(meta.rebuiltFromEvidenceKills) or 0) then
+		return true, "new_evidence_after_partial_rebuild"
+	end
 	return false, nil
 end
 
