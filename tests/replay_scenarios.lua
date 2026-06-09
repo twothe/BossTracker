@@ -77,6 +77,79 @@ local function scenarioChannelLifecycle()
 	Harness.assertNear(timer.remaining, 24, 0.2, "Whirlwind live timer should predict the next activation")
 end
 
+local function scenarioLongCastResolutionDoesNotBecomeCooldown()
+	Harness.resetState("Replay Long Cast Lifecycle")
+	local boss = "Onyxia"
+	local guid = Harness.makeGuid(boss, 101)
+	local spellName = "Deep Breath"
+	local spellId = 2108305
+	local spellKey = addon.Core.Util.timerAbilityKey(spellId, spellName)
+	local playerFlags = addon.Core.Constants.FLAG_PLAYER
+
+	Harness.emitSpell({
+		t = 0,
+		sourceName = boss,
+		sourceGUID = guid,
+		spellName = spellName,
+		spellId = spellId,
+		hp = 96,
+		eventType = "SPELL_CAST_START",
+	})
+	Harness.emitSpell({
+		t = 8.2,
+		sourceName = boss,
+		sourceGUID = guid,
+		spellName = spellName,
+		spellId = spellId,
+		hp = 92,
+		eventType = "SPELL_DAMAGE",
+		destGUID = "Player-1",
+		destName = "Replay Tank",
+		destFlags = playerFlags,
+	})
+	Harness.emitSpell({
+		t = 60,
+		sourceName = boss,
+		sourceGUID = guid,
+		spellName = spellName,
+		spellId = spellId,
+		hp = 72,
+		eventType = "SPELL_CAST_START",
+	})
+	Harness.emitSpell({
+		t = 68.2,
+		sourceName = boss,
+		sourceGUID = guid,
+		spellName = spellName,
+		spellId = spellId,
+		hp = 68,
+		eventType = "SPELL_DAMAGE",
+		destGUID = "Player-2",
+		destName = "Replay Healer",
+		destFlags = playerFlags,
+	})
+
+	local pullState = addon.Learning.AbilityLearner.getCurrentPullState()
+	local bossState = pullState.bosses[addon.Core.Util.actorKey(boss, guid)]
+	local pullAbility = bossState.abilities[spellKey]
+	Harness.assertTrue(pullAbility.activationCount == 2, "Long cast resolution events should not count as separate activations")
+	Harness.assertNear(pullAbility.minInterval, 60, 0.01, "Long cast lifecycle should learn recast delay, not cast resolution time")
+	Harness.assertTrue(not addon.Learning.RelevanceScorer.routineReasonForAbility(pullAbility), "Long cast lifecycle should not look like short routine noise")
+
+	Harness.setTime(60)
+	local timer = Harness.firstPredictionByName(spellName)
+	Harness.assertTrue(timer ~= nil, "Long cast lifecycle should produce a live recast timer")
+	Harness.assertNear(timer.remaining, 60, 0.2, "Long cast lifecycle live timer should use the recast interval")
+
+	Harness.finishPull(95)
+	local bossKey = addon.Core.Util.bossKey(boss, guid)
+	local learned = Harness.ability(Harness.encounter(bossKey), bossKey, spellName)
+	Harness.assertTrue(learned ~= nil, "Long cast lifecycle should be persisted")
+	Harness.assertNear(learned.minInterval, 60, 0.01, "Persisted long cast lifecycle should keep the recast interval")
+	Harness.assertTrue(learned.selectedRule and learned.selectedRule.type == "time_interval", "Persisted long cast lifecycle should select a time interval")
+	Harness.assertTrue(learned.autoSuppressed ~= true, "Persisted long cast lifecycle should remain displayable")
+end
+
 local function scenarioPhaseHpRules()
 	Harness.resetState("Replay LBRS")
 	local boss = "Warmaster Voone"
@@ -3311,6 +3384,7 @@ end
 
 local scenarios = {
 	scenarioChannelLifecycle,
+	scenarioLongCastResolutionDoesNotBecomeCooldown,
 	scenarioPhaseHpRules,
 	scenarioStableIntervalSurvivesDifferentPhaseSegments,
 	scenarioStableIntervalSurvivesRepeatedPhaseCoincidence,

@@ -39,6 +39,7 @@
 - Allow live same-pull provisional timers for repeated casts from qualified active boss contexts, but do not persist those estimates until the normal pull-end learner path qualifies the context.
 - Use canonical timer ability keys based on the visible spell name when available. Ascension/WoW combat logs may emit different technical spell ids for the cast, effect, and aura of one displayed boss mechanic.
 - Deduplicate cast lifecycle events for one ability. A `SPELL_CAST_START` or `SPELL_CAST_SUCCESS` followed shortly by success, damage, aura, heal, summon, or miss evidence is one boss ability occurrence, not the ability cooldown.
+- Keep cast-resolution lifecycle dedupe tolerant of long cast bars and private-server event jitter. A delayed damage or miss packet after a visible cast start must not become a short learned cooldown when the next cast start is the real recast evidence.
 - Treat player `SPELL_INTERRUPT` events against hostile NPCs as evidence for the interrupted boss spell from the event's extra spell fields, not as the player's interrupt ability.
 - Treat self-applied aura windows as ability lifecycles. Channeled or aura-driven mechanics can emit ticks and aura removal after the visible activation; those events must not be learned as recast intervals.
 - Use `/home/two/projects/azerothcore-wotlk` as a local pattern reference for common boss script shapes, but never as authoritative Ascension behavior.
