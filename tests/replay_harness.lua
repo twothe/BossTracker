@@ -19,6 +19,7 @@ local unitState = {}
 local createdFrames = {}
 local playedSounds = {}
 local sentAddonMessages = {}
+local sentChatMessages = {}
 local registeredAddonPrefixes = {}
 local raidMembers = 0
 local partyMembers = 0
@@ -130,6 +131,14 @@ function SendAddonMessage(prefix, message, distribution, target)
 	return true
 end
 
+function SendChatMessage(message, channel)
+	sentChatMessages[#sentChatMessages + 1] = {
+		message = tostring(message or ""),
+		channel = channel,
+	}
+	return true
+end
+
 function CreateFrame(_, name)
 	local frame = {
 		events = {},
@@ -194,6 +203,7 @@ local function loadAddon()
 		"Learning/RelevanceScorer.lua",
 		"Learning/AbilityLearner.lua",
 		"Runtime/PredictionEngine.lua",
+		"Runtime/PullTimer.lua",
 		"Runtime/TimerScheduler.lua",
 		"Runtime/WarningEngine.lua",
 		"Capture/CombatLog.lua",
@@ -244,6 +254,7 @@ function Harness.resetState(name)
 	unitState = {}
 	playedSounds = {}
 	sentAddonMessages = {}
+	sentChatMessages = {}
 	registeredAddonPrefixes = {}
 	raidMembers = 0
 	partyMembers = 0
@@ -262,6 +273,8 @@ function Harness.resetState(name)
 	addon.Learning.RelevanceScorer.start()
 	addon.Learning.AbilityLearner.start()
 	addon.Runtime.PredictionEngine.start()
+	addon.Runtime.PullTimer.cancelPull({ broadcast = false, announce = false, requirePermission = false })
+	addon.Runtime.PullTimer.start()
 	addon.Runtime.TimerScheduler.start()
 	addon.UI.SlashCommand.start()
 	addon.Core.SavedVariables.rebuildLearnedIfNeeded()
@@ -281,6 +294,14 @@ end
 
 function Harness.clearAddonMessages()
 	sentAddonMessages = {}
+end
+
+function Harness.sentChatMessages()
+	return sentChatMessages
+end
+
+function Harness.clearChatMessagesSent()
+	sentChatMessages = {}
 end
 
 function Harness.clearChatMessages()

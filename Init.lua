@@ -27,6 +27,11 @@ local function startModules()
 	boundary.safeStart("RelevanceScorer", addon.Learning.RelevanceScorer)
 	boundary.safeStart("AbilityLearner", addon.Learning.AbilityLearner)
 	boundary.safeStart("PredictionEngine", addon.Runtime.PredictionEngine)
+	if addon.Runtime.PullTimer then
+		boundary.safeStart("PullTimer", addon.Runtime.PullTimer)
+	else
+		addon.Core.Logger.chat("BossTracker update needs a full client restart before pull timers are available.")
+	end
 	boundary.safeStart("TimerScheduler", addon.Runtime.TimerScheduler)
 	if addon.Runtime.WarningEngine then
 		boundary.safeStart("WarningEngine", addon.Runtime.WarningEngine)

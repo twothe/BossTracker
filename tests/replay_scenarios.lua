@@ -1385,6 +1385,71 @@ local function scenarioWarningRaidPermissionUsesWotlkApi()
 	IsRaidOfficer = previousIsRaidOfficer
 end
 
+local function scenarioPullTimerAnnouncementsAndPreciseBar()
+	Harness.resetState("Replay Pull Timer")
+	Harness.setGroupMembers(4, 0)
+	Harness.clearAddonMessages()
+	Harness.clearChatMessagesSent()
+	Harness.assertTrue(Harness.registeredAddonPrefix(addon.Core.Constants.PULL_TIMER_PREFIX), "Pull timer addon prefix should be registered")
+	Harness.assertTrue(SlashCmdList.BOSSTRACKERPULL ~= nil, "/pull alias should be registered when no existing slash command owns it")
+
+	local thresholds = addon.Runtime.PullTimer.buildAnnouncementThresholds(43)
+	local expectedThresholds = { 40, 35, 30, 25, 20, 15, 10, 5, 4, 3, 2, 1, 0 }
+	Harness.assertTrue(#thresholds == #expectedThresholds, "Forty-three second pull should create expected announcement count")
+	for index = 1, #expectedThresholds do
+		Harness.assertTrue(thresholds[index] == expectedThresholds[index], "Pull timer announcement threshold mismatch at index " .. tostring(index))
+	end
+
+	SlashCmdList.BOSSTRACKERPULL("40")
+	local addonMessages = Harness.sentAddonMessages()
+	Harness.assertTrue(addonMessages[1] and addonMessages[1].prefix == addon.Core.Constants.PULL_TIMER_PREFIX, "Pull timer should broadcast over its own addon prefix")
+	Harness.assertTrue(addonMessages[1].message == "START|40" and addonMessages[1].distribution == "PARTY", "Party pull timer should broadcast a start message")
+
+	local chatMessages = Harness.sentChatMessages()
+	Harness.assertTrue(chatMessages[1] and chatMessages[1].message == "Pull in 40", "Pull timer should announce the initial duration")
+	local row = addon.Runtime.TimerScheduler.getPredictions(false)[1]
+	Harness.assertTrue(row and row.pullTimer == true and row.duration == 40, "Pull timer should be the first timer row")
+	Harness.assertNear(row.remaining, 40, 0.001, "Pull timer row should start from the precise duration")
+
+	local expectedMessages = {
+		{ t = 5, message = "Pull in 35" },
+		{ t = 10, message = "Pull in 30" },
+		{ t = 12.3, message = nil, remaining = 27.7 },
+		{ t = 15, message = "Pull in 25" },
+		{ t = 20, message = "Pull in 20" },
+		{ t = 25, message = "Pull in 15" },
+		{ t = 30, message = "Pull in 10" },
+		{ t = 35, message = "Pull in 5" },
+		{ t = 36, message = "Pull in 4" },
+		{ t = 37, message = "Pull in 3" },
+		{ t = 38, message = "Pull in 2" },
+		{ t = 39, message = "Pull in 1" },
+		{ t = 40, message = "Pull now" },
+	}
+	local expectedChatCount = 1
+	for index = 1, #expectedMessages do
+		local step = expectedMessages[index]
+		Harness.setTime(step.t)
+		addon.Runtime.PullTimer.tick()
+		if step.remaining then
+			row = addon.Runtime.TimerScheduler.getPredictions(false)[1]
+			Harness.assertNear(row.remaining, step.remaining, 0.001, "Pull timer row should keep precise remaining time")
+		end
+		if step.message then
+			expectedChatCount = expectedChatCount + 1
+			chatMessages = Harness.sentChatMessages()
+			Harness.assertTrue(chatMessages[expectedChatCount] and chatMessages[expectedChatCount].message == step.message, "Pull timer announcement mismatch at t=" .. tostring(step.t))
+		end
+	end
+
+	SlashCmdList.BOSSTRACKERPULL("20")
+	row = addon.Runtime.TimerScheduler.getPredictions(false)[1]
+	Harness.assertTrue(row and row.pullTimer == true and row.duration == 20, "Starting a new pull timer should overwrite the active timer")
+	SlashCmdList.BOSSTRACKERPULL("cancel")
+	row = addon.Runtime.TimerScheduler.getPredictions(false)[1]
+	Harness.assertTrue(not (row and row.pullTimer), "Cancel should remove the active pull timer")
+end
+
 local function scenarioConfiguredWarningPlaysSound()
 	Harness.resetState("Replay Warning Sound")
 	Harness.assertTrue(addon.Core.Config.getWarningLeadTime() == 3, "Default warning lead time should be three seconds")
@@ -3121,6 +3186,7 @@ local scenarios = {
 	scenarioSavedVariablesExplicitClearBlocksCharacterRestore,
 	scenarioClearLearnedClearsConfigOverrides,
 	scenarioWarningRaidPermissionUsesWotlkApi,
+	scenarioPullTimerAnnouncementsAndPreciseBar,
 	scenarioConfiguredWarningPlaysSound,
 	scenarioDelayedTimerHidesUntilObservedAgain,
 	scenarioLearnedDelayedTimerHidesUntilObservedAgain,

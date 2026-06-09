@@ -28,6 +28,7 @@ local ADDON_FILES = {
 	"Learning/RelevanceScorer.lua",
 	"Learning/AbilityLearner.lua",
 	"Runtime/PredictionEngine.lua",
+	"Runtime/PullTimer.lua",
 	"Runtime/TimerScheduler.lua",
 	"Runtime/WarningEngine.lua",
 	"Capture/CombatLog.lua",
@@ -460,6 +461,10 @@ function Client:createEnvironment()
 		end
 		return true
 	end
+	env.SendChatMessage = function(message, channel)
+		client.chat.messages[#client.chat.messages + 1] = tostring(channel or "CHAT") .. ":" .. tostring(message or "")
+		return true
+	end
 	env.CreateFrame = function(_, name)
 		return makeFrame(client, name)
 	end
@@ -509,6 +514,8 @@ function Client:reset(options)
 	self.addon.Learning.RelevanceScorer.start()
 	self.addon.Learning.AbilityLearner.start()
 	self.addon.Runtime.PredictionEngine.start()
+	self.addon.Runtime.PullTimer.cancelPull({ broadcast = false, announce = false, requirePermission = false })
+	self.addon.Runtime.PullTimer.start()
 	self.addon.Runtime.TimerScheduler.start()
 	self.addon.Core.SavedVariables.rebuildLearnedIfNeeded()
 end

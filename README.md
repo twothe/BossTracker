@@ -16,6 +16,7 @@ BossTracker is made for players who want cleaner timing information for interrup
 - Lets you hide, show, highlight, or warn for individual learned abilities.
 - Can send a personal or raid warning shortly before a configured ability is ready.
 - Can play an optional alert sound together with configured personal or raid warnings.
+- Can start a synchronized group pull timer with `/pull 10`, or `/btr pull 10` if another addon already owns `/pull`.
 
 BossTracker improves with evidence. The first pull of a boss may show little or nothing. Once the addon has seen an ability repeat or has enough useful timing evidence, timers can appear during the fight and on later pulls.
 
@@ -77,6 +78,8 @@ Raid warning falls back to a personal warning if raid warning is not available.
 - `/btr status` - Show whether BossTracker, timers, debug logging, and preview are enabled.
 - `/btr panic` - Hide timer visuals and warnings while learning continues.
 - `/btr resume` - Show timers and warnings again.
+- `/pull 10` or `/btr pull 10` - Start a synchronized pull timer. Use `/btr pull 10` if another addon already owns `/pull`.
+- `/pull cancel` or `/btr pull cancel` - Cancel the active pull timer. Use `/btr pull cancel` if another addon already owns `/pull`.
 - `/btr timers off` - Disable timer display while learning continues.
 - `/btr timers on` - Enable timer display again.
 - `/btr resetui` - Reset the timer window position.
@@ -87,7 +90,9 @@ Raid warning falls back to a personal warning if raid warning is not available.
 - `/btr sync accept PlayerName` - Accept a sync request if the popup is not available.
 - `/btr clearlearned` - Clear learned boss data and ability settings.
 
-Most players only need `/btr config`, `/btr preview`, and `/btr panic`.
+For long pull timers, BossTracker announces the pull every 5 seconds, then every second from 5 to 1, while the timer bar itself keeps running smoothly.
+
+Most players only need `/pull 10`, `/btr config`, `/btr preview`, and `/btr panic`.
 
 ## Learning Tips
 

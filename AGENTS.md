@@ -59,6 +59,7 @@
 - Timer UI positioning and resizing must be direct mouse interactions on the visible frame; slash commands may remain only as fallback or recovery controls.
 - Timer frame locking must block direct drag, corner resizing, and mouse-wheel scaling, not only hide the frame when idle.
 - `/btr panic` must suppress timer visuals and configured warnings while keeping capture and diagnostics active.
+- Pull timer bars must use precise absolute end-time rendering. Group instructions announce the initial value, then every 5 seconds above 5 seconds, then every second from 5 to 1, followed by the final pull instruction.
 - Clearing all learned alpha data should also clear related display/warning overrides, because stale overrides can silently affect newly relearned models.
 - Keep a versioned per-character backup of learned encounter data, permanent evidence, and ability overrides, so an account-wide SavedVariables load failure can restore both the player-facing boss configuration and the raw rebuild source on the next addon start.
 - Never let a character backup silently overwrite a non-empty account learned-data store. If the character backup is newer, show an on-screen choice to restore the backup or keep the current account data.

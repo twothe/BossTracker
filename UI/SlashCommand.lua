@@ -10,6 +10,8 @@ local Util = addon.Core.Util
 local SlashCommand = {}
 addon.UI.SlashCommand = SlashCommand
 
+local pullSlashRegistered = false
+
 local function help()
 	Util.print("BossTracker commands:")
 	Util.print("/btr status - show current addon and capture state")
@@ -19,6 +21,11 @@ local function help()
 	Util.print("/btr unlock, /btr lock, /btr resetui - fallback timer frame controls")
 	Util.print("/btr scale 1.0, /btr bigger, /btr smaller - fallback scale controls")
 	Util.print("/btr panic, /btr resume, /btr timers on/off - control timer visibility")
+	if pullSlashRegistered then
+		Util.print("/btr pull 10, /pull 10, /btr pull cancel - start or cancel a pull timer")
+	else
+		Util.print("/btr pull 10, /btr pull cancel - start or cancel a pull timer")
+	end
 	Util.print("/btr sync target, player, group, raid - request evidence exchange")
 	Util.print("/btr debug on/off, /btr clearlogs, /btr clearlearned - alpha diagnostics")
 end
@@ -129,6 +136,40 @@ local function preview(rest)
 	Util.print(enabled and "timer preview enabled" or "timer preview disabled")
 end
 
+local function pullTimer(rest)
+	rest = string.lower(tostring(rest or ""))
+	rest = string.match(rest, "^%s*(.-)%s*$") or ""
+	if rest == "" then
+		rest = tostring(C.PULL_TIMER_DEFAULT_SECONDS or 10)
+	end
+	if rest == "cancel" or rest == "stop" or rest == "off" then
+		if addon.Runtime.PullTimer and addon.Runtime.PullTimer.cancelPull then
+			local ok = addon.Runtime.PullTimer.cancelPull()
+			if ok then
+				Util.print("pull timer canceled")
+			end
+		else
+			Util.print("full client restart required before pull timers are available")
+		end
+		return
+	end
+
+	local durationText = string.match(rest, "^(%d+)")
+	local duration = tonumber(durationText)
+	if not duration then
+		Util.print("usage: /pull 10 or /pull cancel")
+		return
+	end
+	if addon.Runtime.PullTimer and addon.Runtime.PullTimer.startPull then
+		local ok, appliedDuration = addon.Runtime.PullTimer.startPull(duration)
+		if ok then
+			Util.print("pull timer started: " .. tostring(appliedDuration) .. " seconds")
+		end
+	else
+		Util.print("full client restart required before pull timers are available")
+	end
+end
+
 local function setScale(rest)
 	rest = tostring(rest or "")
 	if rest == "" then
@@ -219,6 +260,8 @@ local function handle(input)
 		Util.print("timer frame unlocked")
 	elseif command == "preview" then
 		preview(rest)
+	elseif command == "pull" then
+		pullTimer(rest)
 	elseif command == "scale" then
 		setScale(rest)
 	elseif command == "bigger" then
@@ -255,10 +298,32 @@ local function handle(input)
 	end
 end
 
+local function slashCommandTaken(command)
+	command = string.lower(tostring(command or ""))
+	for key, value in pairs(_G) do
+		if type(key) == "string"
+			and string.sub(key, 1, 6) == "SLASH_"
+			and type(value) == "string"
+			and string.lower(value) == command then
+			return true
+		end
+	end
+	return false
+end
+
 function SlashCommand.start()
 	SLASH_BOSSTRACKER1 = "/btr"
 	SLASH_BOSSTRACKER2 = "/bosstracker"
 	SlashCmdList.BOSSTRACKER = function(input)
 		addon.Core.ErrorBoundary.call("SlashCommand", "slash", handle, input)
+	end
+	if SLASH_BOSSTRACKERPULL1 == "/pull" or not slashCommandTaken("/pull") then
+		SLASH_BOSSTRACKERPULL1 = "/pull"
+		SlashCmdList.BOSSTRACKERPULL = function(input)
+			addon.Core.ErrorBoundary.call("SlashCommand", "pull", pullTimer, input)
+		end
+		pullSlashRegistered = true
+	else
+		pullSlashRegistered = false
 	end
 end
