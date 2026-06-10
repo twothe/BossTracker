@@ -71,6 +71,9 @@ local function stableHpGate(ability)
 	if not ability.hpSamples or ability.hpSamples < C.MIN_HP_GATE_SAMPLES then
 		return false
 	end
+	if (tonumber(ability.activationCount) or 0) > math.max(1, tonumber(ability.pullSeenCount) or 1) then
+		return false
+	end
 	if not ability.minHpPct or not ability.maxHpPct then
 		return false
 	end
@@ -384,6 +387,7 @@ function RuleLearner.refreshRules(ability)
 	local strongPhaseOffsetSampleCount = 0
 	local phaseOnce = true
 	local hasRepeatedPhaseSegment = false
+	local hasRepeatedStrongPhaseSegment = false
 	local phaseSegmentCount = 0
 	for _, segment in pairs(ability.segmentStats or {}) do
 		local hasPhaseOffset = segment.avgPhaseOffset ~= nil or segment.firstPhaseOffset ~= nil
@@ -392,6 +396,9 @@ function RuleLearner.refreshRules(ability)
 			phaseSegmentCount = phaseSegmentCount + 1
 			if segmentPhaseSamples >= 2 or (tonumber(segment.seenCount) or 0) >= 2 then
 				hasRepeatedPhaseSegment = true
+				if segment.reason == "boss_aura_applied" then
+					hasRepeatedStrongPhaseSegment = true
+				end
 			end
 			phaseOffsetAverage, phaseOffsetSampleCount = mergeAverage(
 				phaseOffsetAverage,
@@ -420,7 +427,7 @@ function RuleLearner.refreshRules(ability)
 		and phaseSamples >= 2
 		and phaseOnce
 		and (ability.activationCount or 0) <= phaseSamples + 1
-		and (not stableTimeEvidence or repeatedSinglePhaseOnly)
+		and (not stableTimeEvidence or (repeatedSinglePhaseOnly and hasRepeatedStrongPhaseSegment))
 	local weakSingleIntervalAcrossOneOffPhases = not hasRepeatedPhaseSegment
 		and phaseSamples >= 2
 		and phaseOnce

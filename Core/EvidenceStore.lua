@@ -13,6 +13,7 @@ addon.Core.EvidenceStore = EvidenceStore
 local activeDrafts = {}
 local incompleteAttempts = {}
 local suspended = false
+local noteDraftTruncation
 
 local EVENT_TO_CODE = {
 	SPELL_CAST_START = "CA",
@@ -35,6 +36,21 @@ local EVENT_FLAG_SELF_TARGET = 1
 local EVENT_FLAG_ASSOCIATED = 2
 local EVENT_FLAG_DEST_PLAYER = 4
 
+local EVIDENCE_EVENT_PRIORITY = {
+	CA = 100,
+	CS = 100,
+	IA = 100,
+	SM = 95,
+	AA = 80,
+	AR = 80,
+	AX = 70,
+	DM = 45,
+	MS = 45,
+	HL = 45,
+	AD = 20,
+	RD = 20,
+}
+
 local CODE_TO_EVENT = {}
 for eventType, code in pairs(EVENT_TO_CODE) do
 	if code == "DM" then
@@ -49,6 +65,62 @@ end
 local function eventFlagSet(flags, flag)
 	flags = tonumber(flags) or 0
 	return flags % (flag * 2) >= flag
+end
+
+local function evidenceEventPriority(event)
+	if type(event) ~= "table" then
+		return 0
+	end
+	local priority = EVIDENCE_EVENT_PRIORITY[event[2]] or 10
+	local flags = tonumber(event[8]) or 0
+	if eventFlagSet(flags, EVENT_FLAG_SELF_TARGET) then
+		priority = priority + 12
+	end
+	if eventFlagSet(flags, EVENT_FLAG_DEST_PLAYER) then
+		priority = priority - 8
+	end
+	return priority
+end
+
+local function refreshLowestSamplePriority(events, sampling)
+	sampling.minPriority = nil
+	sampling.minIndex = nil
+	for index = 1, #(events or {}) do
+		local priority = evidenceEventPriority(events[index])
+		if sampling.minPriority == nil or priority < sampling.minPriority then
+			sampling.minPriority = priority
+			sampling.minIndex = index
+		end
+	end
+end
+
+local function appendSampledEvent(draft, events, event, sampling, reason)
+	local limit = tonumber(C.MAX_EVIDENCE_EVENTS_PER_KILL) or 2400
+	if not events or not event or limit <= 0 then
+		return false
+	end
+	sampling = type(sampling) == "table" and sampling or {}
+	local priority = evidenceEventPriority(event)
+	if #events < limit then
+		events[#events + 1] = event
+		if sampling.minPriority == nil or priority < sampling.minPriority then
+			sampling.minPriority = priority
+			sampling.minIndex = #events
+		end
+		return true
+	end
+
+	noteDraftTruncation(draft, reason or "event_limit")
+	if sampling.minPriority == nil or not sampling.minIndex or not events[sampling.minIndex] then
+		refreshLowestSamplePriority(events, sampling)
+	end
+	if sampling.minPriority ~= nil and priority > sampling.minPriority then
+		events[sampling.minIndex] = event
+		sampling.minPriority = nil
+		sampling.minIndex = nil
+		return true
+	end
+	return false
 end
 
 local function countKeys(tbl)
@@ -128,7 +200,7 @@ local function draftSpellLimit()
 	return tonumber(C.MAX_EVIDENCE_DRAFT_SPELLS) or (tonumber(C.MAX_EVIDENCE_SPELLS_PER_KILL) or 220) * 2
 end
 
-local function noteDraftTruncation(draft, reason)
+function noteDraftTruncation(draft, reason)
 	if not draft then
 		return
 	end
@@ -290,6 +362,8 @@ local function ensureDraft(pull)
 		eventsByOwner = {},
 		eventCounts = {},
 		eventCountsByOwner = {},
+		eventSampling = {},
+		ownerEventSampling = {},
 		truncated = false,
 	}
 	activeDrafts[key] = draft
@@ -558,19 +632,12 @@ function EvidenceStore.recordSpellEvent(pull, record)
 		ownerEvents = {}
 		draft.eventsByOwner[owner.id] = ownerEvents
 	end
-	if #ownerEvents < C.MAX_EVIDENCE_EVENTS_PER_KILL then
-		ownerEvents[#ownerEvents + 1] = event
-	else
-		noteDraftTruncation(draft, "owner_event_limit")
-	end
+	draft.ownerEventSampling[owner.id] = draft.ownerEventSampling[owner.id] or {}
+	appendSampledEvent(draft, ownerEvents, event, draft.ownerEventSampling[owner.id], "owner_event_limit")
 	draft.eventCountsByOwner[owner.id] = draft.eventCountsByOwner[owner.id] or {}
 	draft.eventCountsByOwner[owner.id][code] = (draft.eventCountsByOwner[owner.id][code] or 0) + 1
 
-	if #draft.events < C.MAX_EVIDENCE_EVENTS_PER_KILL then
-		draft.events[#draft.events + 1] = event
-	else
-		noteDraftTruncation(draft, "pull_event_limit")
-	end
+	appendSampledEvent(draft, draft.events, event, draft.eventSampling, "pull_event_limit")
 	draft.eventCounts[code] = (draft.eventCounts[code] or 0) + 1
 end
 
@@ -646,6 +713,80 @@ local function contextHasBossIdentityEvidence(context, bossState)
 				and string.sub(bossState.lastUnitSource, 1, 9) == "boss_unit"
 			)
 		)
+end
+
+local function evidenceZoneIsRaid(instance, kill)
+	local zone = kill and kill.zone
+	local difficulty = kill and kill.difficulty
+	local maxPlayers = tonumber(difficulty and difficulty.maxPlayers)
+		or tonumber(zone and zone.maxPlayers)
+		or tonumber(instance and instance.maxPlayers)
+	return (type(zone) == "table" and zone.instanceType == "raid")
+		or (type(instance) == "table" and instance.instanceType == "raid")
+		or (maxPlayers and maxPlayers > 5)
+		or false
+end
+
+local function singleBossActorForKill(boss, kill)
+	local selected
+	for index = 1, #(kill and kill.actors or {}) do
+		local actor = kill.actors[index]
+		if type(actor) == "table"
+			and (
+				actor.modelKey == boss.key
+				or actor.key == boss.key
+				or actor.name == boss.name
+			) then
+			if selected then
+				return nil
+			end
+			selected = actor
+		end
+	end
+	return selected
+end
+
+local function evidenceActorWindow(actor)
+	local start10 = tonumber(actor and actor.contextStart10) or tonumber(actor and actor.first10) or 0
+	local end10 = tonumber(actor and actor.contextEnd10) or tonumber(actor and actor.last10) or start10
+	local first10 = tonumber(actor and actor.first10)
+	local last10 = tonumber(actor and actor.last10)
+	if first10 and first10 < start10 then
+		start10 = first10
+	end
+	if last10 and last10 > end10 then
+		end10 = last10
+	end
+	return start10, end10
+end
+
+local function killLooksLikeWeakContainedRaidAddEvidence(instance, boss, kill)
+	if type(instance) ~= "table"
+		or type(boss) ~= "table"
+		or type(kill) ~= "table"
+		or not evidenceZoneIsRaid(instance, kill) then
+		return false
+	end
+
+	local actor = singleBossActorForKill(boss, kill)
+	if not actor or actor.class == "worldboss" then
+		return false
+	end
+	local bossUnitToken = actor.bossUnitToken
+	if not (isBossUnitToken(bossUnitToken) and bossUnitToken ~= "boss1") then
+		return false
+	end
+
+	if #(kill.events or {}) > (tonumber(C.ENCOUNTER_CONTAINED_ADD_MAX_EVENTS) or 30)
+		or #(kill.spells or {}) > (tonumber(C.ENCOUNTER_CONTAINED_ADD_MAX_ABILITIES) or 3) then
+		return false
+	end
+
+	local start10, end10 = evidenceActorWindow(actor)
+	local duration10 = tonumber(kill.duration10) or end10
+	local grace10 = math.floor(((tonumber(C.ENCOUNTER_CONTAINED_ADD_START_GRACE_SECONDS) or 2) * 10) + 0.5)
+	return start10 >= grace10
+		and end10 <= duration10 - grace10
 end
 
 local function entryHasBossIdentityEvidence(entry)
@@ -1264,6 +1405,16 @@ local function sortedKeys(tbl)
 	return keys
 end
 
+local function learnedEncounterIdentity(zoneKey, encounterKey)
+	return tostring(zoneKey or "unknown") .. "\001" .. tostring(encounterKey or "unknown")
+end
+
+local function legacyEncounterSuppressed(options, zoneKey, encounterKey)
+	local suppressed = options and options.suppressedLegacyEncounters
+	return type(suppressed) == "table"
+		and suppressed[learnedEncounterIdentity(zoneKey, encounterKey)] == true
+end
+
 local function tracebackError(err)
 	if debug and debug.traceback then
 		return debug.traceback(tostring(err), 2)
@@ -1313,6 +1464,7 @@ local function preserveLegacyLearned(previousLearned, rebuiltLearned, options)
 		legacyPreservedEncounters = 0,
 		legacyPreservedAbilities = 0,
 		legacyPartialEncounters = 0,
+		legacySuppressedEncounters = 0,
 	}
 	if type(previousLearned) ~= "table"
 		or type(previousLearned.zones) ~= "table"
@@ -1326,34 +1478,38 @@ local function preserveLegacyLearned(previousLearned, rebuiltLearned, options)
 			local targetZone = rebuiltLearned.zones[zoneKey]
 			for encounterKey, previousEncounter in pairs(previousZone.encounters or {}) do
 				if type(previousEncounter) == "table" then
-					if type(targetZone) ~= "table" then
-						targetZone = legacyZoneCopy(previousZone)
-						rebuiltLearned.zones[zoneKey] = targetZone
-					end
-					targetZone.encounters = type(targetZone.encounters) == "table" and targetZone.encounters or {}
-					local targetEncounter = targetZone.encounters[encounterKey]
-					if type(targetEncounter) ~= "table" then
-						local legacyEncounter = copyTable(previousEncounter)
-						local preservedEncounters, preservedAbilities = markLegacyEncounter(legacyEncounter, options)
-						targetZone.encounters[encounterKey] = legacyEncounter
-						stats.legacyPreservedEncounters = stats.legacyPreservedEncounters + preservedEncounters
-						stats.legacyPreservedAbilities = stats.legacyPreservedAbilities + preservedAbilities
+					if legacyEncounterSuppressed(options, zoneKey, encounterKey) then
+						stats.legacySuppressedEncounters = stats.legacySuppressedEncounters + 1
 					else
-						targetEncounter.abilities = type(targetEncounter.abilities) == "table" and targetEncounter.abilities or {}
-						local preservedAbilities = 0
-						for abilityKey, previousAbility in pairs(previousEncounter.abilities or {}) do
-							if type(previousAbility) == "table" and type(targetEncounter.abilities[abilityKey]) ~= "table" then
-								local legacyAbility = copyTable(previousAbility)
-								preservedAbilities = preservedAbilities + markLegacyAbility(legacyAbility, options)
-								targetEncounter.abilities[abilityKey] = legacyAbility
-							end
+						if type(targetZone) ~= "table" then
+							targetZone = legacyZoneCopy(previousZone)
+							rebuiltLearned.zones[zoneKey] = targetZone
 						end
-						if preservedAbilities > 0 then
-							targetEncounter.rebuildCoverage = "partial"
-							targetEncounter.legacyAbilityCount = (tonumber(targetEncounter.legacyAbilityCount) or 0) + preservedAbilities
-							targetEncounter.abilityCount = countKeys(targetEncounter.abilities)
+						targetZone.encounters = type(targetZone.encounters) == "table" and targetZone.encounters or {}
+						local targetEncounter = targetZone.encounters[encounterKey]
+						if type(targetEncounter) ~= "table" then
+							local legacyEncounter = copyTable(previousEncounter)
+							local preservedEncounters, preservedAbilities = markLegacyEncounter(legacyEncounter, options)
+							targetZone.encounters[encounterKey] = legacyEncounter
+							stats.legacyPreservedEncounters = stats.legacyPreservedEncounters + preservedEncounters
 							stats.legacyPreservedAbilities = stats.legacyPreservedAbilities + preservedAbilities
-							stats.legacyPartialEncounters = stats.legacyPartialEncounters + 1
+						else
+							targetEncounter.abilities = type(targetEncounter.abilities) == "table" and targetEncounter.abilities or {}
+							local preservedAbilities = 0
+							for abilityKey, previousAbility in pairs(previousEncounter.abilities or {}) do
+								if type(previousAbility) == "table" and type(targetEncounter.abilities[abilityKey]) ~= "table" then
+									local legacyAbility = copyTable(previousAbility)
+									preservedAbilities = preservedAbilities + markLegacyAbility(legacyAbility, options)
+									targetEncounter.abilities[abilityKey] = legacyAbility
+								end
+							end
+							if preservedAbilities > 0 then
+								targetEncounter.rebuildCoverage = "partial"
+								targetEncounter.legacyAbilityCount = (tonumber(targetEncounter.legacyAbilityCount) or 0) + preservedAbilities
+								targetEncounter.abilityCount = countKeys(targetEncounter.abilities)
+								stats.legacyPreservedAbilities = stats.legacyPreservedAbilities + preservedAbilities
+								stats.legacyPartialEncounters = stats.legacyPartialEncounters + 1
+							end
 						end
 					end
 				end
@@ -1544,10 +1700,13 @@ function EvidenceStore.rebuildLearned(options)
 			promoted = 0,
 			evidenceKills = 0,
 			skippedCorruptEvidence = 0,
+			suppressedContainedAddEvidence = 0,
 			legacyPreservedEncounters = 0,
 			legacyPreservedAbilities = 0,
 			legacyPartialEncounters = 0,
+			legacySuppressedEncounters = 0,
 		}
+		local suppressedLegacyEncounters = {}
 		for _, instanceKey in ipairs(sortedKeys(evidence.instances)) do
 			local instance = evidence.instances[instanceKey]
 			for _, bossKey in ipairs(sortedKeys(instance and instance.bosses)) do
@@ -1556,7 +1715,17 @@ function EvidenceStore.rebuildLearned(options)
 					stats.evidenceKills = stats.evidenceKills + 1
 					local decoded, decodeError = EvidenceStore.decodeStoredKill(instance, boss, boss.kills[killHashKey])
 					if decoded and decoded.kill then
-						stats.promoted = stats.promoted + replayKill(decoded.instance or instance, decoded.boss or boss, decoded.kill, stats.evidenceKills)
+						local decodedInstance = decoded.instance or instance
+						local decodedBoss = decoded.boss or boss
+						if killLooksLikeWeakContainedRaidAddEvidence(decodedInstance, decodedBoss, decoded.kill) then
+							stats.suppressedContainedAddEvidence = stats.suppressedContainedAddEvidence + 1
+							suppressedLegacyEncounters[learnedEncounterIdentity(
+								(decoded.kill.zone and decoded.kill.zone.key) or decodedInstance.key,
+								decodedBoss.key
+							)] = true
+						else
+							stats.promoted = stats.promoted + replayKill(decodedInstance, decodedBoss, decoded.kill, stats.evidenceKills)
+						end
 					else
 						stats.skippedCorruptEvidence = stats.skippedCorruptEvidence + 1
 						logWarn("Skipped corrupt stored evidence kill during rebuild", {
@@ -1570,10 +1739,12 @@ function EvidenceStore.rebuildLearned(options)
 			end
 		end
 		if options.preserveLegacy ~= false then
+			options.suppressedLegacyEncounters = suppressedLegacyEncounters
 			local legacyStats = preserveLegacyLearned(previousLearned, rebuiltLearned, options)
 			stats.legacyPreservedEncounters = legacyStats.legacyPreservedEncounters
 			stats.legacyPreservedAbilities = legacyStats.legacyPreservedAbilities
 			stats.legacyPartialEncounters = legacyStats.legacyPartialEncounters
+			stats.legacySuppressedEncounters = legacyStats.legacySuppressedEncounters
 		end
 		return stats
 	end, tracebackError)

@@ -67,9 +67,11 @@ Before a build is handed off for manual dungeon testing, run:
 
 - `luac -p Core/*.lua Capture/*.lua Learning/*.lua Runtime/*.lua UI/*.lua Init.lua`
 - `lua tests/replay_scenarios.lua`
+- `lua tests/current_savedvariables.lua`
+- `lua tests/evidence_audit.lua Ragnaros Garr "Baron Geddon"` when checking current named encounter evidence
 - `lua tests/cpp_module_replay.lua`
 
-The replay test covers channel lifecycle dedupe, HP phase rules, repeated transition spells, council grouping, and encounter-owned add mechanics.
+The replay test covers channel lifecycle dedupe, HP phase rules, repeated transition spells, council grouping, and encounter-owned add mechanics. The current SavedVariables check loads the local account and character data read-only, validates permanent evidence export/hash inventories, runs the production rebuild path in memory, and checks model invariants against real captured data. The evidence audit searches current permanent evidence by boss/query, compares raw decoded spell signals with rebuilt learned models, and reports hard integrity errors separately from plausibility warnings.
 
 The C++ replay adapter is now an encounter simulator. It extracts a neutral model from AzerothCore boss scripts and runs several deterministic client-visible variants through BossTracker:
 

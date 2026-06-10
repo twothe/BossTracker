@@ -218,12 +218,39 @@ local function auraFields(state, activeCount)
 	}
 end
 
+local function dominantSegment(bossState)
+	ensureSegments(bossState)
+	local key = bossState.currentBossAuraSegmentKey
+		or bossState.currentPlayerAuraSegmentKey
+		or bossState.currentSegmentKey
+	if key and bossState.segments and bossState.segments[key] then
+		return bossState.segments[key]
+	end
+	return bossState.segments and bossState.segments.pull or ensureSegments(bossState)
+end
+
+local function setCurrentAuraSegment(bossState, state, segment)
+	if not bossState or not state or not segment then
+		return
+	end
+	if state.scope == "boss" then
+		bossState.currentBossAuraSegmentKey = segment.key
+	elseif state.scope == "player" then
+		bossState.currentPlayerAuraSegmentKey = segment.key
+	end
+
+	bossState.currentSegmentKey = bossState.currentBossAuraSegmentKey
+		or bossState.currentPlayerAuraSegmentKey
+		or segment.key
+end
+
 local function startAuraSegment(bossState, state, record, active, activeCount)
 	local prefix = active and "aura" or "aura_clear"
 	local reason = active and (state.scope .. "_aura_applied") or (state.scope .. "_aura_removed")
 	local key = auraSegmentKey(prefix, state.scope, state.spellKey)
-	local previousSegment = ensureSegments(bossState)
+	local previousSegment = dominantSegment(bossState)
 	local segment = startSegment(bossState, key, reason, record, auraFields(state, activeCount))
+	setCurrentAuraSegment(bossState, state, segment)
 	if segment and previousSegment and previousSegment.key ~= segment.key then
 		segment.previousSegmentKey = previousSegment.key
 	end
@@ -314,7 +341,7 @@ function PhaseSegmenter.assignSegment(bossState, activation, preferredSegment)
 		return nil
 	end
 
-	local segment = preferredSegment or ensureSegments(bossState)
+	local segment = preferredSegment or dominantSegment(bossState)
 	if activation then
 		if activation.phaseSegmentKey and bossState.segments and bossState.segments[activation.phaseSegmentKey] then
 			segment = bossState.segments[activation.phaseSegmentKey]
@@ -324,7 +351,7 @@ function PhaseSegmenter.assignSegment(bossState, activation, preferredSegment)
 			and bossState.segments
 			and bossState.segments[segment.previousSegmentKey] then
 			segment = bossState.segments[segment.previousSegmentKey]
-		elseif not preferredSegment then
+		elseif not preferredSegment and not (segment and segment.auraScope) then
 			local hpBucket = crossedHpBucket(bossState, activation.hpPct)
 			if hpBucket then
 				segment = startSegment(bossState, "hp_" .. tostring(hpBucket), "hp_bucket", activation)
@@ -341,6 +368,13 @@ function PhaseSegmenter.assignSegment(bossState, activation, preferredSegment)
 	end
 
 	return segment
+end
+
+function PhaseSegmenter.currentSegment(bossState)
+	if not bossState then
+		return nil
+	end
+	return dominantSegment(bossState)
 end
 
 function PhaseSegmenter.finishBoss(bossState)

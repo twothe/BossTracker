@@ -256,6 +256,37 @@ local function raidContainedAddShouldStaySeparate(left, right, zone)
 		and addEnd <= primaryEnd + C.ENCOUNTER_GROUP_GAP_SECONDS
 end
 
+local function entryIsWeakContainedRaidAdd(entry, entries, zone)
+	if not isRaidZone(zone) or not entryLooksLikeContainedAdd(entry) then
+		return false
+	end
+
+	local addStart, addEnd = actorInterval(entry.bossState, entry.context)
+	local containedGrace = tonumber(C.ENCOUNTER_CONTAINED_ADD_START_GRACE_SECONDS) or 2
+	for index = 1, #(entries or {}) do
+		local primary = entries[index]
+		if primary ~= entry and entryIsWorldboss(primary) then
+			local primaryStart, primaryEnd = actorInterval(primary.bossState, primary.context)
+			if addStart >= primaryStart + containedGrace
+				and addEnd <= primaryEnd + C.ENCOUNTER_GROUP_GAP_SECONDS then
+				return true
+			end
+		end
+	end
+	return false
+end
+
+local function promotableEntries(entries, zone)
+	local result = {}
+	for index = 1, #(entries or {}) do
+		local entry = entries[index]
+		if not entryIsWeakContainedRaidAdd(entry, entries, zone) then
+			result[#result + 1] = entry
+		end
+	end
+	return result
+end
+
 local function intervalsConnected(left, right, zone)
 	if raidContainedAddShouldStaySeparate(left, right, zone) then
 		return false
@@ -450,7 +481,7 @@ function EncounterModel.scorePull(pullState, pull, reason)
 		end
 	end
 
-	return decisions, buildComponents(qualifiedEntries, pullState.zone), pullDecisionStats
+	return decisions, buildComponents(promotableEntries(qualifiedEntries, pullState.zone), pullState.zone), pullDecisionStats
 end
 
 function EncounterModel.activeGroupKey(contexts)

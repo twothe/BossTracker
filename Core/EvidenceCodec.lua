@@ -427,7 +427,8 @@ function EvidenceCodec.encodeKillBlock(instance, boss, kill, forcedHash)
 		difficulty.rawName,
 		difficulty.maxPlayers,
 		difficulty.dynamicDifficulty,
-		fieldBool(difficulty.isDynamic == true)
+		fieldBool(difficulty.isDynamic == true),
+		fieldBool(kill.truncated == true)
 	)
 
 	for _, actor in ipairs(sortedById(kill.actors)) do
@@ -541,6 +542,7 @@ function EvidenceCodec.decodeKillBlock(block)
 					spells = {},
 					events = {},
 					eventCounts = {},
+					truncated = parseBool(fields[29]) or nil,
 				}
 				if kill.hash ~= "" then
 					boss.kills[kill.hash] = kill

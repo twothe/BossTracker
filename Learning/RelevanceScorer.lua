@@ -165,7 +165,7 @@ local function refreshDisplaylessFallbackEncounterSuppression(zoneKey, encounter
 end
 
 local function frequentShortIntervalReason(ability)
-	if type(ability) ~= "table" or ability.encounterAssociated then
+	if type(ability) ~= "table" then
 		return nil
 	end
 
@@ -212,7 +212,9 @@ local function isAuraOnlyAbility(ability)
 	for eventType in pairs(events) do
 		if eventType == "SPELL_AURA_APPLIED"
 			or eventType == "SPELL_AURA_REFRESH"
-			or eventType == "SPELL_AURA_REMOVED" then
+			or eventType == "SPELL_AURA_REMOVED"
+			or eventType == "SPELL_AURA_APPLIED_DOSE"
+			or eventType == "SPELL_AURA_REMOVED_DOSE" then
 			sawAura = true
 		else
 			return false
@@ -365,9 +367,9 @@ function RelevanceScorer.routineReasonForAbility(ability)
 	end
 	return frequentShortIntervalReason(ability)
 		or auraStackStateReason(ability)
-		or auraOnlySameHpRepeatReason(ability)
 		or bossSelfAuraPhaseStateReason(ability)
 		or playerAuraPhaseStateReason(ability)
+		or auraOnlySameHpRepeatReason(ability)
 end
 
 function RelevanceScorer.applyRoutineCandidate(ability, candidate)

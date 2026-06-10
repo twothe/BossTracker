@@ -44,6 +44,11 @@ local function isCastSuccessFollowupEvent(eventType)
 		or eventType == "SPELL_SUMMON"
 end
 
+local function isAuraApplyEvent(eventType)
+	return eventType == "SPELL_AURA_APPLIED"
+		or eventType == "SPELL_AURA_REFRESH"
+end
+
 local function isAuraLifecycleEffectEvent(eventType)
 	return eventType == "SPELL_DAMAGE"
 		or eventType == "SPELL_MISSED"
@@ -77,6 +82,20 @@ local function updateLifecycleState(state, record)
 	end
 end
 
+local function castResolutionWindow(state, record)
+	if (
+			isAuraLifecycleEffectEvent(record.eventType)
+			or (isAuraApplyEvent(record.eventType) and isSelfAuraEvent(record))
+		)
+		and (
+			state.lastActivationEventType == "SPELL_CAST_START"
+			or state.lastActivationEventType == "SPELL_CAST_SUCCESS"
+		) then
+		return C.AURA_LIFECYCLE_DEDUPE_SECONDS
+	end
+	return C.CAST_RESOLUTION_DEDUPE_SECONDS
+end
+
 local function shouldAcceptActivation(state, record)
 	if not state.lastActivationAt then
 		return true, "first_activation"
@@ -89,13 +108,13 @@ local function shouldAcceptActivation(state, record)
 
 	if state.lastActivationEventType == "SPELL_CAST_START"
 		and isCastStartResolutionEvent(record.eventType)
-		and delta <= C.CAST_RESOLUTION_DEDUPE_SECONDS then
+		and delta <= castResolutionWindow(state, record) then
 		return false, "cast_start_resolution"
 	end
 
 	if state.lastActivationEventType == "SPELL_CAST_SUCCESS"
 		and isCastSuccessFollowupEvent(record.eventType)
-		and delta <= C.CAST_RESOLUTION_DEDUPE_SECONDS then
+		and delta <= castResolutionWindow(state, record) then
 		return false, "cast_success_followup"
 	end
 

@@ -150,6 +150,37 @@ local function scenarioLongCastResolutionDoesNotBecomeCooldown()
 	Harness.assertTrue(learned.autoSuppressed ~= true, "Persisted long cast lifecycle should remain displayable")
 end
 
+local function scenarioDelayedSelfAuraAfterCastStartDoesNotBecomeCooldown()
+	Harness.resetState("Replay Delayed Cast Aura Lifecycle")
+	local boss = "Baron Geddon"
+	local guid = Harness.makeGuid(boss, 102)
+	local spellName = "Inferno"
+	local spellId = 2105740
+	local spellKey = addon.Core.Util.timerAbilityKey(spellId, spellName)
+
+	Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = guid, spellName = spellName, spellId = spellId, hp = 90, eventType = "SPELL_CAST_START" })
+	Harness.emitSpell({ t = 13, sourceName = boss, sourceGUID = guid, spellName = spellName, spellId = spellId, hp = 84, eventType = "SPELL_DAMAGE" })
+	Harness.emitSpell({ t = 13.1, sourceName = boss, sourceGUID = guid, spellName = spellName, spellId = spellId, hp = 84, eventType = "SPELL_AURA_APPLIED", selfTarget = true })
+	Harness.emitSpell({ t = 20, sourceName = boss, sourceGUID = guid, spellName = spellName, spellId = spellId, hp = 80, eventType = "SPELL_DAMAGE" })
+	Harness.emitSpell({ t = 60, sourceName = boss, sourceGUID = guid, spellName = spellName, spellId = spellId, hp = 62, eventType = "SPELL_CAST_START" })
+	Harness.emitSpell({ t = 73, sourceName = boss, sourceGUID = guid, spellName = spellName, spellId = spellId, hp = 56, eventType = "SPELL_DAMAGE" })
+	Harness.emitSpell({ t = 73.1, sourceName = boss, sourceGUID = guid, spellName = spellName, spellId = spellId, hp = 56, eventType = "SPELL_AURA_APPLIED", selfTarget = true })
+	Harness.emitSpell({ t = 80, sourceName = boss, sourceGUID = guid, spellName = spellName, spellId = spellId, hp = 50, eventType = "SPELL_DAMAGE" })
+
+	local pullState = addon.Learning.AbilityLearner.getCurrentPullState()
+	local bossState = pullState.bosses[addon.Core.Util.actorKey(boss, guid)]
+	local pullAbility = bossState.abilities[spellKey]
+	Harness.assertTrue(pullAbility.activationCount == 2, "Delayed self aura after cast start should not count as a separate activation")
+	Harness.assertNear(pullAbility.minInterval, 60, 0.01, "Delayed self aura lifecycle should learn recast delay, not cast-to-aura timing")
+
+	Harness.finishPull(110)
+	local bossKey = addon.Core.Util.bossKey(boss, guid)
+	local learned = Harness.ability(Harness.encounter(bossKey), bossKey, spellName)
+	Harness.assertTrue(learned ~= nil, "Delayed self aura lifecycle should be persisted")
+	Harness.assertNear(learned.minInterval, 60, 0.01, "Persisted delayed self aura lifecycle should keep the recast interval")
+	Harness.assertTrue(learned.selectedRule and learned.selectedRule.type == "time_interval", "Delayed self aura lifecycle should select a time interval")
+end
+
 local function scenarioPhaseHpRules()
 	Harness.resetState("Replay LBRS")
 	local boss = "Warmaster Voone"
@@ -312,6 +343,33 @@ local function scenarioRecurringBossAuraPhaseLearnsPhaseRule()
 	Harness.assertTrue(buffet.selectedRule and buffet.selectedRule.type == "phase_start_offset", "Recurring phase-only ability should prefer the phase rule over a global time interval")
 end
 
+local function scenarioBossAuraPhaseOutranksPlayerAuraNoise()
+	Harness.resetState("Replay Chromaggus Phase Priority")
+	local boss = "Chromatic Phase Drake"
+	local guid = Harness.makeGuid(boss, 218)
+	local playerFlags = addon.Core.Constants.FLAG_PLAYER
+	local bossSegmentKey = auraSegmentKey("aura", "boss", "Chromatic Adaptation: Arcane")
+	local playerSegmentKey = auraSegmentKey("aura", "player", "Brood Affliction: Blue")
+
+	Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = guid, spellName = "Opening Bite", hp = 100 })
+	Harness.emitSpell({ t = 10, sourceName = boss, sourceGUID = guid, spellName = "Chromatic Adaptation: Arcane", hp = 96, eventType = "SPELL_AURA_APPLIED", selfTarget = true })
+	Harness.emitSpell({ t = 12, sourceName = boss, sourceGUID = guid, spellName = "Brood Affliction: Blue", hp = 95, eventType = "SPELL_AURA_APPLIED", destGUID = "Player-1", destName = "Replay Tank", destFlags = playerFlags })
+	Harness.emitSpell({ t = 16, sourceName = boss, sourceGUID = guid, spellName = "Arcane Breath", hp = 93, eventType = "SPELL_CAST_START" })
+	Harness.emitSpell({ t = 30, sourceName = boss, sourceGUID = guid, spellName = "Chromatic Adaptation: Arcane", hp = 88, eventType = "SPELL_AURA_REMOVED", selfTarget = true })
+	Harness.emitSpell({ t = 50, sourceName = boss, sourceGUID = guid, spellName = "Chromatic Adaptation: Arcane", hp = 82, eventType = "SPELL_AURA_APPLIED", selfTarget = true })
+	Harness.emitSpell({ t = 52, sourceName = boss, sourceGUID = guid, spellName = "Brood Affliction: Blue", hp = 81, eventType = "SPELL_AURA_APPLIED", destGUID = "Player-2", destName = "Replay Healer", destFlags = playerFlags })
+	Harness.emitSpell({ t = 56, sourceName = boss, sourceGUID = guid, spellName = "Arcane Breath", hp = 79, eventType = "SPELL_CAST_START" })
+	Harness.finishPull(80)
+
+	local bossKey = addon.Core.Util.bossKey(boss, guid)
+	local model = Harness.encounter(bossKey)
+	local breath = Harness.ability(model, bossKey, "Arcane Breath")
+	local bossSegment = breath and breath.segmentStats and breath.segmentStats[bossSegmentKey]
+	Harness.assertTrue(bossSegment ~= nil and (bossSegment.phaseOffsetSamples or 0) == 2, "Boss self-aura phase should own repeated breath timing despite player aura noise")
+	Harness.assertTrue(not (breath.segmentStats and breath.segmentStats[playerSegmentKey]), "Player aura noise must not steal the active boss phase for following boss abilities")
+	Harness.assertTrue(breath.selectedRule and breath.selectedRule.type == "phase_start_offset", "Boss aura phase timing should remain displayable")
+end
+
 local function scenarioPlayerAuraPhaseRules()
 	Harness.resetState("Replay Player Aura Phase")
 	local boss = "Mark Sentinel"
@@ -335,6 +393,30 @@ local function scenarioPlayerAuraPhaseRules()
 	Harness.assertTrue(mark.suppressionReason == "player_aura_phase_state", "Pure player aura state should explain its suppression reason")
 	Harness.assertTrue(pulse ~= nil and pulse.segmentStats and pulse.segmentStats[auraSegmentKey("aura", "player", "Frost Mark")] ~= nil, "First active player aura should create a player phase segment")
 	Harness.assertTrue(reset ~= nil and reset.segmentStats and reset.segmentStats[auraSegmentKey("aura_clear", "player", "Frost Mark")] ~= nil, "Last removed player aura should create a clear phase segment")
+end
+
+local function scenarioStableIntervalOutranksRepeatedPlayerAuraPhase()
+	Harness.resetState("Replay Player Aura Stable Time")
+	local boss = "Deep Breath Drake"
+	local guid = Harness.makeGuid(boss, 219)
+	local playerFlags = addon.Core.Constants.FLAG_PLAYER
+	for cycle = 0, 2 do
+		local base = cycle * 60
+		if cycle == 0 then
+			Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = guid, spellName = "Opening Bite", hp = 100 })
+		end
+		Harness.emitSpell({ t = base + 10, sourceName = boss, sourceGUID = guid, spellName = "Burning Ground", hp = 95 - cycle * 15, eventType = "SPELL_AURA_APPLIED", destGUID = "Player-1", destName = "Replay Tank", destFlags = playerFlags })
+		Harness.emitSpell({ t = base + 15, sourceName = boss, sourceGUID = guid, spellName = "Burning Ground", hp = 94 - cycle * 15, eventType = "SPELL_AURA_REMOVED", destGUID = "Player-1", destName = "Replay Tank", destFlags = playerFlags })
+		Harness.emitSpell({ t = base + 20, sourceName = boss, sourceGUID = guid, spellName = "Deep Breath", hp = 92 - cycle * 15, eventType = "SPELL_CAST_START" })
+	end
+	Harness.finishPull(190)
+
+	local bossKey = addon.Core.Util.bossKey(boss, guid)
+	local model = Harness.encounter(bossKey)
+	local breath = Harness.ability(model, bossKey, "Deep Breath")
+	Harness.assertTrue(breath ~= nil and (breath.intervalSamples or 0) == 2, "Fixture should collect stable Deep Breath interval evidence")
+	Harness.assertTrue(breath.segmentStats and breath.segmentStats[auraSegmentKey("aura_clear", "player", "Burning Ground")] ~= nil, "Fixture should also collect repeated player-aura phase evidence")
+	Harness.assertTrue(breath.selectedRule and breath.selectedRule.type == "time_interval", "Stable timed evidence should outrank repeated player-aura phase coincidences")
 end
 
 local function scenarioAuraBoundaryDoesNotClassifyItself()
@@ -408,6 +490,25 @@ local function scenarioEncounterOwnedAdd()
 	Harness.assertTrue(summon ~= nil, "Encounter-owned add summon should be learned under the boss")
 	Harness.assertTrue(summon.encounterAssociated == true, "Add summon should preserve encounter association")
 	Harness.assertTrue(summon.associatedSourceName == "Lupine Horror", "Original add source should be retained")
+end
+
+local function scenarioShortEncounterOwnedAddSuppressed()
+	Harness.resetState("Replay Short Add Summons")
+	local boss = "Necromancer Captain"
+	local guid = Harness.makeGuid(boss, 502)
+	local pull, context = Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = guid, spellName = "Bone Command", hp = 100 })
+	Harness.emitAssociatedSpell({ t = 5, pull = pull, ownerContext = context, sourceName = "Skeletal Ritualist", sourceId = 503, spellName = "Summon Risen Lackey", hp = 95 })
+	Harness.emitAssociatedSpell({ t = 10, pull = pull, ownerContext = context, sourceName = "Skeletal Ritualist", sourceId = 503, spellName = "Summon Risen Lackey", hp = 90 })
+	Harness.emitAssociatedSpell({ t = 15, pull = pull, ownerContext = context, sourceName = "Skeletal Ritualist", sourceId = 503, spellName = "Summon Risen Lackey", hp = 85 })
+	Harness.finishPull(35)
+
+	local model = Harness.encounter(addon.Core.Util.bossKey(boss, guid))
+	local summon = Harness.ability(model, addon.Core.Util.bossKey(boss, guid), "Summon Risen Lackey")
+	Harness.assertTrue(summon ~= nil, "Short encounter-owned add summon should remain learned for diagnostics")
+	Harness.assertTrue(summon.encounterAssociated == true, "Short add summon should preserve encounter association")
+	Harness.assertTrue(summon.associatedSourceName == "Skeletal Ritualist", "Short add summon should retain its original source")
+	Harness.assertTrue(summon.autoSuppressed == true, "Short encounter-owned add summon should not become a displayed timer")
+	Harness.assertTrue(summon.suppressionReason == "short_interval_below_display_floor", "Short add summon should use display-floor suppression")
 end
 
 local function scenarioLiveNoiseSuppression()
@@ -602,6 +703,46 @@ local function scenarioAuraStackStateBuffSuppressed()
 	Harness.assertTrue(ability ~= nil, "Stack-state buff should remain available for diagnostics")
 	Harness.assertTrue(ability.autoSuppressed == true, "Stack-state buff must not become a displayed timer")
 	Harness.assertTrue(ability.suppressionReason == "aura_stack_state_update", "Suppression should explain aura stack state noise")
+end
+
+local function scenarioPlayerAuraDoseStateSuppressed()
+	Harness.resetState("Replay Player Aura Dose State")
+	local boss = "Dose Dragon"
+	local guid = Harness.makeGuid(boss, 653)
+	local playerFlags = addon.Core.Constants.FLAG_PLAYER
+
+	Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = guid, spellName = "Opening Bite", hp = 100 })
+	for index, t in ipairs({ 20, 50, 80 }) do
+		Harness.emitSpell({
+			t = t,
+			sourceName = boss,
+			sourceGUID = guid,
+			destGUID = "Player-1",
+			destName = "Replay Tank",
+			destFlags = playerFlags,
+			spellName = "Coward State",
+			eventType = index == 2 and "SPELL_AURA_REFRESH" or "SPELL_AURA_APPLIED",
+			hp = 100 - index,
+		})
+		Harness.emitSpell({
+			t = t + 1,
+			sourceName = boss,
+			sourceGUID = guid,
+			destGUID = "Player-1",
+			destName = "Replay Tank",
+			destFlags = playerFlags,
+			spellName = "Coward State",
+			eventType = "SPELL_AURA_APPLIED_DOSE",
+			hp = 100 - index,
+		})
+	end
+	Harness.finishPull(110, "unit_died")
+
+	local actorKey = addon.Core.Util.bossKey(boss, guid)
+	local ability = Harness.ability(Harness.encounter(actorKey), actorKey, "Coward State")
+	Harness.assertTrue(ability ~= nil, "Player aura dose state should remain available for diagnostics")
+	Harness.assertTrue(ability.autoSuppressed == true, "Player aura dose state must not become a displayed HP or phase timer")
+	Harness.assertTrue(ability.selectedRule and ability.selectedRule.type == "routine_noise", "Player aura dose state should select routine noise")
 end
 
 local function scenarioSpellIconFallsBackToSpellInfo()
@@ -1785,12 +1926,13 @@ local function scenarioPrimaryBossUsesDynamicGroupVariantModel()
 	Harness.assertNear(timer.remaining, 11, 0.2, "Persisted first offset should be scheduled from the current boss pull")
 end
 
-local function markEliteBossFrame(context, hpPct)
+local function markEliteBossFrame(context, hpPct, bossUnitToken)
+	local token = bossUnitToken or "boss1"
 	context.unitClassification = "elite"
 	context.sawBossUnit = true
-	context.bossUnitToken = "boss1"
+	context.bossUnitToken = token
 	context.lastUnitSource = "boss_unit"
-	context.lastUnitToken = "boss1"
+	context.lastUnitToken = token
 	context.lastHpPct = hpPct or context.lastHpPct
 end
 
@@ -1813,9 +1955,9 @@ local function scenarioRaidContainedBossFrameAddDoesNotGroupWithPrimary()
 
 	Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = bossGuid, spellName = "Knock Away", hp = 100 })
 	local _, addContext = Harness.emitSpell({ t = 8, sourceName = add, sourceGUID = addGuid, spellName = "Lesser Flame Breath", hp = 100, boss = false })
-	markEliteBossFrame(addContext, 100)
+	markEliteBossFrame(addContext, 100, "boss2")
 	Harness.emitSpell({ t = 18, sourceName = add, sourceGUID = addGuid, spellName = "Lesser Flame Breath", hp = 5, boss = false })
-	markEliteBossFrame(addContext, 5)
+	markEliteBossFrame(addContext, 5, "boss2")
 	Harness.emitSpell({ t = 30, sourceName = boss, sourceGUID = bossGuid, spellName = "Knock Away", hp = 60 })
 	Harness.emitSpell({ t = 60, sourceName = boss, sourceGUID = bossGuid, spellName = "Knock Away", hp = 2 })
 	Harness.finishPull(75, "unit_died")
@@ -1823,6 +1965,8 @@ local function scenarioRaidContainedBossFrameAddDoesNotGroupWithPrimary()
 	local groupKey = "group:" .. table.concat({ bossKey, addKey }, "+")
 	Harness.assertTrue(Harness.encounter(bossKey) ~= nil, "The primary raid boss should keep its exact single-boss model")
 	Harness.assertTrue(Harness.encounter(groupKey) == nil, "Contained short boss-frame adds should not be folded into the primary raid encounter key")
+	Harness.assertTrue(Harness.encounter(addKey) == nil, "Contained short boss-frame adds should not become standalone raid encounters")
+	Harness.assertTrue(addon.Core.EvidenceStore.countPermanentKills() == 1, "Contained short boss-frame adds should not be committed as separate permanent evidence")
 end
 
 local function scenarioRaidContainedCompanionBossStillGroupsWithPrimary()
@@ -1846,7 +1990,7 @@ local function scenarioRaidContainedCompanionBossStillGroupsWithPrimary()
 
 	Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = bossGuid, spellName = "Warden Smash", hp = 100 })
 	local _, companionContext = Harness.emitSpell({ t = 8, sourceName = companion, sourceGUID = companionGuid, spellName = "Lieutenant Cleave", hp = 100, boss = false })
-	markEliteBossFrame(companionContext, 100)
+	markEliteBossFrame(companionContext, 100, "boss2")
 	for index = 1, 36 do
 		Harness.emitSpell({
 			t = 8 + index * 1.4,
@@ -1857,7 +2001,7 @@ local function scenarioRaidContainedCompanionBossStillGroupsWithPrimary()
 			boss = false,
 		})
 	end
-	markEliteBossFrame(companionContext, 10)
+	markEliteBossFrame(companionContext, 10, "boss2")
 	Harness.emitSpell({ t = 62, sourceName = boss, sourceGUID = bossGuid, spellName = "Warden Smash", hp = 12 })
 	Harness.finishPull(75, "unit_died")
 
@@ -2021,6 +2165,26 @@ local function scenarioTimedSingleCastDoesNotBecomeHpGateAfterTwoPulls()
 	local sleep = Harness.ability(model, addon.Core.Util.bossKey(boss, guid), "Timed Sleep")
 	Harness.assertTrue(sleep ~= nil, "Timed single-cast ability should be learned")
 	Harness.assertTrue(sleep.selectedRule and sleep.selectedRule.type ~= "hp_gate", "Two similar HP samples should not force HP display over timing")
+end
+
+local function scenarioRepeatedSameHpAbilityDoesNotBecomeHpGate()
+	Harness.resetState("Replay Repeated Same HP")
+	local boss = "High Priest of Repetition"
+	local guid = Harness.makeGuid(boss, 671)
+
+	for pullIndex = 0, 2 do
+		local base = pullIndex * 100
+		Harness.emitSpell({ t = base, sourceName = boss, sourceGUID = guid, spellName = "Opening Strike", hp = 100 })
+		Harness.emitSpell({ t = base + 20, sourceName = boss, sourceGUID = guid, spellName = "High Guard", hp = 99 })
+		Harness.emitSpell({ t = base + 45, sourceName = boss, sourceGUID = guid, spellName = "High Guard", hp = 98 })
+		Harness.finishPull(base + 70, "unit_died")
+	end
+
+	local model = Harness.encounter(addon.Core.Util.bossKey(boss, guid))
+	local guard = Harness.ability(model, addon.Core.Util.bossKey(boss, guid), "High Guard")
+	Harness.assertTrue(guard ~= nil, "Repeated same-HP ability should be learned")
+	Harness.assertTrue(not (guard.rules and guard.rules.hp_gate), "Repeated same-HP ability must not create an HP gate")
+	Harness.assertTrue(guard.selectedRule and guard.selectedRule.type ~= "hp_gate", "Repeated same-HP ability must not display as an HP gate")
 end
 
 local function scenarioUnconfirmedEliteTrashNotPromoted()
@@ -2632,6 +2796,63 @@ local function scenarioEvidenceStoresBoundedKillFromTruncatedPullDraft()
 	local decoded = firstDecodedEvidenceKill()
 	Harness.assertTrue(decoded ~= nil and #(decoded.kill.events or {}) == 12, "Truncated component evidence should stay within the configured packed event cap")
 	Harness.assertTrue(decoded.boss.name == boss, "Truncated pull evidence should commit the completed boss component, not unrelated trash")
+end
+
+local function scenarioEvidenceSamplingKeepsLateImportantEvents()
+	Harness.resetState("Replay Evidence Important Tail")
+	Harness.setInstanceInfo({
+		name = "Blackwing Lair",
+		instanceType = "raid",
+		maxPlayers = 40,
+		mapId = 469,
+		difficultyIndex = 1,
+	})
+
+	local C = addon.Core.Constants
+	local previousEventLimit = C.MAX_EVIDENCE_EVENTS_PER_KILL
+	C.MAX_EVIDENCE_EVENTS_PER_KILL = 16
+
+	local boss = "Long Cycle Evidence Drake"
+	local guid = Harness.makeGuid(boss, 990)
+	for index = 1, 30 do
+		Harness.emitSpell({
+			t = index * 0.2,
+			sourceName = boss,
+			sourceGUID = guid,
+			spellName = "Stack Noise",
+			hp = 100 - index * 0.2,
+			eventType = "SPELL_AURA_APPLIED_DOSE",
+		})
+	end
+	Harness.emitSpell({
+		t = 120,
+		sourceName = boss,
+		sourceGUID = guid,
+		spellName = "Late Cycle Breath",
+		hp = 40,
+		eventType = "SPELL_CAST_START",
+	})
+	Harness.finishPull(150, "unit_died")
+
+	C.MAX_EVIDENCE_EVENTS_PER_KILL = previousEventLimit
+	local decoded = firstDecodedEvidenceKill()
+	local foundLate = false
+	local latest = 0
+	local spellsById = {}
+	for _, spell in ipairs(decoded and decoded.kill.spells or {}) do
+		spellsById[spell.id] = spell
+	end
+	for _, event in ipairs(decoded and decoded.kill.events or {}) do
+		latest = math.max(latest, (tonumber(event[1]) or 0) / 10)
+		local spell = spellsById[event[6]]
+		if spell and spell.name == "Late Cycle Breath" then
+			foundLate = true
+		end
+	end
+	Harness.assertTrue(decoded ~= nil and #(decoded.kill.events or {}) == 16, "Sampled evidence must remain within the packed event cap")
+	Harness.assertTrue(decoded.kill.truncated == true, "Sampled evidence overflow should be marked as truncated")
+	Harness.assertTrue(foundLate, "Evidence sampling should retain late high-priority boss events after early low-priority noise fills the cap")
+	Harness.assertTrue(latest >= 119.5, "Sampled evidence should cover the late fight window")
 end
 
 local function scenarioEvidenceRebuildsLearnedModel()
@@ -3385,6 +3606,7 @@ end
 local scenarios = {
 	scenarioChannelLifecycle,
 	scenarioLongCastResolutionDoesNotBecomeCooldown,
+	scenarioDelayedSelfAuraAfterCastStartDoesNotBecomeCooldown,
 	scenarioPhaseHpRules,
 	scenarioStableIntervalSurvivesDifferentPhaseSegments,
 	scenarioStableIntervalSurvivesRepeatedPhaseCoincidence,
@@ -3393,17 +3615,21 @@ local scenarios = {
 	scenarioAssociatedAddSelfAuraDoesNotCreateBossPhase,
 	scenarioReenteredBossAuraPhaseShowsTimerAgain,
 	scenarioRecurringBossAuraPhaseLearnsPhaseRule,
+	scenarioBossAuraPhaseOutranksPlayerAuraNoise,
 	scenarioPlayerAuraPhaseRules,
+	scenarioStableIntervalOutranksRepeatedPlayerAuraPhase,
 	scenarioAuraBoundaryDoesNotClassifyItself,
 	scenarioRepeatedTransitionSpell,
 	scenarioCouncilGrouping,
 	scenarioEncounterOwnedAdd,
+	scenarioShortEncounterOwnedAddSuppressed,
 	scenarioLiveNoiseSuppression,
 	scenarioSubTenSecondIntervalSuppression,
 	scenarioInterruptedSpamDoesNotBecomeLongTimer,
 	scenarioPlayerInterruptLearnsInterruptedBossSpell,
 	scenarioLegacyUncountedSpamGapSuppressed,
 	scenarioAuraStackStateBuffSuppressed,
+	scenarioPlayerAuraDoseStateSuppressed,
 	scenarioSpellIconFallsBackToSpellInfo,
 	scenarioTenSecondIntervalAllowed,
 	scenarioDisplayFloorPrecisionBoundaryAllowed,
@@ -3441,6 +3667,7 @@ local scenarios = {
 	scenarioPartyGroupVariantKeepsSingleActorEncounter,
 	scenarioSingleSampleHpGateNotLiveTime,
 	scenarioTimedSingleCastDoesNotBecomeHpGateAfterTwoPulls,
+	scenarioRepeatedSameHpAbilityDoesNotBecomeHpGate,
 	scenarioUnconfirmedEliteTrashNotPromoted,
 	scenarioDisplaylessFallbackEliteTrashSuppressed,
 	scenarioRaidEliteTrashRequiresBossSignal,
@@ -3458,6 +3685,7 @@ local scenarios = {
 	scenarioEvidenceCountsAreSegmentLocal,
 	scenarioEvidenceStoresAddHeavyKillsWithinCap,
 	scenarioEvidenceStoresBoundedKillFromTruncatedPullDraft,
+	scenarioEvidenceSamplingKeepsLateImportantEvents,
 	scenarioEvidenceRebuildsLearnedModel,
 	scenarioEvidenceRebuildPreservesBossContextStart,
 	scenarioEvidenceRebuildPreservesPlayerAuraPhase,
