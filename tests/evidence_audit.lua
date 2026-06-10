@@ -464,6 +464,8 @@ local function describeRule(ability)
 	end
 	if rule.type == "time_interval" then
 		return "time " .. formatSeconds(rule.minInterval or ability.minInterval) .. ".." .. formatSeconds(rule.maxInterval or ability.maxInterval)
+	elseif rule.type == "phase_time_interval" then
+		return "phase-time " .. formatSeconds(rule.minInterval or ability.minInterval) .. ".." .. formatSeconds(rule.maxInterval or ability.maxInterval)
 	elseif rule.type == "first_offset" then
 		return "first " .. formatSeconds(rule.minFirstOffset or ability.minFirstOffset or ability.avgFirstOffset)
 	elseif rule.type == "phase_start_offset" then
@@ -503,7 +505,7 @@ local function modelAbilitySummary(encounter)
 			rule = describeRule(ability),
 			marker = marker,
 			legacy = ability.legacyAfterRebuild == true,
-			minInterval = tonumber(ability.minInterval or ability.selectedRule and ability.selectedRule.minInterval),
+			minInterval = tonumber(ability.selectedRule and ability.selectedRule.minInterval or ability.minInterval),
 			displayFloor = displayFloor,
 		}
 	end

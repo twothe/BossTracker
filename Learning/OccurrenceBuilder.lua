@@ -5,6 +5,7 @@
 
 local addon = _G.BossTracker
 local C = addon.Core.Constants
+local Util = addon.Core.Util
 
 local OccurrenceBuilder = {}
 addon.Learning.OccurrenceBuilder = OccurrenceBuilder
@@ -56,6 +57,27 @@ local function isAuraLifecycleEffectEvent(eventType)
 		or eventType == "SPELL_SUMMON"
 end
 
+local function isPlayerTarget(record)
+	return record
+		and record.destFlags
+		and Util.flagSet(record.destFlags, C.FLAG_PLAYER)
+end
+
+local function isPlayerAuraApplyEvent(record)
+	return record
+		and isAuraApplyEvent(record.eventType)
+		and isPlayerTarget(record)
+end
+
+local function isPlayerAuraLifecycleEffectEvent(record)
+	return record
+		and (
+			record.eventType == "SPELL_DAMAGE"
+			or record.eventType == "SPELL_MISSED"
+			or record.eventType == "SPELL_HEAL"
+		)
+end
+
 local function isSelfAuraEvent(record)
 	return record
 		and record.sourceGUID
@@ -69,16 +91,19 @@ local function isSelfAuraEvent(record)
 end
 
 local function updateLifecycleState(state, record)
-	if not isSelfAuraEvent(record) then
-		return
+	if isSelfAuraEvent(record) then
+		if record.eventType == "SPELL_AURA_REMOVED" then
+			state.activeSelfAura = false
+			state.activeSelfAuraEndedAt = record.t
+		else
+			state.activeSelfAura = true
+			state.activeSelfAuraStartedAt = record.t
+		end
 	end
 
-	if record.eventType == "SPELL_AURA_REMOVED" then
-		state.activeSelfAura = false
-		state.activeSelfAuraEndedAt = record.t
-	else
-		state.activeSelfAura = true
-		state.activeSelfAuraStartedAt = record.t
+	if isPlayerAuraApplyEvent(record) then
+		state.activePlayerAura = true
+		state.activePlayerAuraStartedAt = record.t
 	end
 end
 
@@ -86,6 +111,7 @@ local function castResolutionWindow(state, record)
 	if (
 			isAuraLifecycleEffectEvent(record.eventType)
 			or (isAuraApplyEvent(record.eventType) and isSelfAuraEvent(record))
+			or isPlayerAuraApplyEvent(record)
 		)
 		and (
 			state.lastActivationEventType == "SPELL_CAST_START"
@@ -118,12 +144,29 @@ local function shouldAcceptActivation(state, record)
 		return false, "cast_success_followup"
 	end
 
+	if isPlayerAuraApplyEvent(record)
+		and delta <= C.PLAYER_AURA_REAPPLY_DEDUPE_SECONDS then
+		return false, "player_aura_reapply_followup"
+	end
+
 	if state.activeSelfAura
 		and isAuraLifecycleEffectEvent(record.eventType)
 		and state.activeSelfAuraStartedAt then
 		local auraAge = record.t - state.activeSelfAuraStartedAt
 		if auraAge >= 0 and auraAge <= C.AURA_LIFECYCLE_DEDUPE_SECONDS then
 			return false, "self_aura_lifecycle"
+		end
+	end
+
+	if state.activePlayerAura
+		and isPlayerAuraLifecycleEffectEvent(record)
+		and state.activePlayerAuraStartedAt then
+		local auraAge = record.t - state.activePlayerAuraStartedAt
+		-- Packed evidence can keep follow-up damage without an anonymous
+		-- player target id. After a player aura anchor, same-spell effects are
+		-- still aura lifecycle evidence, not new timer activations.
+		if auraAge >= 0 and auraAge <= C.PLAYER_AURA_LIFECYCLE_DEDUPE_SECONDS then
+			return false, "player_aura_lifecycle"
 		end
 	end
 
@@ -147,6 +190,8 @@ local function ensureState(record)
 			activeSelfAura = false,
 			activeSelfAuraStartedAt = nil,
 			activeSelfAuraEndedAt = nil,
+			activePlayerAura = false,
+			activePlayerAuraStartedAt = nil,
 		}
 		states[key] = state
 	end

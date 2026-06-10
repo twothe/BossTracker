@@ -397,6 +397,11 @@ local function liveTimeAbility(pullAbility)
 		return nil
 	end
 	if relevanceScorer
+		and relevanceScorer.unstableTimeIntervalReason
+		and relevanceScorer.unstableTimeIntervalReason(pullAbility) then
+		return nil
+	end
+	if relevanceScorer
 		and relevanceScorer.isKnownRoutineSpell
 		and relevanceScorer.isKnownRoutineSpell(pullAbility.spellKey) then
 		return nil
@@ -454,7 +459,7 @@ local function bestDisplayRule(ability, forced)
 	end
 
 	local selected = nil
-	local order = { "time_interval", "phase_start_offset", "first_offset", "hp_gate", "phase_once" }
+	local order = { "time_interval", "phase_time_interval", "phase_start_offset", "first_offset", "hp_gate", "phase_once" }
 	for index = 1, #order do
 		local candidate = ability.rules[order[index]]
 		if candidate and (not selected or (candidate.confidence or 0) > (selected.confidence or 0)) then
@@ -539,6 +544,44 @@ local function addLearnedAbilityPrediction(context, bossState, ability, pullAbil
 					context.startedAtSession + (model.maxFirstOffset or model.minFirstOffset),
 					"first_offset"
 				)
+			end
+		end
+	elseif rule.type == "phase_time_interval" then
+		local segmentKey = rule.segmentKey or (bossState and bossState.currentSegmentKey)
+		local activeSegment = bossState
+			and bossState.currentSegmentKey == segmentKey
+			and bossState.segments
+			and bossState.segments[segmentKey]
+			or nil
+		local learnedSegment = segmentKey and model.segmentStats and model.segmentStats[segmentKey] or nil
+		if activeSegment and learnedSegment then
+			local interval = rule.minInterval or learnedSegment.minInterval
+			if pullAbility and pullAbility.lastActivationAt and segmentSeen(pullAbility, segmentKey, activeSegment) and interval then
+				local anchorAt = pullAbility.lastActivationAt
+				nextAt = anchorAt + interval
+				markPredictionWindow(
+					model,
+					bossState,
+					anchorAt,
+					nextAt,
+					anchorAt + (rule.maxInterval or learnedSegment.maxInterval or interval),
+					rule.type,
+					segmentKey
+				)
+			elseif not segmentSeen(pullAbility, segmentKey, activeSegment) then
+				local offset = rule.avgPhaseOffset or learnedSegment.avgPhaseOffset or learnedSegment.firstPhaseOffset
+				if offset then
+					nextAt = activeSegment.startedAt + offset
+					markPredictionWindow(
+						model,
+						bossState,
+						activeSegment.startedAt,
+						nextAt,
+						activeSegment.startedAt + (rule.maxPhaseOffset or learnedSegment.maxPhaseOffset or offset),
+						rule.type,
+						segmentKey
+					)
+				end
 			end
 		end
 	elseif rule.type == "first_offset" then

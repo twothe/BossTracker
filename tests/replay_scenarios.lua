@@ -181,6 +181,139 @@ local function scenarioDelayedSelfAuraAfterCastStartDoesNotBecomeCooldown()
 	Harness.assertTrue(learned.selectedRule and learned.selectedRule.type == "time_interval", "Delayed self aura lifecycle should select a time interval")
 end
 
+local function scenarioDelayedPlayerAuraAfterCastStartDoesNotBecomeCooldown()
+	Harness.resetState("Replay Delayed Cast Player Aura Lifecycle")
+	local boss = "Doomfire Prophet"
+	local guid = Harness.makeGuid(boss, 104)
+	local spellName = "Doomfire Brand"
+	local spellId = 2101040
+	local spellKey = addon.Core.Util.timerAbilityKey(spellId, spellName)
+	local playerFlags = addon.Core.Constants.FLAG_PLAYER
+
+	Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = guid, spellName = spellName, spellId = spellId, hp = 96, eventType = "SPELL_CAST_START" })
+	Harness.emitSpell({ t = 13, sourceName = boss, sourceGUID = guid, spellName = spellName, spellId = spellId, hp = 91, eventType = "SPELL_AURA_APPLIED", destGUID = "Player-1", destName = "Replay Tank", destFlags = playerFlags })
+	Harness.emitSpell({ t = 16, sourceName = boss, sourceGUID = guid, spellName = spellName, spellId = spellId, hp = 89, eventType = "SPELL_DAMAGE" })
+	Harness.emitSpell({ t = 60, sourceName = boss, sourceGUID = guid, spellName = spellName, spellId = spellId, hp = 70, eventType = "SPELL_CAST_START" })
+	Harness.emitSpell({ t = 73, sourceName = boss, sourceGUID = guid, spellName = spellName, spellId = spellId, hp = 64, eventType = "SPELL_AURA_APPLIED", destGUID = "Player-2", destName = "Replay Healer", destFlags = playerFlags })
+	Harness.emitSpell({ t = 76, sourceName = boss, sourceGUID = guid, spellName = spellName, spellId = spellId, hp = 62, eventType = "SPELL_DAMAGE" })
+
+	local pullState = addon.Learning.AbilityLearner.getCurrentPullState()
+	local bossState = pullState.bosses[addon.Core.Util.actorKey(boss, guid)]
+	local pullAbility = bossState.abilities[spellKey]
+	Harness.assertTrue(pullAbility.activationCount == 2, "Delayed player aura after cast start should not count as a separate activation")
+	Harness.assertNear(pullAbility.minInterval, 60, 0.01, "Delayed player aura lifecycle should learn recast delay, not cast-to-aura timing")
+
+	Harness.finishPull(95)
+	local bossKey = addon.Core.Util.bossKey(boss, guid)
+	local learned = Harness.ability(Harness.encounter(bossKey), bossKey, spellName)
+	Harness.assertTrue(learned ~= nil, "Delayed player aura lifecycle should be persisted")
+	Harness.assertNear(learned.minInterval, 60, 0.01, "Persisted delayed player aura lifecycle should keep the recast interval")
+	Harness.assertTrue(learned.selectedRule and learned.selectedRule.type == "time_interval", "Delayed player aura lifecycle should select a time interval")
+end
+
+local function emitPlayerAuraBurst(boss, guid, spellName, spellId, baseTime, hp, targetCount)
+	local playerFlags = addon.Core.Constants.FLAG_PLAYER
+	for index = 1, targetCount do
+		Harness.emitSpell({
+			t = baseTime + index * 0.01,
+			sourceName = boss,
+			sourceGUID = guid,
+			spellName = spellName,
+			spellId = spellId,
+			hp = hp,
+			eventType = "SPELL_AURA_APPLIED",
+			destGUID = "Player-" .. tostring(index),
+			destName = "Replay Player " .. tostring(index),
+			destFlags = playerFlags,
+		})
+	end
+end
+
+local function emitPlayerAuraDamageTicks(boss, guid, spellName, spellId, baseTime, hp, targetCount)
+	local playerFlags = addon.Core.Constants.FLAG_PLAYER
+	for tick = 1, 5 do
+		for target = 1, targetCount do
+			Harness.emitSpell({
+				t = baseTime + tick * 2 + target * 0.01,
+				sourceName = boss,
+				sourceGUID = guid,
+				spellName = spellName,
+				spellId = spellId,
+				hp = hp - tick,
+				eventType = tick == 3 and "SPELL_MISSED" or "SPELL_DAMAGE",
+				destGUID = "Player-" .. tostring(target),
+				destName = "Replay Player " .. tostring(target),
+				destFlags = playerFlags,
+			})
+		end
+		Harness.emitSpell({
+			t = baseTime + tick * 2 + 0.5,
+			sourceName = boss,
+			sourceGUID = guid,
+			spellName = spellName,
+			spellId = spellId,
+			hp = hp - tick,
+			eventType = "SPELL_DAMAGE",
+		})
+	end
+end
+
+local function scenarioBossAppliedPlayerAuraLifecycleUsesApplyTiming()
+	Harness.resetState("Replay Boss Player Aura Lifecycle")
+	local boss = "Flamegor"
+	local guid = Harness.makeGuid(boss, 103)
+	local spellName = "Combustion"
+	local spellId = 2110860
+	local spellKey = addon.Core.Util.timerAbilityKey(spellId, spellName)
+	local playerFlags = addon.Core.Constants.FLAG_PLAYER
+
+	for _, baseTime in ipairs({ 0, 15, 30 }) do
+		emitPlayerAuraBurst(boss, guid, spellName, spellId, baseTime, 95 - baseTime, 8)
+		emitPlayerAuraDamageTicks(boss, guid, spellName, spellId, baseTime, 95 - baseTime, 8)
+		if baseTime == 0 then
+			Harness.emitSpell({
+				t = 4.3,
+				sourceName = boss,
+				sourceGUID = guid,
+				spellName = spellName,
+				spellId = spellId,
+				hp = 92,
+				eventType = "SPELL_AURA_REFRESH",
+				destGUID = "Player-1",
+				destName = "Replay Player 1",
+				destFlags = playerFlags,
+			})
+			Harness.emitSpell({
+				t = 10.3,
+				sourceName = boss,
+				sourceGUID = guid,
+				spellName = spellName,
+				spellId = spellId,
+				hp = 89,
+				eventType = "SPELL_AURA_APPLIED",
+				destGUID = "Player-2",
+				destName = "Replay Player 2",
+				destFlags = playerFlags,
+			})
+		end
+	end
+
+	local pullState = addon.Learning.AbilityLearner.getCurrentPullState()
+	local bossState = pullState.bosses[addon.Core.Util.actorKey(boss, guid)]
+	local pullAbility = bossState.abilities[spellKey]
+	Harness.assertTrue(pullAbility.activationCount == 3, "Boss-applied player aura burst should count one activation per apply wave")
+	Harness.assertNear(pullAbility.minInterval, 15, 0.02, "Player aura lifecycle should learn apply-to-apply timing")
+	Harness.assertNear(pullAbility.maxInterval, 15, 0.02, "Damage ticks and single refreshes must not widen player aura timing")
+
+	Harness.finishPull(55)
+	local bossKey = addon.Core.Util.bossKey(boss, guid)
+	local learned = Harness.ability(Harness.encounter(bossKey), bossKey, spellName)
+	Harness.assertTrue(learned ~= nil, "Boss-applied player aura lifecycle should be persisted")
+	Harness.assertTrue(learned.selectedRule and learned.selectedRule.type == "time_interval", "Boss-applied player aura should select the apply interval")
+	Harness.assertNear(learned.minInterval, 15, 0.02, "Persisted player aura lifecycle should keep the apply interval")
+	Harness.assertTrue(learned.autoSuppressed ~= true, "Boss-applied damaging player aura should remain displayable")
+end
+
 local function scenarioPhaseHpRules()
 	Harness.resetState("Replay LBRS")
 	local boss = "Warmaster Voone"
@@ -576,6 +709,209 @@ local function scenarioSubTenSecondIntervalSuppression()
 	Harness.assertTrue(quickJab.autoSuppressed == true, "Sub-10s ability should be auto-suppressed after promotion")
 end
 
+local function scenarioMixedShortOutlierIntervalDisplaysAtFloor()
+	Harness.resetState("Replay Mixed Interval Timer")
+	local ability = {
+		spellKey = addon.Core.Util.timerAbilityKey(nil, "Chain Lightning"),
+		spellName = "Chain Lightning",
+		activationCount = 12,
+		pullSeenCount = 3,
+		intervalSamples = 9,
+		minInterval = 8.2,
+		maxInterval = 26.1,
+		avgInterval = 12.9,
+		observedGapSamples = 9,
+		minObservedGap = 8.2,
+		maxObservedGap = 26.1,
+		avgObservedGap = 12.9,
+		events = {
+			SPELL_CAST_START = 12,
+			SPELL_DAMAGE = 24,
+			SPELL_INTERRUPT = 5,
+		},
+	}
+	addon.Learning.RuleLearner.refreshRules(ability)
+	Harness.assertTrue(ability.autoSuppressed ~= true, "One short outlier must not hide an otherwise displayable cast timer")
+	Harness.assertTrue(ability.selectedRule and ability.selectedRule.type == "time_interval", "Mixed interval evidence should keep a time timer")
+	Harness.assertTrue(ability.selectedRule.minInterval == addon.Core.Config.getMinTimerDisplayInterval(), "Mixed short interval timer should clamp display minimum to the configured floor")
+end
+
+local function scenarioNearFloorCastStartIntervalDisplaysAtFloor()
+	Harness.resetState("Replay Near Floor Cast Timer")
+	local ability = {
+		spellKey = addon.Core.Util.timerAbilityKey(nil, "Chain Lightning"),
+		spellName = "Chain Lightning",
+		activationCount = 5,
+		pullSeenCount = 2,
+		intervalSamples = 3,
+		minInterval = 7.3,
+		maxInterval = 11.1,
+		avgInterval = 9.77,
+		observedGapSamples = 3,
+		minObservedGap = 7.3,
+		maxObservedGap = 11.1,
+		avgObservedGap = 9.77,
+		events = {
+			SPELL_CAST_START = 5,
+			SPELL_DAMAGE = 4,
+			SPELL_INTERRUPT = 3,
+		},
+	}
+	addon.Learning.RuleLearner.refreshRules(ability)
+	Harness.assertTrue(ability.autoSuppressed ~= true, "Near-floor cast-start timers should survive interrupt/retry jitter")
+	Harness.assertTrue(ability.selectedRule and ability.selectedRule.type == "time_interval", "Near-floor cast-start evidence should keep a time timer")
+	Harness.assertTrue(ability.selectedRule.minInterval == addon.Core.Config.getMinTimerDisplayInterval(), "Near-floor cast timer should clamp display minimum to the configured floor")
+end
+
+local function scenarioUnstableWideIntervalSuppression()
+	Harness.resetState("Replay Unstable Timer")
+	local boss = "Erratic Commander"
+	local guid = Harness.makeGuid(boss, 658)
+	local spellName = "Erratic Storm"
+	for _, t in ipairs({ 0, 20, 202, 222 }) do
+		Harness.emitSpell({ t = t, sourceName = boss, sourceGUID = guid, spellName = spellName, hp = 100 - t * 0.1 })
+	end
+
+	local timer = Harness.firstPredictionByName(spellName)
+	Harness.assertTrue(timer == nil, "Extremely unstable intervals should not appear as live time timers")
+	Harness.finishPull(260)
+
+	local model = Harness.encounter(addon.Core.Util.bossKey(boss, guid))
+	local erraticStorm = Harness.ability(model, addon.Core.Util.bossKey(boss, guid), spellName)
+	Harness.assertTrue(erraticStorm ~= nil, "Unstable timer evidence should remain available for diagnostics")
+	Harness.assertTrue(erraticStorm.autoSuppressed == true, "Extremely unstable intervals should be auto-suppressed after promotion")
+	Harness.assertTrue(erraticStorm.suppressionReason == "unstable_time_interval", "Unstable interval suppression should explain the reason")
+
+	local weakPhaseAbility = {
+		spellKey = addon.Core.Util.timerAbilityKey(nil, "Erratic Weak Phase"),
+		activationCount = 4,
+		pullSeenCount = 1,
+		intervalSamples = 3,
+		minInterval = 20,
+		maxInterval = 182,
+		segmentStats = {
+			hp_80 = {
+				key = "hp_80",
+				reason = "hp_bucket",
+				phaseOffsetSamples = 2,
+				avgPhaseOffset = 3.5,
+				activationCount = 2,
+				seenCount = 2,
+			},
+		},
+	}
+	addon.Learning.RuleLearner.refreshRules(weakPhaseAbility)
+	Harness.assertTrue(weakPhaseAbility.autoSuppressed == true, "Unstable timers must not fall back to weak HP or gap phase rules")
+	Harness.assertTrue(weakPhaseAbility.suppressionReason == "unstable_time_interval", "Weak phase fallback should keep the unstable interval reason")
+
+	local strongPhaseAbility = {
+		spellKey = addon.Core.Util.timerAbilityKey(nil, "Erratic Strong Phase"),
+		activationCount = 4,
+		pullSeenCount = 1,
+		intervalSamples = 3,
+		minInterval = 20,
+		maxInterval = 182,
+		segmentStats = {
+			aura_boss = {
+				key = "aura_boss",
+				reason = "boss_aura_applied",
+				phaseOffsetSamples = 2,
+				avgPhaseOffset = 4.0,
+				activationCount = 2,
+				seenCount = 2,
+			},
+		},
+	}
+	addon.Learning.RuleLearner.refreshRules(strongPhaseAbility)
+	Harness.assertTrue(strongPhaseAbility.selectedRule and strongPhaseAbility.selectedRule.type == "phase_start_offset", "Strong boss-aura phase evidence may survive unstable global intervals")
+	Harness.assertTrue(strongPhaseAbility.autoSuppressed ~= true, "Strong boss-aura phase evidence should not be suppressed by unstable global intervals")
+
+	local phaseIntervalAbility = {
+		spellKey = addon.Core.Util.timerAbilityKey(nil, "Erratic Phase Timer"),
+		activationCount = 6,
+		pullSeenCount = 1,
+		intervalSamples = 5,
+		minInterval = 30,
+		maxInterval = 102.4,
+		observedGapSamples = 5,
+		minObservedGap = 30,
+		segmentStats = {
+			aura_boss = {
+				key = "aura_boss",
+				reason = "boss_aura_applied",
+				phaseOffsetSamples = 2,
+				avgPhaseOffset = 25,
+				activationCount = 6,
+				seenCount = 2,
+				intervalSamples = 4,
+				minInterval = 30,
+				maxInterval = 32.2,
+				avgInterval = 31,
+			},
+		},
+	}
+	addon.Learning.RuleLearner.refreshRules(phaseIntervalAbility)
+	Harness.assertTrue(phaseIntervalAbility.selectedRule and phaseIntervalAbility.selectedRule.type == "phase_time_interval", "Stable intervals inside a boss-aura phase should survive unstable global gaps")
+	Harness.assertTrue(phaseIntervalAbility.autoSuppressed ~= true, "Phase-local timer evidence should not be suppressed as global instability")
+end
+
+local function scenarioDerivedEffectsAndTerminalCastsSuppressed()
+	Harness.resetState("Replay Derived Effect Noise")
+
+	local explosion = {
+		spellKey = addon.Core.Util.timerAbilityKey(nil, "Living Bomb Explosion"),
+		activationCount = 3,
+		pullSeenCount = 1,
+		intervalSamples = 2,
+		minInterval = 48,
+		maxInterval = 60,
+		events = {
+			SPELL_DAMAGE = 12,
+			SPELL_MISSED = 2,
+		},
+	}
+	addon.Learning.RuleLearner.refreshRules(explosion)
+	Harness.assertTrue(explosion.autoSuppressed == true, "Damage-only derived effects should not become displayed timers")
+	Harness.assertTrue(explosion.suppressionReason == "effect_only_damage", "Damage-only suppression should explain that no cast or aura anchor exists")
+
+	local terminalChannel = {
+		spellKey = addon.Core.Util.timerAbilityKey(nil, "Armageddon"),
+		activationCount = 3,
+		pullSeenCount = 2,
+		intervalSamples = 1,
+		minInterval = 10.2,
+		maxInterval = 10.2,
+		avgFirstOffset = 226.3,
+		minFirstOffset = 223.1,
+		maxFirstOffset = 229.5,
+		maxHpPct = 4.8,
+		events = {
+			SPELL_CAST_START = 3,
+			SPELL_DAMAGE = 17,
+		},
+	}
+	addon.Learning.RuleLearner.refreshRules(terminalChannel)
+	Harness.assertTrue(terminalChannel.autoSuppressed == true, "Terminal low-HP channels should not become cooldown timers")
+	Harness.assertTrue(terminalChannel.suppressionReason == "terminal_low_hp_cast", "Terminal cast suppression should explain the low-HP end state")
+
+	local addCast = {
+		spellKey = addon.Core.Util.timerAbilityKey(nil, "Greater Polymorph"),
+		activationCount = 1,
+		pullSeenCount = 1,
+		intervalSamples = 0,
+		avgFirstOffset = 16.3,
+		minFirstOffset = 16.3,
+		maxFirstOffset = 16.3,
+		events = {
+			SPELL_CAST_START = 1,
+			SPELL_INTERRUPT = 1,
+		},
+	}
+	addon.Learning.RuleLearner.refreshRules(addCast)
+	Harness.assertTrue(addCast.autoSuppressed == true, "Single interrupted casts should stay diagnostic until stronger boss evidence exists")
+	Harness.assertTrue(addCast.suppressionReason == "single_interrupted_cast", "Single interrupted casts should have a specific suppression reason")
+end
+
 local function scenarioInterruptedSpamDoesNotBecomeLongTimer()
 	Harness.resetState("Replay Interrupted Spam")
 	local boss = "Storm Caster"
@@ -820,7 +1156,7 @@ end
 local function scenarioKnownRoutineSpellSuppressesLiveProvisional()
 	Harness.resetState("Replay Known Routine")
 	local spellName = "Shared Filler"
-	for bossIndex = 1, 2 do
+	for bossIndex = 1, addon.Core.Constants.GLOBAL_ROUTINE_SPELL_MIN_ENCOUNTERS do
 		local boss = "Routine Boss " .. tostring(bossIndex)
 		local guid = Harness.makeGuid(boss, 700 + bossIndex)
 		for castIndex = 0, 3 do
@@ -849,7 +1185,7 @@ end
 local function scenarioKnownRoutineSpellSuppressesPersistentSparseModel()
 	Harness.resetState("Replay Persistent Known Routine")
 	local spellName = "Shared Filler"
-	for bossIndex = 1, 2 do
+	for bossIndex = 1, addon.Core.Constants.GLOBAL_ROUTINE_SPELL_MIN_ENCOUNTERS do
 		local boss = "Routine Model Boss " .. tostring(bossIndex)
 		local guid = Harness.makeGuid(boss, 720 + bossIndex)
 		for castIndex = 0, 3 do
@@ -3607,6 +3943,8 @@ local scenarios = {
 	scenarioChannelLifecycle,
 	scenarioLongCastResolutionDoesNotBecomeCooldown,
 	scenarioDelayedSelfAuraAfterCastStartDoesNotBecomeCooldown,
+	scenarioDelayedPlayerAuraAfterCastStartDoesNotBecomeCooldown,
+	scenarioBossAppliedPlayerAuraLifecycleUsesApplyTiming,
 	scenarioPhaseHpRules,
 	scenarioStableIntervalSurvivesDifferentPhaseSegments,
 	scenarioStableIntervalSurvivesRepeatedPhaseCoincidence,
@@ -3625,6 +3963,10 @@ local scenarios = {
 	scenarioShortEncounterOwnedAddSuppressed,
 	scenarioLiveNoiseSuppression,
 	scenarioSubTenSecondIntervalSuppression,
+	scenarioMixedShortOutlierIntervalDisplaysAtFloor,
+	scenarioNearFloorCastStartIntervalDisplaysAtFloor,
+	scenarioUnstableWideIntervalSuppression,
+	scenarioDerivedEffectsAndTerminalCastsSuppressed,
 	scenarioInterruptedSpamDoesNotBecomeLongTimer,
 	scenarioPlayerInterruptLearnsInterruptedBossSpell,
 	scenarioLegacyUncountedSpamGapSuppressed,

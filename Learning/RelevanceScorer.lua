@@ -21,6 +21,10 @@ local function displayIntervalFloor()
 	return C.MIN_TIMER_DISPLAY_INTERVAL_SECONDS
 end
 
+local function castTimerDisplayFloorGrace()
+	return tonumber(C.CAST_TIMER_DISPLAY_FLOOR_GRACE_SECONDS) or 0
+end
+
 local function belowDisplayIntervalFloor(value)
 	value = tonumber(value)
 	if not value then
@@ -164,6 +168,138 @@ local function refreshDisplaylessFallbackEncounterSuppression(zoneKey, encounter
 	end
 end
 
+local function eventCount(ability, eventType)
+	local events = ability and ability.events
+	if type(events) ~= "table" then
+		return 0
+	end
+	return tonumber(events[eventType]) or 0
+end
+
+local function isDamageOrMissEvent(eventType)
+	return eventType == "SPELL_DAMAGE"
+		or eventType == "SPELL_PERIODIC_DAMAGE"
+		or eventType == "RANGE_DAMAGE"
+		or eventType == "SWING_DAMAGE"
+		or eventType == "SPELL_MISSED"
+		or eventType == "SPELL_PERIODIC_MISSED"
+		or eventType == "RANGE_MISSED"
+		or eventType == "SWING_MISSED"
+end
+
+local function effectOnlyDamageReason(ability)
+	if type(ability) ~= "table" or ability.encounterAssociated then
+		return nil
+	end
+
+	local events = ability.events
+	if type(events) ~= "table" then
+		return nil
+	end
+
+	local sawDamageOrMiss = false
+	for eventType in pairs(events) do
+		if isDamageOrMissEvent(eventType) then
+			sawDamageOrMiss = true
+		else
+			return nil
+		end
+	end
+	if sawDamageOrMiss then
+		return "effect_only_damage"
+	end
+	return nil
+end
+
+local function stableDisplayableSegmentInterval(segment)
+	if type(segment) ~= "table" or segment.reason ~= "boss_aura_applied" then
+		return false
+	end
+	local intervalSamples = tonumber(segment.intervalSamples) or 0
+	local minInterval = tonumber(segment.minInterval)
+	local maxInterval = tonumber(segment.maxInterval or segment.minInterval)
+	if intervalSamples < 2 or not minInterval or not maxInterval or minInterval <= 0 then
+		return false
+	end
+	if belowDisplayIntervalFloor(minInterval) then
+		return false
+	end
+	local ratio = tonumber(C.PHASE_TIMER_INTERVAL_RATIO) or 1.8
+	local spread = tonumber(C.PHASE_TIMER_INTERVAL_SPREAD_SECONDS) or 8.0
+	return maxInterval <= minInterval * ratio and (maxInterval - minInterval) <= spread
+end
+
+local function hasStableDisplayableSegmentInterval(ability)
+	for _, segment in pairs(type(ability and ability.segmentStats) == "table" and ability.segmentStats or {}) do
+		if stableDisplayableSegmentInterval(segment) then
+			return true
+		end
+	end
+	return false
+end
+
+local function mixedDisplayableIntervalEvidence(target)
+	if type(target) ~= "table" then
+		return false
+	end
+	if eventCount(target, "SPELL_CAST_START") <= 0 then
+		return false
+	end
+	local intervalSamples = tonumber(target.intervalSamples) or 0
+	local minInterval = tonumber(target.minInterval)
+	local maxInterval = tonumber(target.maxInterval)
+	local avgInterval = tonumber(target.avgInterval)
+	if intervalSamples < 2 or not minInterval or not maxInterval or not avgInterval then
+		return false
+	end
+	if not belowDisplayIntervalFloor(minInterval) then
+		return false
+	end
+	local floor = displayIntervalFloor()
+	local grace = castTimerDisplayFloorGrace()
+	return avgInterval >= floor - grace
+		and maxInterval >= displayIntervalFloor()
+end
+
+local function terminalLowHpCastReason(ability)
+	if type(ability) ~= "table" or ability.encounterAssociated then
+		return nil
+	end
+	if eventCount(ability, "SPELL_CAST_START") <= 0 and eventCount(ability, "SPELL_CAST_SUCCESS") <= 0 then
+		return nil
+	end
+
+	local maxHpPct = tonumber(ability.maxHpPct)
+	local firstOffset = tonumber(ability.avgFirstOffset or ability.minFirstOffset)
+	local activationCount = tonumber(ability.activationCount) or 0
+	local pullSeenCount = tonumber(ability.pullSeenCount) or 0
+	if maxHpPct
+		and firstOffset
+		and maxHpPct <= (tonumber(C.TERMINAL_CAST_MAX_HP_PCT) or 5.0)
+		and firstOffset >= (tonumber(C.TERMINAL_CAST_MIN_OFFSET_SECONDS) or 120.0)
+		and activationCount <= math.max(1, pullSeenCount) + 1 then
+		return "terminal_low_hp_cast"
+	end
+	return nil
+end
+
+local function singleInterruptedCastReason(ability)
+	if type(ability) ~= "table" or ability.encounterAssociated then
+		return nil
+	end
+	if eventCount(ability, "SPELL_INTERRUPT") <= 0
+		or (eventCount(ability, "SPELL_CAST_START") <= 0 and eventCount(ability, "SPELL_CAST_SUCCESS") <= 0) then
+		return nil
+	end
+	local activationCount = tonumber(ability.activationCount) or 0
+	local pullSeenCount = tonumber(ability.pullSeenCount) or 0
+	local intervalSamples = tonumber(ability.intervalSamples) or 0
+	if activationCount <= 1 and pullSeenCount <= 1 and intervalSamples <= 0 then
+		return "single_interrupted_cast"
+	end
+	return nil
+end
+
 local function frequentShortIntervalReason(ability)
 	if type(ability) ~= "table" then
 		return nil
@@ -174,12 +310,21 @@ local function frequentShortIntervalReason(ability)
 	local minInterval = tonumber(ability.minInterval)
 	local observedGapSamples = tonumber(ability.observedGapSamples) or 0
 	local minObservedGap = tonumber(ability.minObservedGap)
+	local stableSegmentInterval = hasStableDisplayableSegmentInterval(ability)
+	local mixedDisplayInterval = mixedDisplayableIntervalEvidence(ability)
 
-	if activationCount >= 2 and intervalSamples >= 1 and belowDisplayIntervalFloor(minInterval) then
+	if activationCount >= 2
+		and intervalSamples >= 1
+		and belowDisplayIntervalFloor(minInterval)
+		and not mixedDisplayInterval then
 		return "short_interval_below_display_floor"
 	end
 
-	if activationCount >= 2 and observedGapSamples >= 1 and belowDisplayIntervalFloor(minObservedGap) then
+	if activationCount >= 2
+		and observedGapSamples >= 1
+		and belowDisplayIntervalFloor(minObservedGap)
+		and not stableSegmentInterval
+		and not mixedDisplayInterval then
 		return "short_activation_gap_below_display_floor"
 	end
 
@@ -191,7 +336,8 @@ local function frequentShortIntervalReason(ability)
 	local uncountedIntervalCount = possibleIntervalCount - intervalSamples
 	if activationCount >= 4
 		and uncountedIntervalCount >= 2
-		and uncountedIntervalCount >= intervalSamples then
+		and uncountedIntervalCount >= intervalSamples
+		and not stableSegmentInterval then
 		return "uncounted_activation_gap_below_model_floor"
 	end
 
@@ -199,6 +345,29 @@ local function frequentShortIntervalReason(ability)
 		return "shared_routine_spell"
 	end
 
+	return nil
+end
+
+local function unstableTimeIntervalReason(ability)
+	if type(ability) ~= "table" then
+		return nil
+	end
+
+	local intervalSamples = tonumber(ability.intervalSamples) or 0
+	local activationCount = tonumber(ability.activationCount) or 0
+	local minInterval = tonumber(ability.minInterval)
+	local maxInterval = tonumber(ability.maxInterval)
+	local hasRangeEvidence = intervalSamples >= 2
+		or (activationCount >= 3 and minInterval and maxInterval and math.abs(maxInterval - minInterval) > DISPLAY_FLOOR_EPSILON_SECONDS)
+	if not hasRangeEvidence or not minInterval or not maxInterval or minInterval <= 0 then
+		return nil
+	end
+
+	local ratio = tonumber(C.UNSTABLE_TIMER_INTERVAL_RATIO) or 3.0
+	local spread = tonumber(C.UNSTABLE_TIMER_INTERVAL_SPREAD_SECONDS) or 30.0
+	if maxInterval > minInterval * ratio and (maxInterval - minInterval) >= spread then
+		return "unstable_time_interval"
+	end
 	return nil
 end
 
@@ -307,6 +476,17 @@ local function playerAuraPhaseStateReason(ability)
 	return "player_aura_phase_state"
 end
 
+local function mixedAuraPhaseStateReason(ability)
+	if type(ability) ~= "table"
+		or ability.encounterAssociated
+		or not isAuraOnlyAbility(ability)
+		or (tonumber(ability.playerAuraEventCount) or 0) <= 0
+		or (tonumber(ability.bossSelfAuraEventCount) or 0) <= 0 then
+		return nil
+	end
+	return "mixed_aura_phase_state"
+end
+
 local function abilityHasRoutineRule(ability)
 	if type(ability) ~= "table" then
 		return false
@@ -366,10 +546,18 @@ function RelevanceScorer.routineReasonForAbility(ability)
 		return nil
 	end
 	return frequentShortIntervalReason(ability)
+		or effectOnlyDamageReason(ability)
+		or terminalLowHpCastReason(ability)
+		or singleInterruptedCastReason(ability)
 		or auraStackStateReason(ability)
 		or bossSelfAuraPhaseStateReason(ability)
 		or playerAuraPhaseStateReason(ability)
+		or mixedAuraPhaseStateReason(ability)
 		or auraOnlySameHpRepeatReason(ability)
+end
+
+function RelevanceScorer.unstableTimeIntervalReason(ability)
+	return unstableTimeIntervalReason(ability)
 end
 
 function RelevanceScorer.applyRoutineCandidate(ability, candidate)

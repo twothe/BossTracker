@@ -128,6 +128,85 @@ local function bossSelfAuraTransitionMarker(ability)
 	return nearTransitionAuraHp(ability.avgHpPct)
 end
 
+local function displayIntervalFloor()
+	local config = addon.Core and addon.Core.Config
+	if config and config.getMinTimerDisplayInterval then
+		return config.getMinTimerDisplayInterval()
+	end
+	return C.MIN_TIMER_DISPLAY_INTERVAL_SECONDS
+end
+
+local function castTimerDisplayFloorGrace()
+	return tonumber(C.CAST_TIMER_DISPLAY_FLOOR_GRACE_SECONDS) or 0
+end
+
+local function stablePhaseTimerSegment(segment)
+	if type(segment) ~= "table" or segment.reason ~= "boss_aura_applied" then
+		return false
+	end
+	local intervalSamples = tonumber(segment.intervalSamples) or 0
+	local minInterval = tonumber(segment.minInterval)
+	local maxInterval = tonumber(segment.maxInterval or segment.minInterval)
+	if intervalSamples < 2 or not minInterval or not maxInterval or minInterval <= 0 then
+		return false
+	end
+	if minInterval < displayIntervalFloor() - 0.000001 then
+		return false
+	end
+	local ratio = tonumber(C.PHASE_TIMER_INTERVAL_RATIO) or 1.8
+	local spread = tonumber(C.PHASE_TIMER_INTERVAL_SPREAD_SECONDS) or 8.0
+	return maxInterval <= minInterval * ratio and (maxInterval - minInterval) <= spread
+end
+
+local function bestPhaseTimerSegment(ability)
+	local bestKey = nil
+	local bestSegment = nil
+	for segmentKey, segment in pairs(type(ability and ability.segmentStats) == "table" and ability.segmentStats or {}) do
+		if stablePhaseTimerSegment(segment)
+			and (
+				not bestSegment
+				or (tonumber(segment.intervalSamples) or 0) > (tonumber(bestSegment.intervalSamples) or 0)
+				or (
+					(tonumber(segment.intervalSamples) or 0) == (tonumber(bestSegment.intervalSamples) or 0)
+					and (tonumber(segment.phaseOffsetSamples) or 0) > (tonumber(bestSegment.phaseOffsetSamples) or 0)
+				)
+			) then
+			bestKey = segmentKey
+			bestSegment = segment
+		end
+	end
+	return bestKey, bestSegment
+end
+
+local function timeRuleIntervals(ability)
+	if type(ability) ~= "table" then
+		return nil
+	end
+	local intervalSamples = tonumber(ability.intervalSamples) or 0
+	local minInterval = tonumber(ability.minInterval)
+	local maxInterval = tonumber(ability.maxInterval)
+	local avgInterval = tonumber(ability.avgInterval)
+	if intervalSamples < 1 or not minInterval or minInterval < C.MIN_INTERVAL_SECONDS then
+		return nil
+	end
+
+	local floor = displayIntervalFloor()
+	if minInterval >= floor - 0.000001 then
+		return minInterval, maxInterval, avgInterval
+	end
+
+	local hasCastStart = type(ability.events) == "table" and (tonumber(ability.events.SPELL_CAST_START) or 0) > 0
+	if intervalSamples >= 2
+		and hasCastStart
+		and avgInterval
+		and maxInterval
+		and avgInterval >= floor - castTimerDisplayFloorGrace()
+		and maxInterval >= floor then
+		return floor, maxInterval, avgInterval
+	end
+	return minInterval, maxInterval, avgInterval
+end
+
 local function isAuraEvent(eventType)
 	return eventType == "SPELL_AURA_APPLIED"
 		or eventType == "SPELL_AURA_REFRESH"
@@ -348,6 +427,7 @@ local function chooseRule(ability)
 	local order = {
 		"routine_noise",
 		"time_interval",
+		"phase_time_interval",
 		"hp_gate",
 		"phase_start_offset",
 		"phase_once",
@@ -370,6 +450,14 @@ local function chooseRule(ability)
 	ability.autoSuppressed = selected and selected.type == "routine_noise" or nil
 	ability.suppressionReason = ability.autoSuppressed and (selected.reason or "routine_noise") or nil
 	return selected
+end
+
+local function unstableTimeIntervalReason(ability)
+	local relevanceScorer = addon.Learning and addon.Learning.RelevanceScorer
+	if relevanceScorer and relevanceScorer.unstableTimeIntervalReason then
+		return relevanceScorer.unstableTimeIntervalReason(ability)
+	end
+	return nil
 end
 
 function RuleLearner.refreshRules(ability)
@@ -432,22 +520,37 @@ function RuleLearner.refreshRules(ability)
 		and phaseSamples >= 2
 		and phaseOnce
 		and (tonumber(ability.intervalSamples) or 0) < 2
+	local unstableTimeReason = unstableTimeIntervalReason(ability)
+	local phaseTimerSegmentKey, phaseTimerSegment = bestPhaseTimerSegment(ability)
+	local ruleMinInterval, ruleMaxInterval, ruleAvgInterval = timeRuleIntervals(ability)
 
 	if not phaseOnlyRepeated
 		and not weakSingleIntervalAcrossOneOffPhases
-		and ability.intervalSamples
-		and ability.intervalSamples >= 1
-		and ability.minInterval
-		and ability.minInterval >= C.MIN_INTERVAL_SECONDS then
+		and not unstableTimeReason
+		and ruleMinInterval then
 		local confidence = math.min(0.95, 0.30 + ability.intervalSamples * 0.12)
 		if ability.maxInterval and ability.minInterval and ability.maxInterval > ability.minInterval * 1.8 then
 			confidence = confidence - 0.12
 		end
 		candidate(ability, "time_interval", confidence, {
-			minInterval = ability.minInterval,
-			maxInterval = ability.maxInterval,
-			avgInterval = ability.avgInterval,
+			minInterval = ruleMinInterval,
+			maxInterval = ruleMaxInterval,
+			avgInterval = ruleAvgInterval,
 			samples = ability.intervalSamples,
+		})
+	end
+
+	if phaseTimerSegment and unstableTimeReason then
+		candidate(ability, "phase_time_interval", math.min(0.90, 0.42 + (phaseTimerSegment.intervalSamples or 0) * 0.10), {
+			segmentKey = phaseTimerSegmentKey,
+			phaseReason = phaseTimerSegment.reason,
+			minInterval = phaseTimerSegment.minInterval,
+			maxInterval = phaseTimerSegment.maxInterval,
+			avgInterval = phaseTimerSegment.avgInterval,
+			samples = phaseTimerSegment.intervalSamples,
+			avgPhaseOffset = phaseTimerSegment.avgPhaseOffset or phaseTimerSegment.firstPhaseOffset,
+			minPhaseOffset = phaseTimerSegment.minPhaseOffset,
+			maxPhaseOffset = phaseTimerSegment.maxPhaseOffset,
 		})
 	end
 
@@ -482,7 +585,8 @@ function RuleLearner.refreshRules(ability)
 		})
 	end
 
-	if phaseSamples >= (C.MIN_PHASE_RULE_SAMPLES or 2) or strongPhaseSamples > 0 then
+	if (phaseSamples >= (C.MIN_PHASE_RULE_SAMPLES or 2) and (not unstableTimeReason or strongPhaseSamples > 0))
+		or strongPhaseSamples > 0 then
 		candidate(ability, "phase_start_offset", math.min(0.78, 0.24 + phaseSamples * 0.08), {
 			avgPhaseOffset = strongPhaseOffsetAverage or phaseOffsetAverage,
 			samples = strongPhaseOffsetSampleCount > 0 and strongPhaseOffsetSampleCount or phaseOffsetSampleCount,
@@ -497,6 +601,18 @@ function RuleLearner.refreshRules(ability)
 	if ability.encounterAssociated then
 		candidate(ability, "encounter_add", math.min(0.65, 0.20 + (ability.pullSeenCount or 0) * 0.05), {
 			associatedSourceName = ability.associatedSourceName,
+		})
+	end
+
+	if unstableTimeReason
+		and not ability.rules.hp_gate
+		and not ability.rules.phase_time_interval
+		and not ability.rules.phase_start_offset
+		and not ability.rules.phase_once
+		and not ability.rules.first_offset
+		and not ability.rules.encounter_add then
+		candidate(ability, "routine_noise", 1.0, {
+			reason = unstableTimeReason,
 		})
 	end
 

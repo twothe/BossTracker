@@ -211,6 +211,8 @@ local function abilityTimingText(ability)
 	end
 	if rule.type == "time_interval" then
 		return "~" .. tostring(math.floor((rule.minInterval or ability.minInterval or 0) + 0.5)) .. "s"
+	elseif rule.type == "phase_time_interval" then
+		return "phase ~" .. tostring(math.floor((rule.minInterval or ability.minInterval or 0) + 0.5)) .. "s"
 	elseif rule.type == "first_offset" then
 		return "~" .. tostring(math.floor((rule.minFirstOffset or ability.minFirstOffset or 0) + 0.5)) .. "s after pull"
 	elseif rule.type == "hp_gate" then

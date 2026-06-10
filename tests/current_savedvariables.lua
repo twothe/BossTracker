@@ -240,7 +240,7 @@ local function validateModelInvariants(db)
 				end
 				if ability.legacyAfterRebuild ~= true then
 					local rule = ability.selectedRule
-					if rule and rule.type == "time_interval" then
+					if rule and (rule.type == "time_interval" or rule.type == "phase_time_interval") then
 						local interval = tonumber(rule.minInterval or ability.minInterval)
 						if not interval or interval <= 0 or interval > addon.Core.Constants.MAX_REASONABLE_INTERVAL_SECONDS then
 							invalidRules = invalidRules + 1
@@ -276,6 +276,42 @@ local function findAbility(db, zoneKey, encounterKey, abilityKey)
 	local zone = db.learned and db.learned.zones and db.learned.zones[zoneKey]
 	local encounter = zone and zone.encounters and zone.encounters[encounterKey]
 	return encounter and encounter.abilities and encounter.abilities[abilityKey], encounter
+end
+
+local function abilityIsDisplayed(ability)
+	return type(ability) == "table"
+		and type(ability.selectedRule) == "table"
+		and ability.selectedRule.type ~= "routine_noise"
+		and ability.autoSuppressed ~= true
+		and ability.hidden ~= true
+		and ability.legacyAfterRebuild ~= true
+end
+
+local function assertCurrentAbilityHidden(db, zoneKey, encounterKey, abilityKey, label, expectedReason)
+	local ability = findAbility(db, zoneKey, encounterKey, abilityKey)
+	if not ability then
+		print(label .. " skipped=missing_current_data")
+		return
+	end
+	print(label .. " rule=" .. tostring(ability.selectedRule and ability.selectedRule.type) .. " suppressed=" .. tostring(ability.autoSuppressed) .. " reason=" .. tostring(ability.suppressionReason))
+	if abilityIsDisplayed(ability) then
+		fail(label .. " should not be displayed")
+	end
+	if expectedReason and ability.suppressionReason ~= expectedReason then
+		fail(label .. " suppression reason should be " .. expectedReason)
+	end
+end
+
+local function assertCurrentAbilityRule(db, zoneKey, encounterKey, abilityKey, label, expectedRule)
+	local ability = findAbility(db, zoneKey, encounterKey, abilityKey)
+	if not ability then
+		print(label .. " skipped=missing_current_data")
+		return
+	end
+	print(label .. " rule=" .. tostring(ability.selectedRule and ability.selectedRule.type) .. " suppressed=" .. tostring(ability.autoSuppressed) .. " reason=" .. tostring(ability.suppressionReason))
+	if ability.autoSuppressed == true or not (ability.selectedRule and ability.selectedRule.type == expectedRule) then
+		fail(label .. " should be displayed as " .. expectedRule)
+	end
 end
 
 local function validateKnownCurrentData(db)
@@ -318,6 +354,125 @@ local function validateKnownCurrentData(db)
 	else
 		print("nefarianCoward skipped=missing_current_data")
 	end
+
+	local combustion = findAbility(db, "469_blackwing_lair", "group:ebonroc+firemaw+flamegor", "flamegor|name:combustion")
+	if combustion then
+		print("flamegorCombustion class=" .. tostring(combustion.classification) .. " min=" .. tostring(combustion.minInterval) .. " max=" .. tostring(combustion.maxInterval) .. " suppressed=" .. tostring(combustion.autoSuppressed) .. " reason=" .. tostring(combustion.suppressionReason))
+		if not (combustion.selectedRule and combustion.selectedRule.type == "time_interval") then
+			fail("Flamegor Combustion is not learned as a time interval")
+		end
+		if combustion.autoSuppressed == true then
+			fail("Flamegor Combustion is still suppressed")
+		end
+		if not (tonumber(combustion.minInterval) and combustion.minInterval > 14 and combustion.minInterval < 16) then
+			fail("Flamegor Combustion interval is outside expected current-data range")
+		end
+	else
+		print("flamegorCombustion skipped=missing_current_data")
+	end
+
+	assertCurrentAbilityHidden(
+		db,
+		"469_blackwing_lair",
+		"group:grethok_the_controller+razorgore_the_untamed",
+		"grethok_the_controller|name:greater_polymorph",
+		"razorgoreGreaterPolymorph",
+		"single_interrupted_cast"
+	)
+
+	assertCurrentAbilityHidden(
+		db,
+		"409_molten_core",
+		"baron_geddon",
+		"baron_geddon|name:armageddon",
+		"geddonArmageddon",
+		"terminal_low_hp_cast"
+	)
+
+	assertCurrentAbilityHidden(
+		db,
+		"409_molten_core",
+		"baron_geddon",
+		"baron_geddon|name:living_bomb_explosion",
+		"geddonLivingBombExplosion",
+		"effect_only_damage"
+	)
+
+	local livingBomb = findAbility(db, "409_molten_core", "baron_geddon", "baron_geddon|name:living_bomb")
+	if livingBomb then
+		print("geddonLivingBomb rule=" .. tostring(livingBomb.selectedRule and livingBomb.selectedRule.type) .. " suppressed=" .. tostring(livingBomb.autoSuppressed))
+		if not (livingBomb.selectedRule and livingBomb.selectedRule.type == "time_interval") or livingBomb.autoSuppressed == true then
+			fail("Geddon Living Bomb should remain a displayed cast/aura-backed timer")
+		end
+	else
+		print("geddonLivingBomb skipped=missing_current_data")
+	end
+
+	assertCurrentAbilityHidden(
+		db,
+		"409_molten_core",
+		"ragnaros",
+		"ragnaros|name:fire_strike",
+		"ragnarosFireStrike",
+		"short_interval_below_display_floor"
+	)
+	assertCurrentAbilityHidden(
+		db,
+		"409_molten_core",
+		"ragnaros",
+		"ragnaros|name:fierce_fire_strike",
+		"ragnarosFierceFireStrike",
+		"short_interval_below_display_floor"
+	)
+	assertCurrentAbilityRule(
+		db,
+		"409_molten_core",
+		"ragnaros",
+		"ragnaros|name:wrath_of_ragnaros",
+		"ragnarosWrathOfRagnaros",
+		"phase_time_interval"
+	)
+	assertCurrentAbilityRule(
+		db,
+		"409_molten_core",
+		"ragnaros",
+		"ragnaros|name:hand_of_ragnaros",
+		"ragnarosHandOfRagnaros",
+		"phase_time_interval"
+	)
+
+	assertCurrentAbilityRule(
+		db,
+		"43_wailing_caverns",
+		"skum",
+		"skum|name:chain_lightning",
+		"skumChainLightning",
+		"time_interval"
+	)
+	assertCurrentAbilityRule(
+		db,
+		"389_ragefire_chasm",
+		"oggleflint",
+		"oggleflint|name:chain_lightning",
+		"oggleflintChainLightning",
+		"time_interval"
+	)
+	assertCurrentAbilityRule(
+		db,
+		"47_razorfen_kraul",
+		"charlga_razorflank",
+		"charlga_razorflank|name:chain_lightning",
+		"charlgaChainLightning",
+		"time_interval"
+	)
+	assertCurrentAbilityRule(
+		db,
+		"70_uldaman",
+		"grimlok",
+		"grimlok|name:chain_lightning",
+		"grimlokChainLightning",
+		"time_interval"
+	)
 
 	local bwlZone = db.learned and db.learned.zones and db.learned.zones["469_blackwing_lair"]
 	local standaloneWhelps = 0
