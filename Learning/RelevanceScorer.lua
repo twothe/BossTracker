@@ -473,6 +473,12 @@ local function playerAuraPhaseStateReason(ability)
 		or (tonumber(ability.bossSelfAuraEventCount) or 0) > 0 then
 		return nil
 	end
+	if (tonumber(ability.intervalSamples) or 0) >= 1
+		and not belowDisplayIntervalFloor(ability.minInterval)
+		and unstableTimeIntervalReason(ability) == nil
+		and auraOnlySameHpRepeatReason(ability) == nil then
+		return nil
+	end
 	return "player_aura_phase_state"
 end
 

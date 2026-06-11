@@ -157,6 +157,7 @@ local function validateStoredEvidence(db)
 	local decodeErrors = 0
 	local emptyKills = 0
 	local hashErrors = 0
+	local invalidKills = 0
 	local duplicateCanonical = 0
 	local canonicalByHash = {}
 	for _, instanceKey in ipairs(sortedKeys(db.evidence and db.evidence.instances)) do
@@ -170,9 +171,15 @@ local function validateStoredEvidence(db)
 					print("decode_error instance=" .. tostring(instanceKey) .. " boss=" .. tostring(bossKey) .. " hash=" .. tostring(storedHash) .. " error=" .. tostring(decodeError))
 				else
 					local kill = decoded.kill
-					if #(kill.events or {}) == 0 or #(kill.actors or {}) == 0 or #(kill.spells or {}) == 0 then
+					if (#(kill.facts or {}) == 0 and #(kill.counters or {}) == 0 and #(kill.events or {}) == 0)
+						or #(kill.actors or {}) == 0
+						or #(kill.spells or {}) == 0 then
 						emptyKills = emptyKills + 1
 						print("empty_kill instance=" .. tostring(instanceKey) .. " boss=" .. tostring(bossKey) .. " hash=" .. tostring(storedHash))
+					end
+					if not addon.Core.EvidenceCodec.validDecodedKill(decoded) then
+						invalidKills = invalidKills + 1
+						print("invalid_kill instance=" .. tostring(instanceKey) .. " boss=" .. tostring(bossKey) .. " hash=" .. tostring(storedHash))
 					end
 					local canonical = addon.Core.EvidenceCodec.hashKill(decoded.instance or instance, decoded.boss or boss, kill)
 					if type(canonical) ~= "string" or canonical == "" then
@@ -188,8 +195,8 @@ local function validateStoredEvidence(db)
 			end
 		end
 	end
-	print("decoded evidence errors=" .. tostring(decodeErrors) .. " emptyKills=" .. tostring(emptyKills) .. " hashErrors=" .. tostring(hashErrors) .. " duplicateCanonical=" .. tostring(duplicateCanonical))
-	if decodeErrors > 0 or emptyKills > 0 or hashErrors > 0 or duplicateCanonical > 0 then
+	print("decoded evidence errors=" .. tostring(decodeErrors) .. " emptyKills=" .. tostring(emptyKills) .. " invalidKills=" .. tostring(invalidKills) .. " hashErrors=" .. tostring(hashErrors) .. " duplicateCanonical=" .. tostring(duplicateCanonical))
+	if decodeErrors > 0 or emptyKills > 0 or invalidKills > 0 or hashErrors > 0 or duplicateCanonical > 0 then
 		fail("stored evidence integrity failed")
 	end
 

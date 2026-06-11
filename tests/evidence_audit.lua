@@ -254,31 +254,6 @@ local function actorMatchesBoss(actor, boss)
 		or matchesQuery(actor.modelKey, boss.name)
 end
 
-local function eventCounts(events)
-	local counts = {}
-	for index = 1, #(events or {}) do
-		local code = events[index][2]
-		if code then
-			counts[code] = (counts[code] or 0) + 1
-		end
-	end
-	return counts
-end
-
-local function countsMatch(left, right)
-	for key, value in pairs(left or {}) do
-		if tonumber(right and right[key]) ~= tonumber(value) then
-			return false
-		end
-	end
-	for key, value in pairs(right or {}) do
-		if tonumber(left and left[key]) ~= tonumber(value) then
-			return false
-		end
-	end
-	return true
-end
-
 local function isBossUnitToken(unit)
 	return type(unit) == "string" and string.sub(unit, 1, 4) == "boss"
 end
@@ -335,7 +310,8 @@ local function killLooksLikeSuppressedContainedRaidAdd(instance, boss, kill)
 	if not (isBossUnitToken(bossUnitToken) and bossUnitToken ~= "boss1") then
 		return false
 	end
-	if #(kill.events or {}) > (tonumber(C.ENCOUNTER_CONTAINED_ADD_MAX_EVENTS) or 30)
+	local evidenceCount = #(kill.facts or {}) > 0 and #(kill.facts or {}) or #(kill.events or {})
+	if evidenceCount > (tonumber(C.ENCOUNTER_CONTAINED_ADD_MAX_EVENTS) or 30)
 		or #(kill.spells or {}) > (tonumber(C.ENCOUNTER_CONTAINED_ADD_MAX_ABILITIES) or 3) then
 		return false
 	end
@@ -503,6 +479,7 @@ local function modelAbilitySummary(encounter)
 			key = abilityKey,
 			identity = abilityIdentity(ability),
 			rule = describeRule(ability),
+			ruleType = ability.selectedRule and ability.selectedRule.type,
 			marker = marker,
 			legacy = ability.legacyAfterRebuild == true,
 			minInterval = tonumber(ability.selectedRule and ability.selectedRule.minInterval or ability.minInterval),
@@ -518,7 +495,7 @@ local function modelAbilitySummary(encounter)
 	return rows
 end
 
-local function addSpellActivation(spellStats, spell, killIndex, event)
+local function ensureSpellStats(spellStats, spell)
 	local key = spellIdentity(spell)
 	local stats = spellStats[key]
 	if not stats then
@@ -535,31 +512,69 @@ local function addSpellActivation(spellStats, spell, killIndex, event)
 		}
 		spellStats[key] = stats
 	end
-	local code = event[2]
-	stats.rawEvents = stats.rawEvents + 1
-	stats.codeCounts[code] = (stats.codeCounts[code] or 0) + 1
-	if flagSet(event[8], EVENT_FLAG_ASSOCIATED) then
+	return stats
+end
+
+local function addSpellCounter(spellStats, spell, counter)
+	local stats = ensureSpellStats(spellStats, spell)
+	local count = tonumber(counter and counter.count) or 0
+	local code = counter and counter.code
+	if count <= 0 or not code then
+		return
+	end
+	stats.rawEvents = stats.rawEvents + count
+	stats.codeCounts[code] = (stats.codeCounts[code] or 0) + count
+	if counter and counter.targetScope == "player" then
+		stats.playerTargetEvents = stats.playerTargetEvents + count
+	end
+end
+
+local function codeForFact(fact)
+	if type(fact) ~= "table" then
+		return nil
+	end
+	if fact.type == "ACT" then
+		return fact.code
+	elseif fact.type == "PH" then
+		if fact.boundary == "end" then
+			return "AX"
+		end
+		return fact.confidenceSource or "AA"
+	elseif fact.type == "FX" then
+		return "FX"
+	end
+	return nil
+end
+
+local function factTime(fact)
+	return (tonumber(fact and (fact.t10 or fact.first10)) or 0) / 10
+end
+
+local function addSpellFact(spellStats, spell, killIndex, fact)
+	local stats = ensureSpellStats(spellStats, spell)
+	local code = codeForFact(fact)
+	if flagSet(fact and fact.flags, EVENT_FLAG_ASSOCIATED) then
 		stats.associatedEvents = stats.associatedEvents + 1
 	end
-	if flagSet(event[8], EVENT_FLAG_DEST_PLAYER) then
+	if fact and fact.targetScope == "player" then
 		stats.playerTargetEvents = stats.playerTargetEvents + 1
 	end
-	if tonumber(event[7]) then
-		updateRange(stats.hp, event[7] / 10)
+	if tonumber(fact and fact.hp10) then
+		updateRange(stats.hp, fact.hp10 / 10)
 	end
-	if ACTIVATION_CODES[code] then
+	if fact and fact.type == "ACT" and ACTIVATION_CODES[code] then
 		stats.activationEvents = stats.activationEvents + 1
 		local activations = stats.killActivations[killIndex]
 		if not activations then
 			activations = {}
 			stats.killActivations[killIndex] = activations
 		end
-		local t = (tonumber(event[1]) or 0) / 10
+		local t = factTime(fact)
 		local last = activations[#activations]
 		if not last or t - last.t >= C.CAST_RESOLUTION_DEDUPE_SECONDS then
 			activations[#activations + 1] = {
 				t = t,
-				hp = tonumber(event[7]) and event[7] / 10 or nil,
+				hp = tonumber(fact.hp10) and fact.hp10 / 10 or nil,
 				code = code,
 			}
 		end
@@ -616,8 +631,8 @@ local function auditMatchedBoss(db, match)
 	local notes = {}
 	local suppressedContainedAddKills = 0
 	local durationRange = {}
-	local eventRange = {}
-	local eventTimeRange = {}
+	local evidenceRange = {}
+	local evidenceTimeRange = {}
 	local actorRange = {}
 	local spellRange = {}
 	local bossHpStart = {}
@@ -652,7 +667,9 @@ local function auditMatchedBoss(db, match)
 		end
 
 		updateRange(durationRange, (tonumber(kill.duration10) or 0) / 10)
-		updateRange(eventRange, #(kill.events or {}))
+		local factCount = #(kill.facts or {})
+		local legacyEventCount = #(kill.events or {})
+		updateRange(evidenceRange, factCount > 0 and factCount or legacyEventCount)
 		updateRange(actorRange, #(kill.actors or {}))
 		updateRange(spellRange, #(kill.spells or {}))
 		completionReasons[kill.endReason or "unknown"] = (completionReasons[kill.endReason or "unknown"] or 0) + 1
@@ -678,8 +695,8 @@ local function auditMatchedBoss(db, match)
 			addLine(warnings, "kill lacks strong boss-frame/worldboss identity " .. tostring(record.storedHash))
 		end
 
-		if #(kill.events or {}) == 0 then
-			addLine(errors, "kill has no events " .. tostring(record.storedHash))
+		if #(kill.facts or {}) == 0 and #(kill.counters or {}) == 0 and #(kill.events or {}) == 0 then
+			addLine(errors, "kill has no evidence facts or counters " .. tostring(record.storedHash))
 		end
 		if #(kill.actors or {}) == 0 then
 			addLine(errors, "kill has no actors " .. tostring(record.storedHash))
@@ -693,52 +710,118 @@ local function auditMatchedBoss(db, match)
 			addLine(warnings, "kill is shorter than 10 seconds " .. tostring(record.storedHash))
 		end
 
-		local events = {}
-		for eventIndex = 1, #(kill.events or {}) do
-			events[eventIndex] = kill.events[eventIndex]
-		end
-		sortEvents(events)
 		local lastT10 = -1
 		local maxT10 = 0
-		for eventIndex = 1, #events do
-			local event = events[eventIndex]
-			local t10 = tonumber(event[1]) or 0
-			updateRange(eventTimeRange, t10 / 10)
-			if t10 < lastT10 then
-				addLine(errors, "event order regressed in " .. tostring(record.storedHash))
+		local facts = {}
+		for factIndex = 1, #(kill.facts or {}) do
+			facts[factIndex] = kill.facts[factIndex]
+		end
+		table.sort(facts, function(left, right)
+			local leftT = tonumber(left.t10 or left.first10) or 0
+			local rightT = tonumber(right.t10 or right.first10) or 0
+			if leftT == rightT then
+				return (tonumber(left.id) or 0) < (tonumber(right.id) or 0)
 			end
-			lastT10 = t10
-			if t10 > maxT10 then
-				maxT10 = t10
+			return leftT < rightT
+		end)
+		if #facts > 0 then
+			for factIndex = 1, #facts do
+				local fact = facts[factIndex]
+				local t10 = tonumber(fact.t10 or fact.first10) or 0
+				updateRange(evidenceTimeRange, t10 / 10)
+				if t10 < lastT10 then
+					addLine(errors, "fact order regressed in " .. tostring(record.storedHash))
+				end
+				lastT10 = t10
+				if t10 > maxT10 then
+					maxT10 = t10
+				end
+				if fact.owner ~= 0 and not actorsById[fact.owner] then
+					addLine(errors, "fact references missing owner actor " .. tostring(record.storedHash))
+				end
+				if fact.source ~= 0 and not actorsById[fact.source] then
+					addLine(errors, "fact references missing source actor " .. tostring(record.storedHash))
+				end
+				if fact.target and fact.target ~= 0 and not actorsById[fact.target] then
+					addLine(errors, "fact references missing target actor " .. tostring(record.storedHash))
+				end
+				local spell = spellsById[fact.spell]
+				if not spell then
+					addLine(errors, "fact references missing spell " .. tostring(record.storedHash))
+				else
+					addSpellFact(spellStats, spell, killIndex, fact)
+				end
 			end
-			if event[3] ~= 0 and not actorsById[event[3]] then
-				addLine(errors, "event references missing owner actor " .. tostring(record.storedHash))
+			for counterIndex = 1, #(kill.counters or {}) do
+				local counter = kill.counters[counterIndex]
+				if counter.owner ~= 0 and not actorsById[counter.owner] then
+					addLine(errors, "counter references missing owner actor " .. tostring(record.storedHash))
+				end
+				if counter.source ~= 0 and not actorsById[counter.source] then
+					addLine(errors, "counter references missing source actor " .. tostring(record.storedHash))
+				end
+				local spell = spellsById[counter.spell]
+				if not spell then
+					addLine(errors, "counter references missing spell " .. tostring(record.storedHash))
+				else
+					addSpellCounter(spellStats, spell, counter)
+				end
 			end
-			if event[4] ~= 0 and not actorsById[event[4]] then
-				addLine(errors, "event references missing source actor " .. tostring(record.storedHash))
+		else
+			local events = {}
+			for eventIndex = 1, #(kill.events or {}) do
+				events[eventIndex] = kill.events[eventIndex]
 			end
-			if event[5] ~= 0 and not actorsById[event[5]] then
-				addLine(errors, "event references missing destination actor " .. tostring(record.storedHash))
-			end
-			local spell = spellsById[event[6]]
-			if not spell then
-				addLine(errors, "event references missing spell " .. tostring(record.storedHash))
-			else
-				addSpellActivation(spellStats, spell, killIndex, event)
-			end
-			if ROUTINE_CODES[event[2]] and flagSet(event[8], EVENT_FLAG_SELF_TARGET) and flagSet(event[8], EVENT_FLAG_DEST_PLAYER) then
-				addLine(notes, "self-target and player-target flags both set on routine event " .. tostring(record.storedHash))
+			sortEvents(events)
+			for eventIndex = 1, #events do
+				local event = events[eventIndex]
+				local t10 = tonumber(event[1]) or 0
+				updateRange(evidenceTimeRange, t10 / 10)
+				if t10 < lastT10 then
+					addLine(errors, "event order regressed in " .. tostring(record.storedHash))
+				end
+				lastT10 = t10
+				if t10 > maxT10 then
+					maxT10 = t10
+				end
+				if event[3] ~= 0 and not actorsById[event[3]] then
+					addLine(errors, "event references missing owner actor " .. tostring(record.storedHash))
+				end
+				if event[4] ~= 0 and not actorsById[event[4]] then
+					addLine(errors, "event references missing source actor " .. tostring(record.storedHash))
+				end
+				if event[5] ~= 0 and not actorsById[event[5]] then
+					addLine(errors, "event references missing destination actor " .. tostring(record.storedHash))
+				end
+				local spell = spellsById[event[6]]
+				if not spell then
+					addLine(errors, "event references missing spell " .. tostring(record.storedHash))
+				else
+					addSpellFact(spellStats, spell, killIndex, {
+						type = ACTIVATION_CODES[event[2]] and "ACT" or "FX",
+						id = eventIndex,
+						owner = event[3],
+						source = event[4],
+						spell = event[6],
+						t10 = event[1],
+						first10 = event[1],
+						hp10 = event[7],
+						code = event[2],
+						flags = event[8],
+						targetScope = flagSet(event[8], EVENT_FLAG_DEST_PLAYER) and "player" or "none",
+					})
+				end
+				if ROUTINE_CODES[event[2]] and flagSet(event[8], EVENT_FLAG_SELF_TARGET) and flagSet(event[8], EVENT_FLAG_DEST_PLAYER) then
+					addLine(notes, "self-target and player-target flags both set on routine event " .. tostring(record.storedHash))
+				end
 			end
 		end
 		if maxT10 > (tonumber(kill.duration10) or 0) + 20 then
-			addLine(warnings, "event timestamp exceeds kill duration by more than 2 seconds " .. tostring(record.storedHash))
+			addLine(warnings, "evidence timestamp exceeds kill duration by more than 2 seconds " .. tostring(record.storedHash))
 		end
 		local duration10 = tonumber(kill.duration10) or 0
 		if duration10 > 0 and duration10 - maxT10 > 300 and maxT10 < duration10 * 0.75 then
-			addLine(warnings, "stored event sample ends " .. formatSeconds(maxT10 / 10) .. " before kill duration " .. formatSeconds(duration10 / 10) .. " for " .. tostring(record.storedHash))
-		end
-		if not countsMatch(eventCounts(kill.events), kill.eventCounts) then
-			addLine(warnings, "packed eventCounts differ from decoded event list " .. tostring(record.storedHash))
+			addLine(warnings, "stored evidence facts end " .. formatSeconds(maxT10 / 10) .. " before kill duration " .. formatSeconds(duration10 / 10) .. " for " .. tostring(record.storedHash))
 		end
 	end
 
@@ -773,9 +856,12 @@ local function auditMatchedBoss(db, match)
 		local raw = rawByIdentity[row.identity]
 		if not raw and not row.legacy then
 			addLine(warnings, "model ability has no matching raw spell activation: " .. tostring(row.name))
-		elseif row.minInterval and row.minInterval < row.displayFloor - 0.000001 and not string.find(row.marker, "suppressed", 1, true) then
+		elseif (row.ruleType == "time_interval" or row.ruleType == "phase_time_interval")
+			and row.minInterval
+			and row.minInterval < row.displayFloor - 0.000001
+			and not string.find(row.marker, "suppressed", 1, true) then
 			addLine(errors, "displayed model interval below floor: " .. tostring(row.name))
-		elseif string.sub(row.marker, 1, 7) == "display" and raw.intervalCount > 0 and raw.intervalRange.min then
+		elseif raw and string.sub(row.marker, 1, 7) == "display" and raw.intervalCount > 0 and raw.intervalRange.min then
 			if row.minInterval and (row.minInterval < raw.intervalRange.min - 15 or row.minInterval > raw.intervalRange.max + 15) then
 				addLine(warnings, "model interval is far outside raw activation gaps: " .. tostring(row.name))
 			end
@@ -788,8 +874,8 @@ local function auditMatchedBoss(db, match)
 		notes = notes,
 		killCount = #match.records,
 		durationRange = durationRange,
-		eventRange = eventRange,
-		eventTimeRange = eventTimeRange,
+		evidenceRange = evidenceRange,
+		evidenceTimeRange = evidenceTimeRange,
 		actorRange = actorRange,
 		spellRange = spellRange,
 		bossHpStart = bossHpStart,
@@ -828,8 +914,8 @@ local function printAudit(query, match, audit)
 		.. " difficulties=" .. formatCountMap(audit.difficulties)
 		.. " bossIdentityKills=" .. tostring(audit.bossIdentityKills) .. "/" .. tostring(audit.killCount))
 	print("duration=" .. formatRange(audit.durationRange, "s")
-		.. " events=" .. formatRange(audit.eventRange)
-		.. " eventTime=" .. formatRange(audit.eventTimeRange, "s")
+		.. " facts=" .. formatRange(audit.evidenceRange)
+		.. " evidenceTime=" .. formatRange(audit.evidenceTimeRange, "s")
 		.. " actors=" .. formatRange(audit.actorRange)
 		.. " spells=" .. formatRange(audit.spellRange))
 	print("bossHpStart=" .. formatRange(audit.bossHpStart, "%")
@@ -868,16 +954,16 @@ local function printAudit(query, match, audit)
 	print("rawSpellSignals:")
 	for index = 1, math.min(#audit.rawRows, 20) do
 		local row = audit.rawRows[index]
-		print("  - " .. tostring(row.name)
-			.. " activations=" .. tostring(row.activationCount)
-			.. " intervals=" .. tostring(row.intervalCount)
-			.. " intervalRange=" .. formatRange(row.intervalRange, "s")
-			.. " first=" .. formatRange(row.firstRange, "s")
-			.. " hp=" .. formatRange(row.hpRange, "%")
-			.. " events=" .. tostring(row.rawEvents)
-			.. " codes=" .. formatCountMap(row.codeCounts)
-			.. " associated=" .. tostring(row.associatedEvents)
-			.. " playerTargets=" .. tostring(row.playerTargetEvents))
+			print("  - " .. tostring(row.name)
+				.. " activations=" .. tostring(row.activationCount)
+				.. " intervals=" .. tostring(row.intervalCount)
+				.. " intervalRange=" .. formatRange(row.intervalRange, "s")
+				.. " first=" .. formatRange(row.firstRange, "s")
+				.. " hp=" .. formatRange(row.hpRange, "%")
+				.. " rawEvents=" .. tostring(row.rawEvents)
+				.. " codes=" .. formatCountMap(row.codeCounts)
+				.. " associated=" .. tostring(row.associatedEvents)
+				.. " playerTargets=" .. tostring(row.playerTargetEvents))
 	end
 	if #audit.rawRows > 20 then
 		print("  - ... " .. tostring(#audit.rawRows - 20) .. " more")

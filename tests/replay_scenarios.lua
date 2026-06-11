@@ -2846,6 +2846,94 @@ local function firstDecodedEvidenceKill()
 	return nil, nil
 end
 
+local function evidenceCodeCounts(kill)
+	local counts = {}
+	for index = 1, #(kill and kill.counters or {}) do
+		local counter = kill.counters[index]
+		if counter and counter.code then
+			counts[counter.code] = (counts[counter.code] or 0) + (tonumber(counter.count) or 0)
+		end
+	end
+	for code, count in pairs(kill and kill.eventCounts or {}) do
+		counts[code] = (counts[code] or 0) + (tonumber(count) or 0)
+	end
+	return counts
+end
+
+local function factCodeCounts(kill, factType)
+	local counts = {}
+	for index = 1, #(kill and kill.facts or {}) do
+		local fact = kill.facts[index]
+		if fact and fact.type == factType and fact.code then
+			counts[fact.code] = (counts[fact.code] or 0) + 1
+		end
+	end
+	return counts
+end
+
+local function legacyPackedEventEvidenceBlock()
+	local Codec = addon.Core.EvidenceCodec
+	local playerTargetFlag = 4
+	local eventTuples = table.concat({
+		"0,CA,1,1,0,1,1000,0,",
+		"10,CS,1,1,0,1,950,0,",
+		"100,DM,1,1,2,1,900," .. tostring(playerTargetFlag) .. ",1",
+		"110,DM,1,1,2,1,890," .. tostring(playerTargetFlag) .. ",1",
+		"200,CS,1,1,0,1,500,0,",
+	}, ";")
+	return table.concat({
+		Codec.line(
+			"K",
+			1,
+			"legacy_evidence_zone",
+			"Legacy Evidence Zone",
+			999,
+			"raid",
+			10,
+			20,
+			"legacy_evidence_boss",
+			"Legacy Evidence Boss",
+			10,
+			20,
+			"legacy-packed-hash",
+			30,
+			"1.13.12",
+			300,
+			"unit_died",
+			"Legacy Evidence Zone",
+			"",
+			"raw:1::40:0:0",
+			1,
+			"Normal",
+			"1",
+			1,
+			"",
+			40,
+			"",
+			"",
+			""
+		),
+		Codec.line("A", 1, "legacy_evidence_boss_actor", "legacy_evidence_boss", "Legacy Evidence Boss", "boss-guid", 0, 300, "worldboss", "1", "boss1", "", "", 1000, 0, "0,1000;300,0", 0, 300),
+		Codec.line("A", 2, "legacy_evidence_player", "player", "Legacy Player", "player-guid", 0, 300, "player", "", "", "", "", "", "", "", "", ""),
+		Codec.line("S", 1, "legacy_strike", "name:legacy_strike", "Legacy Strike", "77101"),
+		Codec.line("V", "CA:1,CS:2,DM:2"),
+		Codec.line("T", eventTuples),
+	}, "~")
+end
+
+local function spellByIdFromKill(kill)
+	local spells = {}
+	for _, spell in ipairs(kill and kill.spells or {}) do
+		spells[spell.id] = spell
+	end
+	return spells
+end
+
+local function factSpellName(kill, fact)
+	local spell = spellByIdFromKill(kill)[fact and fact.spell]
+	return spell and spell.name or nil
+end
+
 local function scenarioEvidenceStoresCompletedBossEvidence()
 	Harness.resetState("Replay Evidence Kill")
 	local boss = "Evidence Keeper"
@@ -2858,8 +2946,8 @@ local function scenarioEvidenceStoresCompletedBossEvidence()
 	Harness.assertTrue(addon.Core.EvidenceStore.countIncomplete() == 0, "UNIT_DIED completed bosses should not enter incomplete evidence")
 	local decoded, storedKill = firstDecodedEvidenceKill()
 	Harness.assertTrue(type(storedKill) == "table" and type(storedKill.p) == "string", "Permanent evidence kills should be stored as packed strings")
-	Harness.assertTrue(storedKill.events == nil and storedKill.actors == nil and storedKill.spells == nil, "Packed stored kills should not retain expanded event tables")
-	Harness.assertTrue(#(decoded.kill.events or {}) == 2, "Packed stored kills should decode back to raw event tuples")
+	Harness.assertTrue(storedKill.events == nil and storedKill.actors == nil and storedKill.spells == nil and storedKill.facts == nil, "Packed stored kills should not retain expanded evidence tables")
+	Harness.assertTrue(#(decoded.kill.events or {}) == 0 and #(decoded.kill.facts or {}) == 2, "Packed stored kills should decode to durable evidence facts, not raw event tuples")
 
 	Harness.resetState("Replay Evidence Partial")
 	Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = guid, spellName = "Measured Strike", hp = 100 })
@@ -2886,12 +2974,120 @@ local function scenarioEvidenceStoresCompletedBossEvidence()
 	decoded = firstDecodedEvidenceKill()
 	decoded.kill.actors[1].endHp10 = 700
 	Harness.assertTrue(addon.Core.EvidenceCodec.validDecodedKill(decoded) == false, "Low-HP completion evidence without low-HP actor facts should be rejected")
+	decoded = firstDecodedEvidenceKill()
+	decoded.kill.actors[#decoded.kill.actors + 1] = copyTable(decoded.kill.actors[1])
+	decoded.kill.actors[#decoded.kill.actors].id = 2
+	decoded.kill.actors[#decoded.kill.actors].key = "non_boss_low_hp_actor"
+	decoded.kill.actors[#decoded.kill.actors].class = "elite"
+	decoded.kill.actors[#decoded.kill.actors].bossFrame = nil
+	decoded.kill.actors[#decoded.kill.actors].endHp10 = 10
+	decoded.kill.actors[1].endHp10 = 700
+	Harness.assertTrue(addon.Core.EvidenceCodec.validDecodedKill(decoded) == false, "Low-HP completion evidence should require the low-HP actor to carry boss identity")
 
 	addon.db.learned = { zones = {} }
 	addon.Core.EvidenceStore.rebuildLearned()
 	local bossKey = addon.Core.Util.bossKey(boss, guid)
 	local rebuilt = Harness.ability(Harness.encounter(bossKey), bossKey, "Measured Strike")
 	Harness.assertTrue(rebuilt ~= nil, "Low-HP permanent evidence should rebuild a learned boss model")
+end
+
+local function scenarioEvidenceRejectsMalformedFactPayloads()
+	Harness.resetState("Replay Evidence Malformed Facts")
+	local boss = "Malformed Evidence Keeper"
+	local guid = Harness.makeGuid(boss, 907)
+	Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = guid, spellName = "Measured Strike", hp = 100 })
+	Harness.emitSpell({ t = 20, sourceName = boss, sourceGUID = guid, spellName = "Measured Strike", hp = 70 })
+	Harness.finishPull(42, "unit_died")
+
+	local decoded, storedKill = firstDecodedEvidenceKill()
+	Harness.assertTrue(decoded ~= nil and storedKill ~= nil, "Malformed fixture should produce decodable evidence")
+
+	local invalid = copyTable(decoded)
+	invalid.kill.facts[1].code = "XX"
+	Harness.assertTrue(addon.Core.EvidenceCodec.validDecodedKill(invalid) == false, "Unknown activation fact codes should be rejected")
+
+	invalid = copyTable(decoded)
+	invalid.kill.facts[1].targetScope = "raid"
+	Harness.assertTrue(addon.Core.EvidenceCodec.validDecodedKill(invalid) == false, "Unknown activation target scopes should be rejected")
+
+	invalid = copyTable(decoded)
+	invalid.kill.facts[2].id = invalid.kill.facts[1].id
+	Harness.assertTrue(addon.Core.EvidenceCodec.validDecodedKill(invalid) == false, "Duplicate fact ids should be rejected")
+
+	invalid = copyTable(decoded)
+	invalid.kill.actors[2] = copyTable(invalid.kill.actors[1])
+	Harness.assertTrue(addon.Core.EvidenceCodec.validDecodedKill(invalid) == false, "Duplicate actor ids should be rejected")
+
+	invalid = copyTable(decoded)
+	invalid.kill.spells[2] = copyTable(invalid.kill.spells[1])
+	Harness.assertTrue(addon.Core.EvidenceCodec.validDecodedKill(invalid) == false, "Duplicate spell ids should be rejected")
+
+	invalid = copyTable(decoded)
+	invalid.kill.facts[1].id = 0
+	Harness.assertTrue(addon.Core.EvidenceCodec.validDecodedKill(invalid) == false, "Non-positive fact ids should be rejected")
+
+	invalid = copyTable(decoded)
+	invalid.kill.facts[#invalid.kill.facts + 1] = {
+		type = "FX",
+		id = 100,
+		owner = invalid.kill.facts[1].owner,
+		source = invalid.kill.facts[1].source,
+		spell = invalid.kill.facts[1].spell,
+		anchorId = invalid.kill.facts[1].id,
+		first10 = 200,
+		last10 = 100,
+		count = 1,
+		targetScope = "player",
+		targetCount = 1,
+		effectMask = 1,
+	}
+	Harness.assertTrue(addon.Core.EvidenceCodec.validDecodedKill(invalid) == false, "Inverted consequence time windows should be rejected")
+
+	invalid = copyTable(decoded)
+	invalid.kill.counters[1].code = "XX"
+	Harness.assertTrue(addon.Core.EvidenceCodec.validDecodedKill(invalid) == false, "Unknown counter event codes should be rejected")
+
+	invalid = copyTable(decoded)
+	invalid.kill.counters[2] = copyTable(invalid.kill.counters[1])
+	Harness.assertTrue(addon.Core.EvidenceCodec.validDecodedKill(invalid) == false, "Duplicate counters should be rejected")
+
+	local badBlock = string.gsub(storedKill.p, "F|ACT", "F|BAD", 1)
+	local badDecoded, decodeError = addon.Core.EvidenceCodec.decodeKillBlock(badBlock)
+	Harness.assertTrue(badDecoded == nil and decodeError == "invalid fact record", "Malformed fact lines should fail decoding")
+
+	local unknownBlock = storedKill.p .. "~Z|unexpected"
+	local unknownDecoded, unknownError = addon.Core.EvidenceCodec.decodeKillBlock(unknownBlock)
+	Harness.assertTrue(unknownDecoded == nil and unknownError == "unknown kill record type", "Unknown packed record types should fail decoding")
+
+	local legacyEventBlock = storedKill.p .. "~T|"
+	local legacyEventDecoded, legacyEventError = addon.Core.EvidenceCodec.decodeKillBlock(legacyEventBlock)
+	Harness.assertTrue(legacyEventDecoded == nil and legacyEventError == "legacy event record in modern kill block", "Legacy raw event records should not be accepted in modern fact blocks")
+
+	local headerLine = addon.Core.EvidenceCodec.split(storedKill.p, "~")[1]
+	local duplicateHeaderDecoded, duplicateHeaderError = addon.Core.EvidenceCodec.decodeKillBlock(storedKill.p .. "~" .. headerLine)
+	Harness.assertTrue(duplicateHeaderDecoded == nil and duplicateHeaderError == "duplicate kill header", "Packed evidence blocks should reject duplicate headers")
+
+	local legacyFactDecoded, legacyFactError = addon.Core.EvidenceCodec.decodeKillBlock(legacyPackedEventEvidenceBlock() .. "~F|ACT|1|1|1|1|0|1000|CS|none|0|0||")
+	Harness.assertTrue(legacyFactDecoded == nil and legacyFactError == "fact record in legacy kill block", "Legacy packed event blocks should reject v2 fact records")
+end
+
+local function scenarioEvidenceRebuildSkipsInvalidDecodedFacts()
+	Harness.resetState("Replay Evidence Invalid Rebuild")
+	local boss = "Invalid Rebuild Keeper"
+	local guid = Harness.makeGuid(boss, 908)
+	Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = guid, spellName = "Measured Strike", hp = 100 })
+	Harness.emitSpell({ t = 20, sourceName = boss, sourceGUID = guid, spellName = "Measured Strike", hp = 70 })
+	Harness.finishPull(42, "unit_died")
+
+	local _, storedKill = firstDecodedEvidenceKill()
+	Harness.assertTrue(type(storedKill) == "table" and type(storedKill.p) == "string", "Invalid rebuild fixture should have a packed kill")
+	storedKill.p = string.gsub(storedKill.p, "|CS|none|", "|CS|raid|", 1)
+	addon.db.learned = { zones = {} }
+
+	local promoted, rebuildError, stats = addon.Core.EvidenceStore.rebuildLearned({ preserveLegacy = false })
+	Harness.assertTrue(rebuildError == nil, "Invalid decoded facts should be skipped without crashing rebuild")
+	Harness.assertTrue(promoted == 0 and stats and stats.skippedCorruptEvidence == 1, "Invalid decoded facts should count as skipped corrupt evidence")
+	Harness.assertTrue(next(addon.db.learned.zones) == nil, "Invalid decoded facts should not produce learned models")
 end
 
 local function scenarioEvidenceCommitsWhenLearnerIsBlocked()
@@ -2966,6 +3162,86 @@ local function scenarioEvidenceSchemaMismatchArchivesExistingStore()
 	Harness.assertTrue(addon.charDB.learnedBackup.evidenceArchives[1].evidence.incomplete == nil, "Character backup archives should not include temporary incomplete diagnostics")
 end
 
+local function scenarioEvidenceMigratesLegacyPackedEventsToFacts()
+	local C = addon.Core.Constants
+	_G.BossTrackerDB = {
+		schemaVersion = C.SCHEMA_VERSION,
+		config = { overrides = { zones = {} } },
+		learned = { zones = {} },
+		learnedMeta = {
+			backupSchemaVersion = C.LEARNED_BACKUP_SCHEMA_VERSION,
+			dataSchemaVersion = C.SCHEMA_VERSION,
+			interpretationEngineVersion = C.INTERPRETATION_ENGINE_VERSION,
+			dataId = "legacy-event-evidence",
+			revision = 1,
+		},
+		evidence = {
+			schemaVersion = C.EVIDENCE_SCHEMA_VERSION - 1,
+			revision = 9,
+			instances = {
+				legacy_evidence_zone = {
+					key = "legacy_evidence_zone",
+					name = "Legacy Evidence Zone",
+					mapId = 999,
+					instanceType = "raid",
+					bosses = {
+						legacy_evidence_boss = {
+							key = "legacy_evidence_boss",
+							name = "Legacy Evidence Boss",
+							kills = {
+								["legacy-packed-hash"] = {
+									h = "legacy-packed-hash",
+									t = 30,
+									v = "1.13.12",
+									p = legacyPackedEventEvidenceBlock(),
+								},
+								["broken-packed-hash"] = {
+									h = "broken-packed-hash",
+									t = 31,
+									v = "1.13.12",
+									p = "broken-v1-payload",
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		debug = {},
+	}
+	_G.BossTrackerCharDB = {}
+	addon.Core.SavedVariables.init()
+
+	Harness.assertTrue(addon.db.evidence.schemaVersion == C.EVIDENCE_SCHEMA_VERSION, "Legacy event evidence should be migrated to the current evidence schema")
+	local stats = addon.db.evidenceMigrationStats and addon.db.evidenceMigrationStats[#addon.db.evidenceMigrationStats]
+	Harness.assertTrue(stats ~= nil and stats.converted == 1 and stats.skipped == 1, "Legacy event evidence migration should convert valid kills and report skipped ones")
+	Harness.assertTrue(type(addon.db.evidenceArchives) == "table" and #addon.db.evidenceArchives == 1, "Partial legacy evidence migration should archive the old store before replacing it")
+	Harness.assertTrue(addon.db.evidenceArchives[1].killCount == 2, "Partial migration archive should preserve both old permanent kill entries")
+	local decoded = firstDecodedEvidenceKill()
+	Harness.assertTrue(decoded ~= nil and decoded.kill.packedVersion == 2, "Migrated evidence should be re-packed with the current kill format")
+	Harness.assertTrue(#(decoded.kill.events or {}) == 0 and #(decoded.kill.facts or {}) >= 2, "Migrated evidence should expose facts instead of legacy event tuples")
+	local counts = evidenceCodeCounts(decoded.kill)
+	Harness.assertTrue(counts.CA == 1 and counts.CS == 2 and counts.DM == 2, "Migrated counters should preserve legacy event counts")
+	local legacyActivationCounts = factCodeCounts(decoded.kill, "ACT")
+	Harness.assertTrue(legacyActivationCounts.CA == 1 and legacyActivationCounts.CS == 1, "Migrated cast lifecycle facts should dedupe cast success after cast start")
+	local legacyEffectMask
+	for _, fact in ipairs(decoded.kill.facts or {}) do
+		if fact.type == "FX" and factSpellName(decoded.kill, fact) == "Legacy Strike" then
+			legacyEffectMask = fact.effectMask
+		end
+	end
+	Harness.assertTrue(legacyEffectMask == 1, "Repeated migrated damage effects should keep a stable damage bitmask")
+
+	addon.db.learned = { zones = {} }
+	addon.Core.EvidenceStore.rebuildLearned()
+	local encounter = addon.db.learned.zones.legacy_evidence_zone
+		and addon.db.learned.zones.legacy_evidence_zone.encounters
+		and addon.db.learned.zones.legacy_evidence_zone.encounters.legacy_evidence_boss
+	local spellKey = addon.Core.Util.timerAbilityKey(nil, "Legacy Strike")
+	local abilityKey = addon.Core.ModelStore.abilityModelKey("legacy_evidence_boss", spellKey)
+	Harness.assertTrue(encounter ~= nil and encounter.abilities[abilityKey] ~= nil, "Migrated evidence should rebuild a learned encounter model")
+end
+
 local function scenarioEvidenceKeepsTechnicalSpellIdsForSameName()
 	Harness.resetState("Replay Same Name Spell Evidence")
 	local boss = "Same Name Sentinel"
@@ -3014,18 +3290,40 @@ local function scenarioEvidenceHashUsesAllEventFacts()
 			spellIds = { 91001 },
 		},
 	}
-	local firstEvents = {}
-	local secondEvents = {}
+	local firstFacts = {}
+	local secondFacts = {}
 	for index = 1, 161 do
-		firstEvents[index] = { index, "CS", 1, 1, 0, 1, 1000 - index, 0 }
-		secondEvents[index] = { index, "CS", 1, 1, 0, 1, 1000 - index, 0 }
+		firstFacts[index] = { type = "ACT", id = index, owner = 1, source = 1, spell = 1, t10 = index, hp10 = 1000 - index, code = "CS", targetScope = "none", targetCount = 0, flags = 0 }
+		secondFacts[index] = { type = "ACT", id = index, owner = 1, source = 1, spell = 1, t10 = index, hp10 = 1000 - index, code = "CS", targetScope = "none", targetCount = 0, flags = 0 }
 	end
-	secondEvents[161] = { 161, "CS", 1, 1, 0, 1, 1, 0 }
+	secondFacts[161] = { type = "ACT", id = 161, owner = 1, source = 1, spell = 1, t10 = 161, hp10 = 1, code = "CS", targetScope = "none", targetCount = 0, flags = 0 }
 
-	local firstHash = addon.Core.EvidenceStore.killHashForEvidence("zone:hash_lab", "boss:hash_sentinel", "tier:normal", firstEvents, actors, spells, 2000, "unit_died")
-	local secondHash = addon.Core.EvidenceStore.killHashForEvidence("zone:hash_lab", "boss:hash_sentinel", "tier:normal", secondEvents, actors, spells, 2000, "unit_died")
-	Harness.assertTrue(firstHash ~= nil and secondHash ~= nil and firstHash ~= secondHash, "Evidence content hashes must include late event facts beyond the first 160 events")
+	local firstHash = addon.Core.EvidenceStore.killHashForEvidence("zone:hash_lab", "boss:hash_sentinel", "tier:normal", firstFacts, actors, spells, 2000, "unit_died")
+	local secondHash = addon.Core.EvidenceStore.killHashForEvidence("zone:hash_lab", "boss:hash_sentinel", "tier:normal", secondFacts, actors, spells, 2000, "unit_died")
+	Harness.assertTrue(firstHash ~= nil and secondHash ~= nil and firstHash ~= secondHash, "Evidence content hashes must include late activation facts beyond the first 160 facts")
 	Harness.assertTrue(string.len(firstHash) >= 32, "Evidence content hashes must be stronger than the old 32-bit sync key")
+
+	local twoSpellDictionary = {
+		spells[1],
+		{
+			id = 2,
+			key = "spell:91002",
+			displayKey = "name:hash_breath",
+			name = "Hash Breath",
+			spellIds = { 91002 },
+		},
+	}
+	local orderedFacts = {
+		{ type = "ACT", id = 1, owner = 1, source = 1, spell = 1, t10 = 500, hp10 = 800, code = "CS", targetScope = "none", targetCount = 0, flags = 0 },
+		{ type = "ACT", id = 2, owner = 1, source = 1, spell = 2, t10 = 500, hp10 = 800, code = "CS", targetScope = "none", targetCount = 0, flags = 0 },
+	}
+	local permutedFacts = {
+		{ type = "ACT", id = 1, owner = 1, source = 1, spell = 2, t10 = 500, hp10 = 800, code = "CS", targetScope = "none", targetCount = 0, flags = 0 },
+		{ type = "ACT", id = 2, owner = 1, source = 1, spell = 1, t10 = 500, hp10 = 800, code = "CS", targetScope = "none", targetCount = 0, flags = 0 },
+	}
+	local orderedHash = addon.Core.EvidenceStore.killHashForEvidence("zone:hash_lab", "boss:hash_sentinel", "tier:normal", orderedFacts, actors, twoSpellDictionary, 2000, "unit_died")
+	local permutedHash = addon.Core.EvidenceStore.killHashForEvidence("zone:hash_lab", "boss:hash_sentinel", "tier:normal", permutedFacts, actors, twoSpellDictionary, 2000, "unit_died")
+	Harness.assertTrue(orderedHash == permutedHash, "Evidence content hashes should not depend on internal same-time fact id ordering")
 end
 
 local function scenarioEvidenceCountsAreSegmentLocal()
@@ -3050,7 +3348,7 @@ local function scenarioEvidenceCountsAreSegmentLocal()
 			for _, storedKill in pairs(evidenceBoss.kills or {}) do
 				local decoded, decodeError = addon.Core.EvidenceStore.decodeStoredKill(instance, evidenceBoss, storedKill)
 				Harness.assertTrue(decoded ~= nil, "Split-count evidence should decode: " .. tostring(decodeError))
-				local counts = decoded.kill.eventCounts or {}
+				local counts = evidenceCodeCounts(decoded.kill)
 				if decoded.boss.name == firstBoss then
 					seenAlpha = true
 					Harness.assertTrue(counts.CS == 2 and counts.AA == nil, "First boss kill should store only its cast-success event counts")
@@ -3101,7 +3399,9 @@ local function scenarioEvidenceStoresBoundedKillFromTruncatedPullDraft()
 
 	local C = addon.Core.Constants
 	local previousEventLimit = C.MAX_EVIDENCE_EVENTS_PER_KILL
+	local previousFactLimit = C.MAX_EVIDENCE_FACTS_PER_KILL
 	C.MAX_EVIDENCE_EVENTS_PER_KILL = 12
+	C.MAX_EVIDENCE_FACTS_PER_KILL = 12
 
 	local boss = "Truncated Evidence Drake"
 	local guid = Harness.makeGuid(boss, 960)
@@ -3127,10 +3427,11 @@ local function scenarioEvidenceStoresBoundedKillFromTruncatedPullDraft()
 	Harness.finishPull(90, "unit_died")
 
 	C.MAX_EVIDENCE_EVENTS_PER_KILL = previousEventLimit
+	C.MAX_EVIDENCE_FACTS_PER_KILL = previousFactLimit
 	Harness.assertTrue(addon.Core.EvidenceStore.countPermanentKills() == 1, "A completed boss component should still store bounded evidence when the pull draft overflows")
 	Harness.assertTrue(addon.Core.EvidenceStore.countIncomplete() == 0, "A stored truncated boss component should not leave an incomplete attempt")
 	local decoded = firstDecodedEvidenceKill()
-	Harness.assertTrue(decoded ~= nil and #(decoded.kill.events or {}) == 12, "Truncated component evidence should stay within the configured packed event cap")
+	Harness.assertTrue(decoded ~= nil and #(decoded.kill.facts or {}) == 12, "Truncated component evidence should stay within the configured packed fact cap")
 	Harness.assertTrue(decoded.boss.name == boss, "Truncated pull evidence should commit the completed boss component, not unrelated trash")
 end
 
@@ -3146,7 +3447,9 @@ local function scenarioEvidenceSamplingKeepsLateImportantEvents()
 
 	local C = addon.Core.Constants
 	local previousEventLimit = C.MAX_EVIDENCE_EVENTS_PER_KILL
+	local previousFactLimit = C.MAX_EVIDENCE_FACTS_PER_KILL
 	C.MAX_EVIDENCE_EVENTS_PER_KILL = 16
+	C.MAX_EVIDENCE_FACTS_PER_KILL = 16
 
 	local boss = "Long Cycle Evidence Drake"
 	local guid = Harness.makeGuid(boss, 990)
@@ -3171,24 +3474,22 @@ local function scenarioEvidenceSamplingKeepsLateImportantEvents()
 	Harness.finishPull(150, "unit_died")
 
 	C.MAX_EVIDENCE_EVENTS_PER_KILL = previousEventLimit
+	C.MAX_EVIDENCE_FACTS_PER_KILL = previousFactLimit
 	local decoded = firstDecodedEvidenceKill()
 	local foundLate = false
 	local latest = 0
-	local spellsById = {}
-	for _, spell in ipairs(decoded and decoded.kill.spells or {}) do
-		spellsById[spell.id] = spell
-	end
-	for _, event in ipairs(decoded and decoded.kill.events or {}) do
-		latest = math.max(latest, (tonumber(event[1]) or 0) / 10)
-		local spell = spellsById[event[6]]
-		if spell and spell.name == "Late Cycle Breath" then
+	for _, fact in ipairs(decoded and decoded.kill.facts or {}) do
+		latest = math.max(latest, (tonumber(fact.t10 or fact.last10) or 0) / 10)
+		if factSpellName(decoded.kill, fact) == "Late Cycle Breath" then
 			foundLate = true
 		end
 	end
-	Harness.assertTrue(decoded ~= nil and #(decoded.kill.events or {}) == 16, "Sampled evidence must remain within the packed event cap")
-	Harness.assertTrue(decoded.kill.truncated == true, "Sampled evidence overflow should be marked as truncated")
-	Harness.assertTrue(foundLate, "Evidence sampling should retain late high-priority boss events after early low-priority noise fills the cap")
-	Harness.assertTrue(latest >= 119.5, "Sampled evidence should cover the late fight window")
+	local counts = evidenceCodeCounts(decoded.kill)
+	Harness.assertTrue(decoded ~= nil and #(decoded.kill.facts or {}) < 16, "Fact evidence should aggregate early dose noise instead of filling the cap")
+	Harness.assertTrue(decoded.kill.truncated ~= true, "Aggregated fact evidence should avoid truncation for dose-noise heavy pulls")
+	Harness.assertTrue(counts.AD == 30, "Aggregate counters should preserve the full dose-event count")
+	Harness.assertTrue(foundLate, "Evidence facts should retain the late high-priority boss activation")
+	Harness.assertTrue(latest >= 119.5, "Fact evidence should cover the late fight window")
 end
 
 local function scenarioEvidenceRebuildsLearnedModel()
@@ -3278,6 +3579,46 @@ local function scenarioEvidenceRebuildPreservesPlayerAuraPhase()
 	Harness.assertTrue(rebuilt ~= nil and rebuilt.segmentStats and rebuilt.segmentStats[segmentKey] ~= nil, "Evidence rebuild should preserve overlapping anonymous player aura phase facts")
 	local rebuiltReset = Harness.ability(Harness.encounter(bossKey), bossKey, "Arcane Reset")
 	Harness.assertTrue(rebuiltReset ~= nil and rebuiltReset.segmentStats and rebuiltReset.segmentStats[clearSegmentKey] ~= nil, "Evidence rebuild should preserve anonymous player aura clear phase facts")
+end
+
+local function scenarioEvidenceRebuildPreservesPlayerAuraWaves()
+	Harness.resetState("Replay Evidence Player Aura Waves")
+	local boss = "Evidence Flamegor"
+	local guid = Harness.makeGuid(boss, 903)
+	local spellName = "Combustion"
+	local spellId = 2110860
+
+	for _, baseTime in ipairs({ 0, 15, 30 }) do
+		emitPlayerAuraBurst(boss, guid, spellName, spellId, baseTime, 95 - baseTime, 8)
+		emitPlayerAuraDamageTicks(boss, guid, spellName, spellId, baseTime, 95 - baseTime, 8)
+	end
+	Harness.finishPull(55, "unit_died")
+
+	local decoded = firstDecodedEvidenceKill()
+	Harness.assertTrue(decoded ~= nil, "Player aura wave fixture should produce decodable evidence")
+	local activationFacts = 0
+	local damageMaskSeen = false
+	local unexpectedEffectMask = false
+	for _, fact in ipairs(decoded.kill.facts or {}) do
+		if factSpellName(decoded.kill, fact) == spellName then
+			if fact.type == "ACT" and fact.code == "AA" and fact.targetScope == "player" then
+				activationFacts = activationFacts + 1
+			elseif fact.type == "FX" then
+				damageMaskSeen = damageMaskSeen or fact.effectMask == 3
+				unexpectedEffectMask = unexpectedEffectMask or fact.effectMask ~= 3
+			end
+		end
+	end
+	Harness.assertTrue(activationFacts == 3, "Permanent player aura evidence should store one activation per apply wave")
+	Harness.assertTrue(damageMaskSeen and not unexpectedEffectMask, "Player aura damage and miss consequences should use a stable bitmask")
+
+	local promoted = addon.Core.EvidenceStore.rebuildLearned()
+	Harness.assertTrue(promoted >= 1, "Evidence rebuild should promote the player-aura wave encounter")
+	local bossKey = addon.Core.Util.bossKey(boss, guid)
+	local rebuilt = Harness.ability(Harness.encounter(bossKey), bossKey, spellName)
+	Harness.assertTrue(rebuilt ~= nil, "Evidence rebuild should preserve the player aura wave ability")
+	Harness.assertTrue(rebuilt.selectedRule and rebuilt.selectedRule.type == "time_interval", "Rebuilt player aura waves should select a time interval")
+	Harness.assertNear(rebuilt.minInterval, 15, 0.02, "Rebuilt player aura waves should keep the apply interval")
 end
 
 local function scenarioEvidenceEngineVersionRebuildsFinalData()
@@ -4020,8 +4361,11 @@ local scenarios = {
 	scenarioUnitDiedPreventsDeadContextReactivation,
 	scenarioPartyKillCompletesBossContext,
 	scenarioEvidenceStoresCompletedBossEvidence,
+	scenarioEvidenceRejectsMalformedFactPayloads,
+	scenarioEvidenceRebuildSkipsInvalidDecodedFacts,
 	scenarioEvidenceCommitsWhenLearnerIsBlocked,
 	scenarioEvidenceSchemaMismatchArchivesExistingStore,
+	scenarioEvidenceMigratesLegacyPackedEventsToFacts,
 	scenarioEvidenceKeepsTechnicalSpellIdsForSameName,
 	scenarioEvidenceHashUsesAllEventFacts,
 	scenarioEvidenceCountsAreSegmentLocal,
@@ -4031,6 +4375,7 @@ local scenarios = {
 	scenarioEvidenceRebuildsLearnedModel,
 	scenarioEvidenceRebuildPreservesBossContextStart,
 	scenarioEvidenceRebuildPreservesPlayerAuraPhase,
+	scenarioEvidenceRebuildPreservesPlayerAuraWaves,
 	scenarioEvidenceEngineVersionRebuildsFinalData,
 	scenarioEngineRebuildPreservesLearnedOnlyLegacy,
 	scenarioLiveCompletedPullClearsRevalidatedLegacy,

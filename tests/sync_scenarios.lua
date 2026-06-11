@@ -432,7 +432,7 @@ local function scenarioTamperedSchemaWithValidHashRejected()
 	})
 	local payloads = a:exportPayloads()
 	local payload = payloads[1].payload
-	local tampered = string.gsub(payload, "^E|2|", "E|999|", 1)
+	local tampered = string.gsub(payload, "^E|%d+|", "E|999|", 1)
 	Harness.openInboundSession(bus, a, b, "tampered-schema")
 	bus:sendPayload(a, b, "tampered-schema", tampered)
 	local ok, err = bus:drain()

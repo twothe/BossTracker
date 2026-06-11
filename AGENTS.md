@@ -117,23 +117,27 @@ The current repository state is an alpha build. Runtime tracking, multi-boss-con
 Current architecture:
 
 1. Capture records combat-log and unit evidence.
-2. OccurrenceBuilder reduces combat-log lifecycles to ability activations.
-3. EncounterModel groups active boss actors and councils.
-4. PhaseSegmenter creates HP/gap-based segments.
-5. RuleLearner maintains competing prediction rules per ability.
-6. RelevanceScorer suppresses routine noise.
-7. EvidenceCodec packs and unpacks confirmed completed encounter evidence for SavedVariables and sync.
-8. EvidenceStore persists packed kill evidence and decodes it for local rebuilds.
-9. ModelStore persists phase-aware encounter models.
-10. Config keeps player overrides separate from learned model data.
-11. PredictionEngine builds UI timer rows.
-12. WarningEngine emits optional personal or raid warnings from configured timers.
+2. EvidenceClassifier maps normalized records into activation, phase, consequence, counter, or ignored evidence roles.
+3. OccurrenceBuilder reduces combat-log lifecycles to ability activations.
+4. EncounterModel groups active boss actors and councils.
+5. PhaseSegmenter creates HP/gap-based segments.
+6. RuleLearner maintains competing prediction rules per ability.
+7. RelevanceScorer suppresses routine noise.
+8. EvidenceCodec packs and unpacks confirmed completed encounter evidence for SavedVariables and sync.
+9. EvidenceConverter upgrades old packed event evidence into fact evidence during schema migration.
+10. EvidenceStore persists packed kill evidence and decodes it for local rebuilds.
+11. ModelStore persists phase-aware encounter models.
+12. Config keeps player overrides separate from learned model data.
+13. PredictionEngine builds UI timer rows.
+14. WarningEngine emits optional personal or raid warnings from configured timers.
 
 # Documentation Index
 
 - `README.md`: player-facing addon overview, installation, basic usage, commands, and troubleshooting.
 - `docs/design-notes.md`: architecture notes, learning boundaries, pattern references, and observed Ascension encounter behavior.
 - `docs/evidence-sync-plan.md`: implementation plan and current contract for packed persistent kill evidence, rebuildable learned models, difficulty-aware ability availability, and evidence sync transport.
+- `docs/evidence-fact-model.md`: source-of-truth permanent evidence fact model, component contracts, fact types, retention priority, hash contract, and sync contract.
+- `docs/evidence-fact-migration-plan.md`: planned migration from sampled event timelines to permanent evidence facts, including the one-time v1 event converter and validation matrix.
 - `docs/evidence-retention-draft.md`: draft design notes for long-term permanent evidence retention, difficulty witness preservation, and bias-resistant eviction.
 - `docs/simulator-test-system.md`: target architecture, workflow, and invariants for the AzerothCore-based encounter simulator.
 - `docs/test-runbook.md`: manual alpha testing workflow and slash commands.
