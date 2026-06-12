@@ -10,10 +10,7 @@ local CombatLog = {}
 addon.Capture.CombatLog = CombatLog
 
 local function isSpellLike(eventType)
-	return eventType and (
-		string.sub(eventType, 1, 5) == "SPELL"
-		or string.sub(eventType, 1, 5) == "RANGE"
-	)
+	return eventType and (string.sub(eventType, 1, 5) == "SPELL" or string.sub(eventType, 1, 5) == "RANGE")
 end
 
 local function isDeathLike(eventType)
@@ -68,7 +65,19 @@ local function debugRecord(record, accepted, reason)
 	})
 end
 
-local function makeRecord(timestamp, eventType, sourceGUID, sourceName, sourceFlags, destGUID, destName, destFlags, spellId, spellName, spellSchool)
+local function makeRecord(
+	timestamp,
+	eventType,
+	sourceGUID,
+	sourceName,
+	sourceFlags,
+	destGUID,
+	destName,
+	destFlags,
+	spellId,
+	spellName,
+	spellSchool
+)
 	local sourceIsHostileNpc = Util.isHostileNpc(sourceFlags)
 	local destIsHostileNpc = Util.isHostileNpc(destFlags)
 	local spellKey = spellId or spellName
@@ -98,7 +107,20 @@ local function makeRecord(timestamp, eventType, sourceGUID, sourceName, sourceFl
 	}
 end
 
-local function makeInterruptedHostileCastRecord(timestamp, sourceGUID, sourceName, sourceFlags, destGUID, destName, destFlags, interruptSpellId, interruptSpellName, extraSpellId, extraSpellName, extraSpellSchool)
+local function makeInterruptedHostileCastRecord(
+	timestamp,
+	sourceGUID,
+	sourceName,
+	sourceFlags,
+	destGUID,
+	destName,
+	destFlags,
+	interruptSpellId,
+	interruptSpellName,
+	extraSpellId,
+	extraSpellName,
+	extraSpellSchool
+)
 	local record = makeRecord(
 		timestamp,
 		"SPELL_INTERRUPT",
@@ -196,7 +218,8 @@ function CombatLog.normalizePayload(timestamp, eventType, sourceGUIDOrHideCaster
 end
 
 function CombatLog.handleEvent(eventName, ...)
-	local timestamp, eventType, sourceGUID, sourceName, sourceFlags, destGUID, destName, destFlags, spellId, spellName, spellSchool, extraSpellId, extraSpellName, extraSpellSchool = CombatLog.normalizePayload(...)
+	local timestamp, eventType, sourceGUID, sourceName, sourceFlags, destGUID, destName, destFlags, spellId, spellName, spellSchool, extraSpellId, extraSpellName, extraSpellSchool =
+		CombatLog.normalizePayload(...)
 	if not addon.db or not addon.db.config.enabled then
 		return
 	end
@@ -222,7 +245,8 @@ function CombatLog.handleEvent(eventName, ...)
 			addon.Core.Logger.counter("combat_death_non_hostile")
 			return
 		end
-		local record = makeRecord(timestamp, eventType, sourceGUID, sourceName, sourceFlags, destGUID, destName, destFlags)
+		local record =
+			makeRecord(timestamp, eventType, sourceGUID, sourceName, sourceFlags, destGUID, destName, destFlags)
 		addon.Capture.EncounterState.noteCombatEvent(record)
 		addon.Capture.EncounterState.markUnitDied(destGUID, destName)
 		addon.Core.Logger.event({
@@ -241,7 +265,12 @@ function CombatLog.handleEvent(eventName, ...)
 	end
 
 	local record
-	if eventType == "SPELL_INTERRUPT" and not sourceIsHostileNpc and destIsHostileNpc and (extraSpellId or extraSpellName) then
+	if
+		eventType == "SPELL_INTERRUPT"
+		and not sourceIsHostileNpc
+		and destIsHostileNpc
+		and (extraSpellId or extraSpellName)
+	then
 		record = makeInterruptedHostileCastRecord(
 			timestamp,
 			sourceGUID,
@@ -257,7 +286,19 @@ function CombatLog.handleEvent(eventName, ...)
 			extraSpellSchool
 		)
 	else
-		record = makeRecord(timestamp, eventType, sourceGUID, sourceName, sourceFlags, destGUID, destName, destFlags, spellId, spellName, spellSchool)
+		record = makeRecord(
+			timestamp,
+			eventType,
+			sourceGUID,
+			sourceName,
+			sourceFlags,
+			destGUID,
+			destName,
+			destFlags,
+			spellId,
+			spellName,
+			spellSchool
+		)
 	end
 	local accepted, reason = addon.Learning.Relevance.evaluate(record)
 

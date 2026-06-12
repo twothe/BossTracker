@@ -595,7 +595,17 @@ local function spellHashKey(spell)
 	return tostring(spell.key or spell.displayKey or spell.name or "")
 end
 
-function EvidenceCodec.hashKillData(instanceKey, encounterKey, difficultyKey, actors, spells, factsOrEvents, counters, duration10, endReason)
+function EvidenceCodec.hashKillData(
+	instanceKey,
+	encounterKey,
+	difficultyKey,
+	actors,
+	spells,
+	factsOrEvents,
+	counters,
+	duration10,
+	endReason
+)
 	if type(counters) ~= "table" then
 		endReason = duration10
 		duration10 = counters
@@ -711,20 +721,18 @@ function EvidenceCodec.hashKill(instance, boss, kill)
 	return EvidenceCodec.hashKillData(
 		instance and instance.key or kill.zone and kill.zone.key,
 		boss and boss.key,
-			kill.difficulty and kill.difficulty.key,
-			kill.actors,
-			kill.spells,
-			kill.facts or kill.events,
-			kill.counters,
-			kill.duration10,
-			kill.endReason
-		)
+		kill.difficulty and kill.difficulty.key,
+		kill.actors,
+		kill.spells,
+		kill.facts or kill.events,
+		kill.counters,
+		kill.duration10,
+		kill.endReason
+	)
 end
 
 local function isEvidenceCompletionReason(reason)
-	return type(reason) == "string"
-		and C.EVIDENCE_COMPLETION_REASONS
-		and C.EVIDENCE_COMPLETION_REASONS[reason] == true
+	return type(reason) == "string" and C.EVIDENCE_COMPLETION_REASONS and C.EVIDENCE_COMPLETION_REASONS[reason] == true
 end
 
 local function validEventCode(code)
@@ -816,14 +824,8 @@ function EvidenceCodec.encodeKillBlock(instance, boss, kill, forcedHash)
 	end
 
 	for _, spell in ipairs(sortedById(kill.spells)) do
-		lines[#lines + 1] = EvidenceCodec.line(
-			"S",
-			spell.id,
-			spell.key,
-			spell.displayKey,
-			spell.name,
-			packList(spell.spellIds)
-		)
+		lines[#lines + 1] =
+			EvidenceCodec.line("S", spell.id, spell.key, spell.displayKey, spell.name, packList(spell.spellIds))
 	end
 
 	if type(kill.facts) ~= "table" or #kill.facts == 0 then
@@ -1045,11 +1047,13 @@ function EvidenceCodec.validDecodedKill(decoded)
 	if #(kill.actors or {}) == 0 or #(kill.spells or {}) == 0 or not hasV2Facts then
 		return false
 	end
-	if #kill.actors > C.MAX_EVIDENCE_ACTORS_PER_KILL
+	if
+		#kill.actors > C.MAX_EVIDENCE_ACTORS_PER_KILL
 		or #kill.spells > C.MAX_EVIDENCE_SPELLS_PER_KILL
 		or #(kill.events or {}) > C.MAX_EVIDENCE_EVENTS_PER_KILL
 		or #(kill.facts or {}) > (C.MAX_EVIDENCE_FACTS_PER_KILL or C.MAX_EVIDENCE_EVENTS_PER_KILL)
-		or #(kill.counters or {}) > (C.MAX_EVIDENCE_COUNTERS_PER_KILL or C.MAX_EVIDENCE_EVENTS_PER_KILL) then
+		or #(kill.counters or {}) > (C.MAX_EVIDENCE_COUNTERS_PER_KILL or C.MAX_EVIDENCE_EVENTS_PER_KILL)
+	then
 		return false
 	end
 
@@ -1059,12 +1063,14 @@ function EvidenceCodec.validDecodedKill(decoded)
 	for index = 1, #kill.actors do
 		local actor = kill.actors[index]
 		local actorId = tonumber(actor and actor.id)
-		if type(actor) ~= "table"
+		if
+			type(actor) ~= "table"
 			or not actorId
 			or actorId <= 0
 			or actorIds[actorId] == true
 			or type(actor.key) ~= "string"
-			or actor.key == "" then
+			or actor.key == ""
+		then
 			return false
 		end
 		actorIds[actorId] = true
@@ -1080,12 +1086,14 @@ function EvidenceCodec.validDecodedKill(decoded)
 	for index = 1, #kill.spells do
 		local spell = kill.spells[index]
 		local spellId = tonumber(spell and spell.id)
-		if type(spell) ~= "table"
+		if
+			type(spell) ~= "table"
 			or not spellId
 			or spellId <= 0
 			or spellIds[spellId] == true
 			or type(spell.key) ~= "string"
-			or spell.key == "" then
+			or spell.key == ""
+		then
 			return false
 		end
 		spellIds[spellId] = true
@@ -1094,42 +1102,53 @@ function EvidenceCodec.validDecodedKill(decoded)
 	for index = 1, #kill.facts do
 		local fact = kill.facts[index]
 		local factId = tonumber(fact and fact.id)
-		if type(fact) ~= "table"
+		if
+			type(fact) ~= "table"
 			or type(fact.type) ~= "string"
 			or not factId
 			or factId <= 0
 			or factIds[factId] == true
 			or not actorIds[tonumber(fact.owner)]
 			or not actorIds[tonumber(fact.source)]
-			or not spellIds[tonumber(fact.spell)] then
+			or not spellIds[tonumber(fact.spell)]
+		then
 			return false
 		end
 		if tonumber(fact.target) and not actorIds[tonumber(fact.target)] then
 			return false
 		end
 		factIds[factId] = true
-		if fact.type == "ACT" and (
+		if
+			fact.type == "ACT"
+			and (
 				not validEventCode(fact.code)
 				or not validTargetScope(fact.targetScope or "none")
 				or tonumber(fact.t10) == nil
-			) then
+			)
+		then
 			return false
-		elseif fact.type == "PH" and (
+		elseif
+			fact.type == "PH"
+			and (
 				not validPhaseScope(fact.scope)
 				or not validPhaseBoundary(fact.boundary)
 				or (fact.confidenceSource and not validEventCode(fact.confidenceSource))
 				or tonumber(fact.t10) == nil
 				or (tonumber(fact.activeCount) or 0) < 0
-			) then
+			)
+		then
 			return false
-		elseif fact.type == "FX" and (
+		elseif
+			fact.type == "FX"
+			and (
 				not validTargetScope(fact.targetScope or "none")
 				or tonumber(fact.first10) == nil
 				or tonumber(fact.last10) == nil
 				or tonumber(fact.last10) < tonumber(fact.first10)
 				or (tonumber(fact.count) or 0) <= 0
 				or not validEffectMask(fact.effectMask)
-			) then
+			)
+		then
 			return false
 		elseif fact.type ~= "ACT" and fact.type ~= "PH" and fact.type ~= "FX" then
 			return false
@@ -1144,13 +1163,15 @@ function EvidenceCodec.validDecodedKill(decoded)
 	local counterKeys = {}
 	for index = 1, #(kill.counters or {}) do
 		local counter = kill.counters[index]
-		if type(counter) ~= "table"
+		if
+			type(counter) ~= "table"
 			or not actorIds[tonumber(counter.owner)]
 			or not actorIds[tonumber(counter.source)]
 			or not spellIds[tonumber(counter.spell)]
 			or not validEventCode(counter.code)
 			or not validTargetScope(counter.targetScope or "none")
-			or (tonumber(counter.count) or 0) <= 0 then
+			or (tonumber(counter.count) or 0) <= 0
+		then
 			return false
 		end
 		local counterKey = table.concat({

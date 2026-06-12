@@ -105,7 +105,9 @@ bootFrame:SetScript("OnEvent", function(self, eventName, arg1)
 			return errorMessage
 		end)
 		if not ok and DEFAULT_CHAT_FRAME then
-			DEFAULT_CHAT_FRAME:AddMessage("|cffff5555BossTracker failed to load. The error was saved if diagnostics were initialized.|r")
+			DEFAULT_CHAT_FRAME:AddMessage(
+				"|cffff5555BossTracker failed to load. The error was saved if diagnostics were initialized.|r"
+			)
 		end
 	elseif eventName == "PLAYER_LOGOUT" then
 		shutdown()

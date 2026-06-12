@@ -68,22 +68,17 @@ local function isBossUnitToken(unit)
 end
 
 local function hasBossUnitSignal(context)
-	return context and (
-		context.sawBossUnit == true
-		or isBossUnitToken(context.bossUnitToken)
-		or isBossUnitToken(context.lastUnitToken)
-		or (
-			type(context.lastUnitSource) == "string"
-			and string.sub(context.lastUnitSource, 1, 9) == "boss_unit"
+	return context
+		and (
+			context.sawBossUnit == true
+			or isBossUnitToken(context.bossUnitToken)
+			or isBossUnitToken(context.lastUnitToken)
+			or (type(context.lastUnitSource) == "string" and string.sub(context.lastUnitSource, 1, 9) == "boss_unit")
 		)
-	)
 end
 
 local function isBossSignalContext(context)
-	return context and (
-		context.unitClassification == "worldboss"
-		or hasBossUnitSignal(context)
-	)
+	return context and (context.unitClassification == "worldboss" or hasBossUnitSignal(context))
 end
 
 local function copyContextEvidence(bossState, context, includeLastHp)
@@ -138,7 +133,8 @@ local function buildPullDecisionStats(pullState, pull)
 
 	for actorKey, bossState in pairs(pullState.bosses or {}) do
 		if bossState.eventCount and bossState.eventCount > 0 then
-			local context = scoreContextForBossState(bossState, pull and pull.bossContexts and pull.bossContexts[actorKey] or nil)
+			local context =
+				scoreContextForBossState(bossState, pull and pull.bossContexts and pull.bossContexts[actorKey] or nil)
 			stats.contextCount = stats.contextCount + 1
 			if isBossSignalContext(context) then
 				stats.worldbossCount = stats.worldbossCount + 1
@@ -162,9 +158,7 @@ local function decisionModelStats(pullState, bossState, pullDecisionStats)
 end
 
 local function actorInterval(bossState, context)
-	local startAt = tonumber(bossState.startedAtSession)
-		or tonumber(context and context.startedAtSession)
-		or 0
+	local startAt = tonumber(bossState.startedAtSession) or tonumber(context and context.startedAtSession) or 0
 	local endAt = tonumber(bossState.endedAtSession)
 		or tonumber(context and context.endedAtSession)
 		or tonumber(bossState.lastSeenAt)
@@ -173,10 +167,7 @@ local function actorInterval(bossState, context)
 end
 
 local function isRaidZone(zone)
-	return type(zone) == "table" and (
-		zone.instanceType == "raid"
-		or (tonumber(zone.maxPlayers) or 0) > 5
-	)
+	return type(zone) == "table" and (zone.instanceType == "raid" or (tonumber(zone.maxPlayers) or 0) > 5)
 end
 
 local function entryIsWorldboss(entry)
@@ -207,17 +198,13 @@ end
 local function entryEventCount(entry)
 	local bossState = entry and entry.bossState
 	local context = entry and entry.context
-	return tonumber(context and context.eventCount)
-		or tonumber(bossState and bossState.eventCount)
-		or 0
+	return tonumber(context and context.eventCount) or tonumber(bossState and bossState.eventCount) or 0
 end
 
 local function entryOccurrenceCount(entry)
 	local bossState = entry and entry.bossState
 	local context = entry and entry.context
-	return tonumber(context and context.occurrenceCount)
-		or tonumber(bossState and bossState.occurrenceCount)
-		or 0
+	return tonumber(context and context.occurrenceCount) or tonumber(bossState and bossState.occurrenceCount) or 0
 end
 
 local function entryAbilityCount(entry)
@@ -252,8 +239,7 @@ local function raidContainedAddShouldStaySeparate(left, right, zone)
 	local primaryStart, primaryEnd = actorInterval(primary.bossState, primary.context)
 	local addStart, addEnd = actorInterval(add.bossState, add.context)
 	local containedGrace = tonumber(C.ENCOUNTER_CONTAINED_ADD_START_GRACE_SECONDS) or 2
-	return addStart >= primaryStart + containedGrace
-		and addEnd <= primaryEnd + C.ENCOUNTER_GROUP_GAP_SECONDS
+	return addStart >= primaryStart + containedGrace and addEnd <= primaryEnd + C.ENCOUNTER_GROUP_GAP_SECONDS
 end
 
 local function entryIsWeakContainedRaidAdd(entry, entries, zone)
@@ -267,8 +253,7 @@ local function entryIsWeakContainedRaidAdd(entry, entries, zone)
 		local primary = entries[index]
 		if primary ~= entry and entryIsWorldboss(primary) then
 			local primaryStart, primaryEnd = actorInterval(primary.bossState, primary.context)
-			if addStart >= primaryStart + containedGrace
-				and addEnd <= primaryEnd + C.ENCOUNTER_GROUP_GAP_SECONDS then
+			if addStart >= primaryStart + containedGrace and addEnd <= primaryEnd + C.ENCOUNTER_GROUP_GAP_SECONDS then
 				return true
 			end
 		end
@@ -416,7 +401,10 @@ function EncounterModel.ensureBossState(pullState, record, pull)
 			bossKey = bossKey,
 			bossName = bossName,
 			guid = context and context.guid or record.sourceGUID,
-			startedAtSession = context and context.startedAtSession or record.bossStartedAtSession or record.t or pullState.startedAtSession,
+			startedAtSession = context and context.startedAtSession
+				or record.bossStartedAtSession
+				or record.t
+				or pullState.startedAtSession,
 			firstSeenAt = record.t,
 			lastSeenAt = record.t,
 			eventCount = 0,
@@ -465,10 +453,12 @@ function EncounterModel.scorePull(pullState, pull, reason)
 	local classifier = addon.Learning.EncounterClassifier
 
 	for actorKey, bossState in pairs(pullState.bosses or {}) do
-		local context = scoreContextForBossState(bossState, pull and pull.bossContexts and pull.bossContexts[actorKey] or nil)
+		local context =
+			scoreContextForBossState(bossState, pull and pull.bossContexts and pull.bossContexts[actorKey] or nil)
 		EncounterModel.finishBossState(bossState, context, reason)
 		if bossState.eventCount and bossState.eventCount > 0 and classifier and classifier.scoreContext then
-			local decision = classifier.scoreContext(context, bossState, decisionModelStats(pullState, bossState, pullDecisionStats))
+			local decision =
+				classifier.scoreContext(context, bossState, decisionModelStats(pullState, bossState, pullDecisionStats))
 			decisions[actorKey] = decision
 			if decision.isBoss then
 				qualifiedEntries[#qualifiedEntries + 1] = {
@@ -481,7 +471,9 @@ function EncounterModel.scorePull(pullState, pull, reason)
 		end
 	end
 
-	return decisions, buildComponents(promotableEntries(qualifiedEntries, pullState.zone), pullState.zone), pullDecisionStats
+	return decisions,
+		buildComponents(promotableEntries(qualifiedEntries, pullState.zone), pullState.zone),
+		pullDecisionStats
 end
 
 function EncounterModel.activeGroupKey(contexts)

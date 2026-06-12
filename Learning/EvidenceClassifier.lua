@@ -87,16 +87,11 @@ local function flagSet(flags, flag)
 end
 
 local function isPlayerTarget(record)
-	return record
-		and record.destFlags
-		and flagSet(record.destFlags, C.FLAG_PLAYER)
+	return record and record.destFlags and flagSet(record.destFlags, C.FLAG_PLAYER)
 end
 
 local function isSelfTarget(record)
-	return record
-		and record.sourceGUID
-		and record.destGUID
-		and record.sourceGUID == record.destGUID
+	return record and record.sourceGUID and record.destGUID and record.sourceGUID == record.destGUID
 end
 
 local function targetScope(record)

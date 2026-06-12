@@ -71,11 +71,13 @@ local function ordinalFromFacts(facts)
 		return nil, label
 	end
 
-	if facts.instanceType == "party"
+	if
+		facts.instanceType == "party"
 		and facts.rawIndex == 1
 		and facts.maxPlayers == 5
 		and (facts.dynamicDifficulty == nil or facts.dynamicDifficulty == 0)
-		and facts.isDynamic ~= true then
+		and facts.isDynamic ~= true
+	then
 		return ORDER.normal, "normal"
 	end
 
@@ -209,5 +211,4 @@ function Difficulty.abilityObservedDifficultySummary(ability)
 	return table.concat(shortParts, " "), "Observed in: " .. table.concat(labelParts, ", ")
 end
 
-function Difficulty.start()
-end
+function Difficulty.start() end

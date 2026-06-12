@@ -122,11 +122,13 @@ local function learnedStats(learned)
 				if ability.selectedRule and ability.selectedRule.type == "routine_noise" then
 					stats.routine = stats.routine + 1
 				end
-				if ability.selectedRule
+				if
+					ability.selectedRule
 					and ability.selectedRule.type ~= "routine_noise"
 					and ability.autoSuppressed ~= true
 					and ability.hidden ~= true
-					and ability.legacyAfterRebuild ~= true then
+					and ability.legacyAfterRebuild ~= true
+				then
 					stats.displayRules = stats.displayRules + 1
 				end
 			end
@@ -152,7 +154,12 @@ local function validateStoredEvidence(db)
 	if evidenceKills <= 0 then
 		fail("no permanent evidence kills found")
 	end
-	print("permanent evidence kills=" .. tostring(evidenceKills) .. " evidenceRevision=" .. tostring(db.evidence and db.evidence.revision))
+	print(
+		"permanent evidence kills="
+			.. tostring(evidenceKills)
+			.. " evidenceRevision="
+			.. tostring(db.evidence and db.evidence.revision)
+	)
 
 	local decodeErrors = 0
 	local emptyKills = 0
@@ -168,41 +175,107 @@ local function validateStoredEvidence(db)
 				local decoded, decodeError = addon.Core.EvidenceStore.decodeStoredKill(instance, boss, storedKill)
 				if not decoded or not decoded.kill then
 					decodeErrors = decodeErrors + 1
-					print("decode_error instance=" .. tostring(instanceKey) .. " boss=" .. tostring(bossKey) .. " hash=" .. tostring(storedHash) .. " error=" .. tostring(decodeError))
+					print(
+						"decode_error instance="
+							.. tostring(instanceKey)
+							.. " boss="
+							.. tostring(bossKey)
+							.. " hash="
+							.. tostring(storedHash)
+							.. " error="
+							.. tostring(decodeError)
+					)
 				else
 					local kill = decoded.kill
-					if (#(kill.facts or {}) == 0 and #(kill.counters or {}) == 0 and #(kill.events or {}) == 0)
+					if
+						(#(kill.facts or {}) == 0 and #(kill.counters or {}) == 0 and #(kill.events or {}) == 0)
 						or #(kill.actors or {}) == 0
-						or #(kill.spells or {}) == 0 then
+						or #(kill.spells or {}) == 0
+					then
 						emptyKills = emptyKills + 1
-						print("empty_kill instance=" .. tostring(instanceKey) .. " boss=" .. tostring(bossKey) .. " hash=" .. tostring(storedHash))
+						print(
+							"empty_kill instance="
+								.. tostring(instanceKey)
+								.. " boss="
+								.. tostring(bossKey)
+								.. " hash="
+								.. tostring(storedHash)
+						)
 					end
 					if not addon.Core.EvidenceCodec.validDecodedKill(decoded) then
 						invalidKills = invalidKills + 1
-						print("invalid_kill instance=" .. tostring(instanceKey) .. " boss=" .. tostring(bossKey) .. " hash=" .. tostring(storedHash))
+						print(
+							"invalid_kill instance="
+								.. tostring(instanceKey)
+								.. " boss="
+								.. tostring(bossKey)
+								.. " hash="
+								.. tostring(storedHash)
+						)
 					end
-					local canonical = addon.Core.EvidenceCodec.hashKill(decoded.instance or instance, decoded.boss or boss, kill)
+					local canonical =
+						addon.Core.EvidenceCodec.hashKill(decoded.instance or instance, decoded.boss or boss, kill)
 					if type(canonical) ~= "string" or canonical == "" then
 						hashErrors = hashErrors + 1
-						print("hash_error instance=" .. tostring(instanceKey) .. " boss=" .. tostring(bossKey) .. " hash=" .. tostring(storedHash))
+						print(
+							"hash_error instance="
+								.. tostring(instanceKey)
+								.. " boss="
+								.. tostring(bossKey)
+								.. " hash="
+								.. tostring(storedHash)
+						)
 					elseif canonicalByHash[canonical] then
 						duplicateCanonical = duplicateCanonical + 1
-						print("duplicate_canonical hash=" .. tostring(canonical) .. " first=" .. canonicalByHash[canonical] .. " second=" .. tostring(instanceKey) .. "/" .. tostring(bossKey) .. "/" .. tostring(storedHash))
+						print(
+							"duplicate_canonical hash="
+								.. tostring(canonical)
+								.. " first="
+								.. canonicalByHash[canonical]
+								.. " second="
+								.. tostring(instanceKey)
+								.. "/"
+								.. tostring(bossKey)
+								.. "/"
+								.. tostring(storedHash)
+						)
 					else
-						canonicalByHash[canonical] = tostring(instanceKey) .. "/" .. tostring(bossKey) .. "/" .. tostring(storedHash)
+						canonicalByHash[canonical] = tostring(instanceKey)
+							.. "/"
+							.. tostring(bossKey)
+							.. "/"
+							.. tostring(storedHash)
 					end
 				end
 			end
 		end
 	end
-	print("decoded evidence errors=" .. tostring(decodeErrors) .. " emptyKills=" .. tostring(emptyKills) .. " invalidKills=" .. tostring(invalidKills) .. " hashErrors=" .. tostring(hashErrors) .. " duplicateCanonical=" .. tostring(duplicateCanonical))
+	print(
+		"decoded evidence errors="
+			.. tostring(decodeErrors)
+			.. " emptyKills="
+			.. tostring(emptyKills)
+			.. " invalidKills="
+			.. tostring(invalidKills)
+			.. " hashErrors="
+			.. tostring(hashErrors)
+			.. " duplicateCanonical="
+			.. tostring(duplicateCanonical)
+	)
 	if decodeErrors > 0 or emptyKills > 0 or invalidKills > 0 or hashErrors > 0 or duplicateCanonical > 0 then
 		fail("stored evidence integrity failed")
 	end
 
 	local blocks = addon.Core.EvidenceStore.collectKillBlocks()
 	local hashSet, hashCount, hashError = addon.Core.EvidenceStore.collectKillHashes()
-	print("exportable blocks=" .. tostring(#blocks) .. " hashCount=" .. tostring(hashCount) .. " hashError=" .. tostring(hashError))
+	print(
+		"exportable blocks="
+			.. tostring(#blocks)
+			.. " hashCount="
+			.. tostring(hashCount)
+			.. " hashError="
+			.. tostring(hashError)
+	)
 	if #blocks ~= evidenceKills then
 		fail("not every permanent kill can be exported")
 	end
@@ -243,37 +316,104 @@ local function validateModelInvariants(db)
 				checkedAbilities = checkedAbilities + 1
 				if subevents[tostring(ability.spellName or "")] then
 					combatLogSubeventAbilities = combatLogSubeventAbilities + 1
-					print("combat_log_subevent_ability zone=" .. tostring(zone.key) .. " encounter=" .. tostring(encounter.key) .. " ability=" .. tostring(ability.key) .. " name=" .. tostring(ability.spellName))
+					print(
+						"combat_log_subevent_ability zone="
+							.. tostring(zone.key)
+							.. " encounter="
+							.. tostring(encounter.key)
+							.. " ability="
+							.. tostring(ability.key)
+							.. " name="
+							.. tostring(ability.spellName)
+					)
 				end
 				if ability.legacyAfterRebuild ~= true then
 					local rule = ability.selectedRule
 					if rule and (rule.type == "time_interval" or rule.type == "phase_time_interval") then
 						local interval = tonumber(rule.minInterval or ability.minInterval)
-						if not interval or interval <= 0 or interval > addon.Core.Constants.MAX_REASONABLE_INTERVAL_SECONDS then
+						if
+							not interval
+							or interval <= 0
+							or interval > addon.Core.Constants.MAX_REASONABLE_INTERVAL_SECONDS
+						then
 							invalidRules = invalidRules + 1
-							print("invalid_time_rule zone=" .. tostring(zone.key) .. " encounter=" .. tostring(encounter.key) .. " ability=" .. tostring(ability.key) .. " interval=" .. tostring(interval))
+							print(
+								"invalid_time_rule zone="
+									.. tostring(zone.key)
+									.. " encounter="
+									.. tostring(encounter.key)
+									.. " ability="
+									.. tostring(ability.key)
+									.. " interval="
+									.. tostring(interval)
+							)
 						elseif interval < displayFloor - 0.000001 and ability.autoSuppressed ~= true then
 							minDisplayViolations = minDisplayViolations + 1
-							print("display_floor_violation zone=" .. tostring(zone.key) .. " encounter=" .. tostring(encounter.key) .. " ability=" .. tostring(ability.key) .. " interval=" .. tostring(interval) .. " floor=" .. tostring(displayFloor))
+							print(
+								"display_floor_violation zone="
+									.. tostring(zone.key)
+									.. " encounter="
+									.. tostring(encounter.key)
+									.. " ability="
+									.. tostring(ability.key)
+									.. " interval="
+									.. tostring(interval)
+									.. " floor="
+									.. tostring(displayFloor)
+							)
 						end
 					elseif rule and rule.type == "hp_gate" then
 						local hp = tonumber(rule.hpPct or ability.avgHpPct)
 						if not hp or hp < 0 or hp > 100 then
 							invalidRules = invalidRules + 1
-							print("invalid_hp_rule zone=" .. tostring(zone.key) .. " encounter=" .. tostring(encounter.key) .. " ability=" .. tostring(ability.key) .. " hp=" .. tostring(hp))
+							print(
+								"invalid_hp_rule zone="
+									.. tostring(zone.key)
+									.. " encounter="
+									.. tostring(encounter.key)
+									.. " ability="
+									.. tostring(ability.key)
+									.. " hp="
+									.. tostring(hp)
+							)
 						end
 					elseif rule and (rule.type == "phase_start_offset" or rule.type == "first_offset") then
-						local offset = tonumber(rule.avgPhaseOffset or rule.minFirstOffset or ability.avgFirstOffset or ability.minFirstOffset)
+						local offset = tonumber(
+							rule.avgPhaseOffset
+								or rule.minFirstOffset
+								or ability.avgFirstOffset
+								or ability.minFirstOffset
+						)
 						if not offset or offset < 0 then
 							invalidRules = invalidRules + 1
-							print("invalid_offset_rule zone=" .. tostring(zone.key) .. " encounter=" .. tostring(encounter.key) .. " ability=" .. tostring(ability.key) .. " offset=" .. tostring(offset) .. " type=" .. tostring(rule.type))
+							print(
+								"invalid_offset_rule zone="
+									.. tostring(zone.key)
+									.. " encounter="
+									.. tostring(encounter.key)
+									.. " ability="
+									.. tostring(ability.key)
+									.. " offset="
+									.. tostring(offset)
+									.. " type="
+									.. tostring(rule.type)
+							)
 						end
 					end
 				end
 			end
 		end
 	end
-	print("checked abilities=" .. tostring(checkedAbilities) .. " invalidRules=" .. tostring(invalidRules) .. " displayFloorViolations=" .. tostring(minDisplayViolations) .. " combatLogSubeventAbilities=" .. tostring(combatLogSubeventAbilities))
+	print(
+		"checked abilities="
+			.. tostring(checkedAbilities)
+			.. " invalidRules="
+			.. tostring(invalidRules)
+			.. " displayFloorViolations="
+			.. tostring(minDisplayViolations)
+			.. " combatLogSubeventAbilities="
+			.. tostring(combatLogSubeventAbilities)
+	)
 	if invalidRules > 0 or minDisplayViolations > 0 or combatLogSubeventAbilities > 0 then
 		fail("learned model invariant check failed")
 	end
@@ -300,7 +440,15 @@ local function assertCurrentAbilityHidden(db, zoneKey, encounterKey, abilityKey,
 		print(label .. " skipped=missing_current_data")
 		return
 	end
-	print(label .. " rule=" .. tostring(ability.selectedRule and ability.selectedRule.type) .. " suppressed=" .. tostring(ability.autoSuppressed) .. " reason=" .. tostring(ability.suppressionReason))
+	print(
+		label
+			.. " rule="
+			.. tostring(ability.selectedRule and ability.selectedRule.type)
+			.. " suppressed="
+			.. tostring(ability.autoSuppressed)
+			.. " reason="
+			.. tostring(ability.suppressionReason)
+	)
 	if abilityIsDisplayed(ability) then
 		fail(label .. " should not be displayed")
 	end
@@ -315,16 +463,36 @@ local function assertCurrentAbilityRule(db, zoneKey, encounterKey, abilityKey, l
 		print(label .. " skipped=missing_current_data")
 		return
 	end
-	print(label .. " rule=" .. tostring(ability.selectedRule and ability.selectedRule.type) .. " suppressed=" .. tostring(ability.autoSuppressed) .. " reason=" .. tostring(ability.suppressionReason))
+	print(
+		label
+			.. " rule="
+			.. tostring(ability.selectedRule and ability.selectedRule.type)
+			.. " suppressed="
+			.. tostring(ability.autoSuppressed)
+			.. " reason="
+			.. tostring(ability.suppressionReason)
+	)
 	if ability.autoSuppressed == true or not (ability.selectedRule and ability.selectedRule.type == expectedRule) then
 		fail(label .. " should be displayed as " .. expectedRule)
 	end
 end
 
 local function validateKnownCurrentData(db)
-	local deep, onyxiaEncounter = findAbility(db, "249_onyxia_s_lair", "group:onyxia+onyxian_lair_guard", "onyxia|name:deep_breath")
+	local deep, onyxiaEncounter =
+		findAbility(db, "249_onyxia_s_lair", "group:onyxia+onyxian_lair_guard", "onyxia|name:deep_breath")
 	if deep then
-		print("onyxiaDeep class=" .. tostring(deep.classification) .. " min=" .. tostring(deep.minInterval) .. " max=" .. tostring(deep.maxInterval) .. " suppressed=" .. tostring(deep.autoSuppressed) .. " encounter=" .. tostring(onyxiaEncounter and onyxiaEncounter.name))
+		print(
+			"onyxiaDeep class="
+				.. tostring(deep.classification)
+				.. " min="
+				.. tostring(deep.minInterval)
+				.. " max="
+				.. tostring(deep.maxInterval)
+				.. " suppressed="
+				.. tostring(deep.autoSuppressed)
+				.. " encounter="
+				.. tostring(onyxiaEncounter and onyxiaEncounter.name)
+		)
 		if not (deep.selectedRule and deep.selectedRule.type == "time_interval") then
 			fail("Onyxia Deep Breath is not a time interval")
 		end
@@ -341,7 +509,16 @@ local function validateKnownCurrentData(db)
 	local xarthosZone = db.learned and db.learned.zones and db.learned.zones["469_blackwing_lair"]
 	local xarthosBoss = xarthosZone and xarthosZone.encounters and xarthosZone.encounters.xarthos
 	if xarthosBoss then
-		print("xarthos encounter=" .. tostring(xarthosBoss.name) .. " legacy=" .. tostring(xarthosBoss.legacyAfterRebuild) .. " coverage=" .. tostring(xarthosBoss.rebuildCoverage) .. " abilities=" .. tostring(countKeys(xarthosBoss.abilities)))
+		print(
+			"xarthos encounter="
+				.. tostring(xarthosBoss.name)
+				.. " legacy="
+				.. tostring(xarthosBoss.legacyAfterRebuild)
+				.. " coverage="
+				.. tostring(xarthosBoss.rebuildCoverage)
+				.. " abilities="
+				.. tostring(countKeys(xarthosBoss.abilities))
+		)
 		if xarthosBoss.legacyAfterRebuild == true then
 			fail("Xarthos encounter is still legacy")
 		end
@@ -351,7 +528,14 @@ local function validateKnownCurrentData(db)
 
 	local coward = findAbility(db, "469_blackwing_lair", "lord_victor_nefarius", "lord_victor_nefarius|name:coward")
 	if coward then
-		print("nefarianCoward class=" .. tostring(coward.classification) .. " suppressed=" .. tostring(coward.autoSuppressed) .. " reason=" .. tostring(coward.suppressionReason))
+		print(
+			"nefarianCoward class="
+				.. tostring(coward.classification)
+				.. " suppressed="
+				.. tostring(coward.autoSuppressed)
+				.. " reason="
+				.. tostring(coward.suppressionReason)
+		)
 		if not (coward.selectedRule and coward.selectedRule.type == "routine_noise") then
 			fail("Nefarian Coward should not be a displayed HP or phase timer")
 		end
@@ -362,9 +546,21 @@ local function validateKnownCurrentData(db)
 		print("nefarianCoward skipped=missing_current_data")
 	end
 
-	local combustion = findAbility(db, "469_blackwing_lair", "group:ebonroc+firemaw+flamegor", "flamegor|name:combustion")
+	local combustion =
+		findAbility(db, "469_blackwing_lair", "group:ebonroc+firemaw+flamegor", "flamegor|name:combustion")
 	if combustion then
-		print("flamegorCombustion class=" .. tostring(combustion.classification) .. " min=" .. tostring(combustion.minInterval) .. " max=" .. tostring(combustion.maxInterval) .. " suppressed=" .. tostring(combustion.autoSuppressed) .. " reason=" .. tostring(combustion.suppressionReason))
+		print(
+			"flamegorCombustion class="
+				.. tostring(combustion.classification)
+				.. " min="
+				.. tostring(combustion.minInterval)
+				.. " max="
+				.. tostring(combustion.maxInterval)
+				.. " suppressed="
+				.. tostring(combustion.autoSuppressed)
+				.. " reason="
+				.. tostring(combustion.suppressionReason)
+		)
 		if not (combustion.selectedRule and combustion.selectedRule.type == "time_interval") then
 			fail("Flamegor Combustion is not learned as a time interval")
 		end
@@ -407,8 +603,16 @@ local function validateKnownCurrentData(db)
 
 	local livingBomb = findAbility(db, "409_molten_core", "baron_geddon", "baron_geddon|name:living_bomb")
 	if livingBomb then
-		print("geddonLivingBomb rule=" .. tostring(livingBomb.selectedRule and livingBomb.selectedRule.type) .. " suppressed=" .. tostring(livingBomb.autoSuppressed))
-		if not (livingBomb.selectedRule and livingBomb.selectedRule.type == "time_interval") or livingBomb.autoSuppressed == true then
+		print(
+			"geddonLivingBomb rule="
+				.. tostring(livingBomb.selectedRule and livingBomb.selectedRule.type)
+				.. " suppressed="
+				.. tostring(livingBomb.autoSuppressed)
+		)
+		if
+			not (livingBomb.selectedRule and livingBomb.selectedRule.type == "time_interval")
+			or livingBomb.autoSuppressed == true
+		then
 			fail("Geddon Living Bomb should remain a displayed cast/aura-backed timer")
 		end
 	else
@@ -486,11 +690,13 @@ local function validateKnownCurrentData(db)
 	for encounterKey, encounter in pairs(bwlZone and bwlZone.encounters or {}) do
 		local key = tostring(encounterKey)
 		local name = string.lower(tostring(encounter and encounter.name or ""))
-		if string.sub(key, 1, 6) ~= "group:"
+		if
+			string.sub(key, 1, 6) ~= "group:"
 			and (
 				string.find(key, "corrupted_", 1, true) and string.find(key, "whelp", 1, true)
 				or string.find(name, "corrupted", 1, true) and string.find(name, "whelp", 1, true)
-			) then
+			)
+		then
 			standaloneWhelps = standaloneWhelps + 1
 			print("standalone_corrupted_whelp encounter=" .. key .. " name=" .. tostring(encounter and encounter.name))
 		end
@@ -511,16 +717,42 @@ startLoadedAddon()
 local db = addon.db or fail("addon.db was not initialized")
 print("accountSavedVariables=" .. tostring(accountPath))
 print("characterSavedVariables=" .. tostring(characterPath))
-print("loaded schema=" .. tostring(db.schemaVersion) .. " savedVersion=" .. tostring(db.version) .. " codeVersion=" .. tostring(addon.Core.Constants.VERSION))
-print("saved meta engine=" .. tostring(db.learnedMeta and db.learnedMeta.interpretationEngineVersion) .. " current engine=" .. tostring(addon.Core.Constants.INTERPRETATION_ENGINE_VERSION))
-print("saved meta coverage=" .. tostring(db.learnedMeta and db.learnedMeta.rebuildCoverage) .. " rebuiltKills=" .. tostring(db.learnedMeta and db.learnedMeta.rebuiltFromEvidenceKills))
+print(
+	"loaded schema="
+		.. tostring(db.schemaVersion)
+		.. " savedVersion="
+		.. tostring(db.version)
+		.. " codeVersion="
+		.. tostring(addon.Core.Constants.VERSION)
+)
+print(
+	"saved meta engine="
+		.. tostring(db.learnedMeta and db.learnedMeta.interpretationEngineVersion)
+		.. " current engine="
+		.. tostring(addon.Core.Constants.INTERPRETATION_ENGINE_VERSION)
+)
+print(
+	"saved meta coverage="
+		.. tostring(db.learnedMeta and db.learnedMeta.rebuildCoverage)
+		.. " rebuiltKills="
+		.. tostring(db.learnedMeta and db.learnedMeta.rebuiltFromEvidenceKills)
+)
 
 local evidenceKills = validateStoredEvidence(db)
 printStats("before learned", learnedStats(db.learned))
 local rebuilt, rebuildResult = addon.Core.SavedVariables.rebuildLearnedIfNeeded()
 print("rebuildIfNeeded result=" .. tostring(rebuilt) .. " detail=" .. tostring(rebuildResult))
 printStats("after learned", learnedStats(db.learned))
-print("after meta coverage=" .. tostring(db.learnedMeta and db.learnedMeta.rebuildCoverage) .. " rebuiltKills=" .. tostring(db.learnedMeta and db.learnedMeta.rebuiltFromEvidenceKills) .. " skippedCorrupt=" .. tostring(db.learnedMeta and db.learnedMeta.rebuildSkippedCorruptEvidence) .. " suppressedContainedAdds=" .. tostring(db.learnedMeta and db.learnedMeta.rebuildSuppressedContainedAddEvidence))
+print(
+	"after meta coverage="
+		.. tostring(db.learnedMeta and db.learnedMeta.rebuildCoverage)
+		.. " rebuiltKills="
+		.. tostring(db.learnedMeta and db.learnedMeta.rebuiltFromEvidenceKills)
+		.. " skippedCorrupt="
+		.. tostring(db.learnedMeta and db.learnedMeta.rebuildSkippedCorruptEvidence)
+		.. " suppressedContainedAdds="
+		.. tostring(db.learnedMeta and db.learnedMeta.rebuildSuppressedContainedAddEvidence)
+)
 if tonumber(db.learnedMeta and db.learnedMeta.rebuildSkippedCorruptEvidence) ~= 0 then
 	fail("rebuild skipped corrupt evidence")
 end

@@ -9,7 +9,10 @@ local TimerScheduler = {}
 addon.Runtime.TimerScheduler = TimerScheduler
 
 function TimerScheduler.getPredictions(force)
-	local pullTimer = addon.Runtime.PullTimer and addon.Runtime.PullTimer.getActiveTimerRow and addon.Runtime.PullTimer.getActiveTimerRow() or nil
+	local pullTimer = addon.Runtime.PullTimer
+			and addon.Runtime.PullTimer.getActiveTimerRow
+			and addon.Runtime.PullTimer.getActiveTimerRow()
+		or nil
 	if addon.Runtime.PredictionEngine and addon.Runtime.PredictionEngine.getPredictions then
 		local predictions = addon.Runtime.PredictionEngine.getPredictions(force) or {}
 		if pullTimer then

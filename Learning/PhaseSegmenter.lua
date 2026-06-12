@@ -163,13 +163,15 @@ local function auraScope(bossState, record)
 	if record.destGUID and bossState.guid and record.destGUID == bossState.guid then
 		return "boss"
 	end
-	if record.sourceGUID
+	if
+		record.sourceGUID
 		and record.destGUID
 		and record.sourceGUID == record.destGUID
 		and (
 			(record.sourceActorKey and record.sourceActorKey == bossState.actorKey)
 			or (record.sourceName and record.sourceName == bossState.bossName and not record.associatedWithBoss)
-		) then
+		)
+	then
 		return "boss"
 	end
 	if record.destIsHostileNpc and record.destName and record.destName == bossState.bossName then
@@ -258,11 +260,7 @@ local function startAuraSegment(bossState, state, record, active, activeCount)
 end
 
 local function isOwnAuraBoundarySegment(segment, activation)
-	return segment
-		and activation
-		and segment.auraScope
-		and segment.spellKey
-		and segment.spellKey == activation.spellKey
+	return segment and activation and segment.auraScope and segment.spellKey and segment.spellKey == activation.spellKey
 end
 
 local function applyBossAuraState(bossState, state, record)
@@ -346,17 +344,24 @@ function PhaseSegmenter.assignSegment(bossState, activation, preferredSegment)
 		if activation.phaseSegmentKey and bossState.segments and bossState.segments[activation.phaseSegmentKey] then
 			segment = bossState.segments[activation.phaseSegmentKey]
 			bossState.currentSegmentKey = segment.key
-		elseif isOwnAuraBoundarySegment(segment, activation)
+		elseif
+			isOwnAuraBoundarySegment(segment, activation)
 			and segment.previousSegmentKey
 			and bossState.segments
-			and bossState.segments[segment.previousSegmentKey] then
+			and bossState.segments[segment.previousSegmentKey]
+		then
 			segment = bossState.segments[segment.previousSegmentKey]
 		elseif not preferredSegment and not (segment and segment.auraScope) then
 			local hpBucket = crossedHpBucket(bossState, activation.hpPct)
 			if hpBucket then
 				segment = startSegment(bossState, "hp_" .. tostring(hpBucket), "hp_bucket", activation)
 			elseif bossState.lastActivationAt and activation.t - bossState.lastActivationAt >= C.PHASE_GAP_SECONDS then
-				segment = startSegment(bossState, "gap_" .. tostring((bossState.segmentIndex or 1) + 1), "long_activation_gap", activation)
+				segment = startSegment(
+					bossState,
+					"gap_" .. tostring((bossState.segmentIndex or 1) + 1),
+					"long_activation_gap",
+					activation
+				)
 			end
 		end
 
@@ -391,5 +396,4 @@ function PhaseSegmenter.finishBoss(bossState)
 	end
 end
 
-function PhaseSegmenter.start()
-end
+function PhaseSegmenter.start() end

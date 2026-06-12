@@ -140,7 +140,11 @@ end
 
 local function groupChatChannel()
 	if playerIsInRaid() then
-		if addon.Runtime.WarningEngine and addon.Runtime.WarningEngine.canSendRaidWarning and addon.Runtime.WarningEngine.canSendRaidWarning() then
+		if
+			addon.Runtime.WarningEngine
+			and addon.Runtime.WarningEngine.canSendRaidWarning
+			and addon.Runtime.WarningEngine.canSendRaidWarning()
+		then
 			return "RAID_WARNING"
 		end
 		return "RAID"
@@ -255,9 +259,7 @@ local function beginTimer(duration, sourceName, localOwner)
 end
 
 local function shouldAnnounce(timer)
-	return timer
-		and timer.localOwner
-		and not (addon.charDB and addon.charDB.config and addon.charDB.config.panic)
+	return timer and timer.localOwner and not (addon.charDB and addon.charDB.config and addon.charDB.config.panic)
 end
 
 local function tickAnnouncements()
@@ -268,8 +270,10 @@ local function tickAnnouncements()
 
 	local remaining = timer.endsAt - now()
 	local dueThreshold
-	while timer.nextAnnouncementIndex <= #(timer.thresholds or {})
-		and remaining <= (timer.thresholds[timer.nextAnnouncementIndex] + ANNOUNCEMENT_EPSILON) do
+	while
+		timer.nextAnnouncementIndex <= #(timer.thresholds or {})
+		and remaining <= (timer.thresholds[timer.nextAnnouncementIndex] + ANNOUNCEMENT_EPSILON)
+	do
 		dueThreshold = timer.thresholds[timer.nextAnnouncementIndex]
 		timer.nextAnnouncementIndex = timer.nextAnnouncementIndex + 1
 	end
@@ -319,7 +323,11 @@ function PullTimer.cancelPull(options)
 	if options.broadcast ~= false then
 		sendPullMessage("CANCEL")
 	end
-	if options.announce ~= false and hadActiveTimer and not (addon.charDB and addon.charDB.config and addon.charDB.config.panic) then
+	if
+		options.announce ~= false
+		and hadActiveTimer
+		and not (addon.charDB and addon.charDB.config and addon.charDB.config.panic)
+	then
 		emitCancelAnnouncement()
 	end
 	if addon.UI.TimerFrame and addon.UI.TimerFrame.refresh then
@@ -375,7 +383,10 @@ local function handleAddonMessage(eventName, prefix, message, distribution, send
 		return
 	end
 	if not senderCanControl(sender) then
-		logWarn("Ignored pull timer message from sender without group permission", { sender = sender, distribution = distribution })
+		logWarn(
+			"Ignored pull timer message from sender without group permission",
+			{ sender = sender, distribution = distribution }
+		)
 		return
 	end
 

@@ -60,10 +60,44 @@ local function scenarioChannelLifecycle()
 	local boss = "Herod"
 	local guid = Harness.makeGuid(boss, 100)
 	Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = guid, spellName = "Whirlwind", spellId = 8989, hp = 100 })
-	Harness.emitSpell({ t = 0.1, sourceName = boss, sourceGUID = guid, spellName = "Whirlwind", spellId = 8989, hp = 100, eventType = "SPELL_AURA_APPLIED", selfTarget = true })
-	Harness.emitSpell({ t = 3, sourceName = boss, sourceGUID = guid, spellName = "Whirlwind", spellId = 8989, hp = 96, eventType = "SPELL_DAMAGE" })
-	Harness.emitSpell({ t = 6, sourceName = boss, sourceGUID = guid, spellName = "Whirlwind", spellId = 8989, hp = 92, eventType = "SPELL_DAMAGE" })
-	Harness.emitSpell({ t = 8, sourceName = boss, sourceGUID = guid, spellName = "Whirlwind", spellId = 8989, hp = 90, eventType = "SPELL_AURA_REMOVED", selfTarget = true })
+	Harness.emitSpell({
+		t = 0.1,
+		sourceName = boss,
+		sourceGUID = guid,
+		spellName = "Whirlwind",
+		spellId = 8989,
+		hp = 100,
+		eventType = "SPELL_AURA_APPLIED",
+		selfTarget = true,
+	})
+	Harness.emitSpell({
+		t = 3,
+		sourceName = boss,
+		sourceGUID = guid,
+		spellName = "Whirlwind",
+		spellId = 8989,
+		hp = 96,
+		eventType = "SPELL_DAMAGE",
+	})
+	Harness.emitSpell({
+		t = 6,
+		sourceName = boss,
+		sourceGUID = guid,
+		spellName = "Whirlwind",
+		spellId = 8989,
+		hp = 92,
+		eventType = "SPELL_DAMAGE",
+	})
+	Harness.emitSpell({
+		t = 8,
+		sourceName = boss,
+		sourceGUID = guid,
+		spellName = "Whirlwind",
+		spellId = 8989,
+		hp = 90,
+		eventType = "SPELL_AURA_REMOVED",
+		selfTarget = true,
+	})
 	Harness.emitSpell({ t = 24, sourceName = boss, sourceGUID = guid, spellName = "Whirlwind", spellId = 8989, hp = 80 })
 
 	local pullState = addon.Learning.AbilityLearner.getCurrentPullState()
@@ -132,9 +166,20 @@ local function scenarioLongCastResolutionDoesNotBecomeCooldown()
 	local pullState = addon.Learning.AbilityLearner.getCurrentPullState()
 	local bossState = pullState.bosses[addon.Core.Util.actorKey(boss, guid)]
 	local pullAbility = bossState.abilities[spellKey]
-	Harness.assertTrue(pullAbility.activationCount == 2, "Long cast resolution events should not count as separate activations")
-	Harness.assertNear(pullAbility.minInterval, 60, 0.01, "Long cast lifecycle should learn recast delay, not cast resolution time")
-	Harness.assertTrue(not addon.Learning.RelevanceScorer.routineReasonForAbility(pullAbility), "Long cast lifecycle should not look like short routine noise")
+	Harness.assertTrue(
+		pullAbility.activationCount == 2,
+		"Long cast resolution events should not count as separate activations"
+	)
+	Harness.assertNear(
+		pullAbility.minInterval,
+		60,
+		0.01,
+		"Long cast lifecycle should learn recast delay, not cast resolution time"
+	)
+	Harness.assertTrue(
+		not addon.Learning.RelevanceScorer.routineReasonForAbility(pullAbility),
+		"Long cast lifecycle should not look like short routine noise"
+	)
 
 	Harness.setTime(60)
 	local timer = Harness.firstPredictionByName(spellName)
@@ -146,7 +191,10 @@ local function scenarioLongCastResolutionDoesNotBecomeCooldown()
 	local learned = Harness.ability(Harness.encounter(bossKey), bossKey, spellName)
 	Harness.assertTrue(learned ~= nil, "Long cast lifecycle should be persisted")
 	Harness.assertNear(learned.minInterval, 60, 0.01, "Persisted long cast lifecycle should keep the recast interval")
-	Harness.assertTrue(learned.selectedRule and learned.selectedRule.type == "time_interval", "Persisted long cast lifecycle should select a time interval")
+	Harness.assertTrue(
+		learned.selectedRule and learned.selectedRule.type == "time_interval",
+		"Persisted long cast lifecycle should select a time interval"
+	)
 	Harness.assertTrue(learned.autoSuppressed ~= true, "Persisted long cast lifecycle should remain displayable")
 end
 
@@ -158,27 +206,109 @@ local function scenarioDelayedSelfAuraAfterCastStartDoesNotBecomeCooldown()
 	local spellId = 2105740
 	local spellKey = addon.Core.Util.timerAbilityKey(spellId, spellName)
 
-	Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = guid, spellName = spellName, spellId = spellId, hp = 90, eventType = "SPELL_CAST_START" })
-	Harness.emitSpell({ t = 13, sourceName = boss, sourceGUID = guid, spellName = spellName, spellId = spellId, hp = 84, eventType = "SPELL_DAMAGE" })
-	Harness.emitSpell({ t = 13.1, sourceName = boss, sourceGUID = guid, spellName = spellName, spellId = spellId, hp = 84, eventType = "SPELL_AURA_APPLIED", selfTarget = true })
-	Harness.emitSpell({ t = 20, sourceName = boss, sourceGUID = guid, spellName = spellName, spellId = spellId, hp = 80, eventType = "SPELL_DAMAGE" })
-	Harness.emitSpell({ t = 60, sourceName = boss, sourceGUID = guid, spellName = spellName, spellId = spellId, hp = 62, eventType = "SPELL_CAST_START" })
-	Harness.emitSpell({ t = 73, sourceName = boss, sourceGUID = guid, spellName = spellName, spellId = spellId, hp = 56, eventType = "SPELL_DAMAGE" })
-	Harness.emitSpell({ t = 73.1, sourceName = boss, sourceGUID = guid, spellName = spellName, spellId = spellId, hp = 56, eventType = "SPELL_AURA_APPLIED", selfTarget = true })
-	Harness.emitSpell({ t = 80, sourceName = boss, sourceGUID = guid, spellName = spellName, spellId = spellId, hp = 50, eventType = "SPELL_DAMAGE" })
+	Harness.emitSpell({
+		t = 0,
+		sourceName = boss,
+		sourceGUID = guid,
+		spellName = spellName,
+		spellId = spellId,
+		hp = 90,
+		eventType = "SPELL_CAST_START",
+	})
+	Harness.emitSpell({
+		t = 13,
+		sourceName = boss,
+		sourceGUID = guid,
+		spellName = spellName,
+		spellId = spellId,
+		hp = 84,
+		eventType = "SPELL_DAMAGE",
+	})
+	Harness.emitSpell({
+		t = 13.1,
+		sourceName = boss,
+		sourceGUID = guid,
+		spellName = spellName,
+		spellId = spellId,
+		hp = 84,
+		eventType = "SPELL_AURA_APPLIED",
+		selfTarget = true,
+	})
+	Harness.emitSpell({
+		t = 20,
+		sourceName = boss,
+		sourceGUID = guid,
+		spellName = spellName,
+		spellId = spellId,
+		hp = 80,
+		eventType = "SPELL_DAMAGE",
+	})
+	Harness.emitSpell({
+		t = 60,
+		sourceName = boss,
+		sourceGUID = guid,
+		spellName = spellName,
+		spellId = spellId,
+		hp = 62,
+		eventType = "SPELL_CAST_START",
+	})
+	Harness.emitSpell({
+		t = 73,
+		sourceName = boss,
+		sourceGUID = guid,
+		spellName = spellName,
+		spellId = spellId,
+		hp = 56,
+		eventType = "SPELL_DAMAGE",
+	})
+	Harness.emitSpell({
+		t = 73.1,
+		sourceName = boss,
+		sourceGUID = guid,
+		spellName = spellName,
+		spellId = spellId,
+		hp = 56,
+		eventType = "SPELL_AURA_APPLIED",
+		selfTarget = true,
+	})
+	Harness.emitSpell({
+		t = 80,
+		sourceName = boss,
+		sourceGUID = guid,
+		spellName = spellName,
+		spellId = spellId,
+		hp = 50,
+		eventType = "SPELL_DAMAGE",
+	})
 
 	local pullState = addon.Learning.AbilityLearner.getCurrentPullState()
 	local bossState = pullState.bosses[addon.Core.Util.actorKey(boss, guid)]
 	local pullAbility = bossState.abilities[spellKey]
-	Harness.assertTrue(pullAbility.activationCount == 2, "Delayed self aura after cast start should not count as a separate activation")
-	Harness.assertNear(pullAbility.minInterval, 60, 0.01, "Delayed self aura lifecycle should learn recast delay, not cast-to-aura timing")
+	Harness.assertTrue(
+		pullAbility.activationCount == 2,
+		"Delayed self aura after cast start should not count as a separate activation"
+	)
+	Harness.assertNear(
+		pullAbility.minInterval,
+		60,
+		0.01,
+		"Delayed self aura lifecycle should learn recast delay, not cast-to-aura timing"
+	)
 
 	Harness.finishPull(110)
 	local bossKey = addon.Core.Util.bossKey(boss, guid)
 	local learned = Harness.ability(Harness.encounter(bossKey), bossKey, spellName)
 	Harness.assertTrue(learned ~= nil, "Delayed self aura lifecycle should be persisted")
-	Harness.assertNear(learned.minInterval, 60, 0.01, "Persisted delayed self aura lifecycle should keep the recast interval")
-	Harness.assertTrue(learned.selectedRule and learned.selectedRule.type == "time_interval", "Delayed self aura lifecycle should select a time interval")
+	Harness.assertNear(
+		learned.minInterval,
+		60,
+		0.01,
+		"Persisted delayed self aura lifecycle should keep the recast interval"
+	)
+	Harness.assertTrue(
+		learned.selectedRule and learned.selectedRule.type == "time_interval",
+		"Delayed self aura lifecycle should select a time interval"
+	)
 end
 
 local function scenarioDelayedPlayerAuraAfterCastStartDoesNotBecomeCooldown()
@@ -190,25 +320,95 @@ local function scenarioDelayedPlayerAuraAfterCastStartDoesNotBecomeCooldown()
 	local spellKey = addon.Core.Util.timerAbilityKey(spellId, spellName)
 	local playerFlags = addon.Core.Constants.FLAG_PLAYER
 
-	Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = guid, spellName = spellName, spellId = spellId, hp = 96, eventType = "SPELL_CAST_START" })
-	Harness.emitSpell({ t = 13, sourceName = boss, sourceGUID = guid, spellName = spellName, spellId = spellId, hp = 91, eventType = "SPELL_AURA_APPLIED", destGUID = "Player-1", destName = "Replay Tank", destFlags = playerFlags })
-	Harness.emitSpell({ t = 16, sourceName = boss, sourceGUID = guid, spellName = spellName, spellId = spellId, hp = 89, eventType = "SPELL_DAMAGE" })
-	Harness.emitSpell({ t = 60, sourceName = boss, sourceGUID = guid, spellName = spellName, spellId = spellId, hp = 70, eventType = "SPELL_CAST_START" })
-	Harness.emitSpell({ t = 73, sourceName = boss, sourceGUID = guid, spellName = spellName, spellId = spellId, hp = 64, eventType = "SPELL_AURA_APPLIED", destGUID = "Player-2", destName = "Replay Healer", destFlags = playerFlags })
-	Harness.emitSpell({ t = 76, sourceName = boss, sourceGUID = guid, spellName = spellName, spellId = spellId, hp = 62, eventType = "SPELL_DAMAGE" })
+	Harness.emitSpell({
+		t = 0,
+		sourceName = boss,
+		sourceGUID = guid,
+		spellName = spellName,
+		spellId = spellId,
+		hp = 96,
+		eventType = "SPELL_CAST_START",
+	})
+	Harness.emitSpell({
+		t = 13,
+		sourceName = boss,
+		sourceGUID = guid,
+		spellName = spellName,
+		spellId = spellId,
+		hp = 91,
+		eventType = "SPELL_AURA_APPLIED",
+		destGUID = "Player-1",
+		destName = "Replay Tank",
+		destFlags = playerFlags,
+	})
+	Harness.emitSpell({
+		t = 16,
+		sourceName = boss,
+		sourceGUID = guid,
+		spellName = spellName,
+		spellId = spellId,
+		hp = 89,
+		eventType = "SPELL_DAMAGE",
+	})
+	Harness.emitSpell({
+		t = 60,
+		sourceName = boss,
+		sourceGUID = guid,
+		spellName = spellName,
+		spellId = spellId,
+		hp = 70,
+		eventType = "SPELL_CAST_START",
+	})
+	Harness.emitSpell({
+		t = 73,
+		sourceName = boss,
+		sourceGUID = guid,
+		spellName = spellName,
+		spellId = spellId,
+		hp = 64,
+		eventType = "SPELL_AURA_APPLIED",
+		destGUID = "Player-2",
+		destName = "Replay Healer",
+		destFlags = playerFlags,
+	})
+	Harness.emitSpell({
+		t = 76,
+		sourceName = boss,
+		sourceGUID = guid,
+		spellName = spellName,
+		spellId = spellId,
+		hp = 62,
+		eventType = "SPELL_DAMAGE",
+	})
 
 	local pullState = addon.Learning.AbilityLearner.getCurrentPullState()
 	local bossState = pullState.bosses[addon.Core.Util.actorKey(boss, guid)]
 	local pullAbility = bossState.abilities[spellKey]
-	Harness.assertTrue(pullAbility.activationCount == 2, "Delayed player aura after cast start should not count as a separate activation")
-	Harness.assertNear(pullAbility.minInterval, 60, 0.01, "Delayed player aura lifecycle should learn recast delay, not cast-to-aura timing")
+	Harness.assertTrue(
+		pullAbility.activationCount == 2,
+		"Delayed player aura after cast start should not count as a separate activation"
+	)
+	Harness.assertNear(
+		pullAbility.minInterval,
+		60,
+		0.01,
+		"Delayed player aura lifecycle should learn recast delay, not cast-to-aura timing"
+	)
 
 	Harness.finishPull(95)
 	local bossKey = addon.Core.Util.bossKey(boss, guid)
 	local learned = Harness.ability(Harness.encounter(bossKey), bossKey, spellName)
 	Harness.assertTrue(learned ~= nil, "Delayed player aura lifecycle should be persisted")
-	Harness.assertNear(learned.minInterval, 60, 0.01, "Persisted delayed player aura lifecycle should keep the recast interval")
-	Harness.assertTrue(learned.selectedRule and learned.selectedRule.type == "time_interval", "Delayed player aura lifecycle should select a time interval")
+	Harness.assertNear(
+		learned.minInterval,
+		60,
+		0.01,
+		"Persisted delayed player aura lifecycle should keep the recast interval"
+	)
+	Harness.assertTrue(
+		learned.selectedRule and learned.selectedRule.type == "time_interval",
+		"Delayed player aura lifecycle should select a time interval"
+	)
 end
 
 local function emitPlayerAuraBurst(boss, guid, spellName, spellId, baseTime, hp, targetCount)
@@ -301,15 +501,26 @@ local function scenarioBossAppliedPlayerAuraLifecycleUsesApplyTiming()
 	local pullState = addon.Learning.AbilityLearner.getCurrentPullState()
 	local bossState = pullState.bosses[addon.Core.Util.actorKey(boss, guid)]
 	local pullAbility = bossState.abilities[spellKey]
-	Harness.assertTrue(pullAbility.activationCount == 3, "Boss-applied player aura burst should count one activation per apply wave")
+	Harness.assertTrue(
+		pullAbility.activationCount == 3,
+		"Boss-applied player aura burst should count one activation per apply wave"
+	)
 	Harness.assertNear(pullAbility.minInterval, 15, 0.02, "Player aura lifecycle should learn apply-to-apply timing")
-	Harness.assertNear(pullAbility.maxInterval, 15, 0.02, "Damage ticks and single refreshes must not widen player aura timing")
+	Harness.assertNear(
+		pullAbility.maxInterval,
+		15,
+		0.02,
+		"Damage ticks and single refreshes must not widen player aura timing"
+	)
 
 	Harness.finishPull(55)
 	local bossKey = addon.Core.Util.bossKey(boss, guid)
 	local learned = Harness.ability(Harness.encounter(bossKey), bossKey, spellName)
 	Harness.assertTrue(learned ~= nil, "Boss-applied player aura lifecycle should be persisted")
-	Harness.assertTrue(learned.selectedRule and learned.selectedRule.type == "time_interval", "Boss-applied player aura should select the apply interval")
+	Harness.assertTrue(
+		learned.selectedRule and learned.selectedRule.type == "time_interval",
+		"Boss-applied player aura should select the apply interval"
+	)
 	Harness.assertNear(learned.minInterval, 15, 0.02, "Persisted player aura lifecycle should keep the apply interval")
 	Harness.assertTrue(learned.autoSuppressed ~= true, "Boss-applied damaging player aura should remain displayable")
 end
@@ -331,7 +542,10 @@ local function scenarioPhaseHpRules()
 	local cleave = Harness.ability(model, addon.Core.Util.bossKey(boss, guid), "Cleave")
 	Harness.assertTrue(cleave ~= nil, "Cleave should be learned")
 	Harness.assertTrue(cleave.segmentStats.hp_65 ~= nil, "Cleave should be tied to the 65% phase segment")
-	Harness.assertTrue(cleave.selectedRule and cleave.selectedRule.type == "first_offset", "Single observed HP phase evidence should stay a first-offset estimate until repeated phase evidence exists")
+	Harness.assertTrue(
+		cleave.selectedRule and cleave.selectedRule.type == "first_offset",
+		"Single observed HP phase evidence should stay a first-offset estimate until repeated phase evidence exists"
+	)
 end
 
 local function scenarioStableIntervalSurvivesDifferentPhaseSegments()
@@ -339,7 +553,15 @@ local function scenarioStableIntervalSurvivesDifferentPhaseSegments()
 	local boss = "Segmented Timer Sentinel"
 	local guid = Harness.makeGuid(boss, 201)
 	Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = guid, spellName = "Opening Bolt", hp = 100 })
-	Harness.emitSpell({ t = 5, sourceName = boss, sourceGUID = guid, spellName = "Blue Stance", hp = 98, eventType = "SPELL_AURA_APPLIED", selfTarget = true })
+	Harness.emitSpell({
+		t = 5,
+		sourceName = boss,
+		sourceGUID = guid,
+		spellName = "Blue Stance",
+		hp = 98,
+		eventType = "SPELL_AURA_APPLIED",
+		selfTarget = true,
+	})
 	Harness.emitSpell({ t = 8, sourceName = boss, sourceGUID = guid, spellName = "Measured Pulse", hp = 96 })
 	Harness.emitSpell({ t = 20, sourceName = boss, sourceGUID = guid, spellName = "Measured Pulse", hp = 74 })
 	Harness.emitSpell({ t = 32, sourceName = boss, sourceGUID = guid, spellName = "Measured Pulse", hp = 49 })
@@ -349,7 +571,10 @@ local function scenarioStableIntervalSurvivesDifferentPhaseSegments()
 	local bossKey = addon.Core.Util.bossKey(boss, guid)
 	local pulse = Harness.ability(Harness.encounter(bossKey), bossKey, "Measured Pulse")
 	Harness.assertTrue(pulse ~= nil and pulse.intervalSamples == 3, "Fixture should collect stable interval samples")
-	Harness.assertTrue(pulse.selectedRule and pulse.selectedRule.type == "time_interval", "Different one-off phase segments must not suppress a stable time interval")
+	Harness.assertTrue(
+		pulse.selectedRule and pulse.selectedRule.type == "time_interval",
+		"Different one-off phase segments must not suppress a stable time interval"
+	)
 end
 
 local function scenarioStableIntervalSurvivesRepeatedPhaseCoincidence()
@@ -358,19 +583,65 @@ local function scenarioStableIntervalSurvivesRepeatedPhaseCoincidence()
 	local guid = Harness.makeGuid(boss, 202)
 	local playerFlags = addon.Core.Constants.FLAG_PLAYER
 	Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = guid, spellName = "Opening Bolt", hp = 100 })
-	Harness.emitSpell({ t = 5, sourceName = boss, sourceGUID = guid, spellName = "Ground Mark", hp = 96, eventType = "SPELL_AURA_APPLIED", destGUID = "Player-1", destName = "Replay Tank", destFlags = playerFlags })
-	Harness.emitSpell({ t = 6, sourceName = boss, sourceGUID = guid, spellName = "Ground Mark", hp = 95, eventType = "SPELL_AURA_REMOVED", destGUID = "Player-1", destName = "Replay Tank", destFlags = playerFlags })
+	Harness.emitSpell({
+		t = 5,
+		sourceName = boss,
+		sourceGUID = guid,
+		spellName = "Ground Mark",
+		hp = 96,
+		eventType = "SPELL_AURA_APPLIED",
+		destGUID = "Player-1",
+		destName = "Replay Tank",
+		destFlags = playerFlags,
+	})
+	Harness.emitSpell({
+		t = 6,
+		sourceName = boss,
+		sourceGUID = guid,
+		spellName = "Ground Mark",
+		hp = 95,
+		eventType = "SPELL_AURA_REMOVED",
+		destGUID = "Player-1",
+		destName = "Replay Tank",
+		destFlags = playerFlags,
+	})
 	Harness.emitSpell({ t = 10, sourceName = boss, sourceGUID = guid, spellName = "Clock Pulse", hp = 94 })
 	Harness.emitSpell({ t = 40, sourceName = boss, sourceGUID = guid, spellName = "Clock Pulse", hp = 58 })
-	Harness.emitSpell({ t = 65, sourceName = boss, sourceGUID = guid, spellName = "Ground Mark", hp = 38, eventType = "SPELL_AURA_APPLIED", destGUID = "Player-2", destName = "Replay Healer", destFlags = playerFlags })
-	Harness.emitSpell({ t = 66, sourceName = boss, sourceGUID = guid, spellName = "Ground Mark", hp = 36, eventType = "SPELL_AURA_REMOVED", destGUID = "Player-2", destName = "Replay Healer", destFlags = playerFlags })
+	Harness.emitSpell({
+		t = 65,
+		sourceName = boss,
+		sourceGUID = guid,
+		spellName = "Ground Mark",
+		hp = 38,
+		eventType = "SPELL_AURA_APPLIED",
+		destGUID = "Player-2",
+		destName = "Replay Healer",
+		destFlags = playerFlags,
+	})
+	Harness.emitSpell({
+		t = 66,
+		sourceName = boss,
+		sourceGUID = guid,
+		spellName = "Ground Mark",
+		hp = 36,
+		eventType = "SPELL_AURA_REMOVED",
+		destGUID = "Player-2",
+		destName = "Replay Healer",
+		destFlags = playerFlags,
+	})
 	Harness.emitSpell({ t = 70, sourceName = boss, sourceGUID = guid, spellName = "Clock Pulse", hp = 35 })
 	Harness.finishPull(90)
 
 	local bossKey = addon.Core.Util.bossKey(boss, guid)
 	local pulse = Harness.ability(Harness.encounter(bossKey), bossKey, "Clock Pulse")
-	Harness.assertTrue(pulse ~= nil and pulse.intervalSamples == 2, "Fixture should collect stable interval samples with repeated phase coincidence")
-	Harness.assertTrue(pulse.selectedRule and pulse.selectedRule.type == "time_interval", "Repeated phase coincidence must not suppress a stable time interval observed outside that phase")
+	Harness.assertTrue(
+		pulse ~= nil and pulse.intervalSamples == 2,
+		"Fixture should collect stable interval samples with repeated phase coincidence"
+	)
+	Harness.assertTrue(
+		pulse.selectedRule and pulse.selectedRule.type == "time_interval",
+		"Repeated phase coincidence must not suppress a stable time interval observed outside that phase"
+	)
 end
 
 local function scenarioBossAuraPhaseRules()
@@ -378,7 +649,15 @@ local function scenarioBossAuraPhaseRules()
 	local boss = "Chromatic Sentinel"
 	local guid = Harness.makeGuid(boss, 210)
 	Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = guid, spellName = "Opening Bolt", hp = 100 })
-	Harness.emitSpell({ t = 10, sourceName = boss, sourceGUID = guid, spellName = "Red Infusion", hp = 96, eventType = "SPELL_AURA_APPLIED", selfTarget = true })
+	Harness.emitSpell({
+		t = 10,
+		sourceName = boss,
+		sourceGUID = guid,
+		spellName = "Red Infusion",
+		hp = 96,
+		eventType = "SPELL_AURA_APPLIED",
+		selfTarget = true,
+	})
 	Harness.emitSpell({ t = 13, sourceName = boss, sourceGUID = guid, spellName = "Flame Buffet", hp = 95 })
 	Harness.finishPull(35)
 
@@ -387,8 +666,14 @@ local function scenarioBossAuraPhaseRules()
 	local buffet = Harness.ability(model, bossKey, "Flame Buffet")
 	local segmentKey = auraSegmentKey("aura", "boss", "Red Infusion")
 	Harness.assertTrue(buffet ~= nil, "Aura-phase ability should be learned")
-	Harness.assertTrue(buffet.segmentStats and buffet.segmentStats[segmentKey] ~= nil, "Boss self aura should create the active phase segment")
-	Harness.assertTrue(buffet.selectedRule and buffet.selectedRule.type == "phase_start_offset", "Boss aura phase should support a phase-start rule")
+	Harness.assertTrue(
+		buffet.segmentStats and buffet.segmentStats[segmentKey] ~= nil,
+		"Boss self aura should create the active phase segment"
+	)
+	Harness.assertTrue(
+		buffet.selectedRule and buffet.selectedRule.type == "phase_start_offset",
+		"Boss aura phase should support a phase-start rule"
+	)
 end
 
 local function scenarioBossSelfAuraTransitionMarkerShowsHpGate()
@@ -396,22 +681,42 @@ local function scenarioBossSelfAuraTransitionMarkerShowsHpGate()
 	local boss = "Serpent Priest"
 	local guid = Harness.makeGuid(boss, 212)
 	Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = guid, spellName = "Opening Bolt", hp = 100 })
-	Harness.emitSpell({ t = 20, sourceName = boss, sourceGUID = guid, spellName = "Serpent Form", hp = 50, eventType = "SPELL_AURA_APPLIED", selfTarget = true })
+	Harness.emitSpell({
+		t = 20,
+		sourceName = boss,
+		sourceGUID = guid,
+		spellName = "Serpent Form",
+		hp = 50,
+		eventType = "SPELL_AURA_APPLIED",
+		selfTarget = true,
+	})
 	Harness.finishPull(45)
 
 	local bossKey = addon.Core.Util.bossKey(boss, guid)
 	local form = Harness.ability(Harness.encounter(bossKey), bossKey, "Serpent Form")
 	Harness.assertTrue(form ~= nil, "Boss self-aura transition marker should be learned")
-	Harness.assertTrue(form.autoSuppressed ~= true, "Boss self-aura transition marker should not be hidden as passive phase state")
-	Harness.assertTrue(form.selectedRule and form.selectedRule.type == "hp_gate", "Boss self-aura transition marker should display as an HP gate")
-	Harness.assertNear(form.selectedRule.hpPct, 50, 0.1, "Boss self-aura transition marker should retain the transition HP")
+	Harness.assertTrue(
+		form.autoSuppressed ~= true,
+		"Boss self-aura transition marker should not be hidden as passive phase state"
+	)
+	Harness.assertTrue(
+		form.selectedRule and form.selectedRule.type == "hp_gate",
+		"Boss self-aura transition marker should display as an HP gate"
+	)
+	Harness.assertNear(
+		form.selectedRule.hpPct,
+		50,
+		0.1,
+		"Boss self-aura transition marker should retain the transition HP"
+	)
 end
 
 local function scenarioAssociatedAddSelfAuraDoesNotCreateBossPhase()
 	Harness.resetState("Replay Add Aura Phase Guard")
 	local boss = "Chromatic Commander"
 	local guid = Harness.makeGuid(boss, 214)
-	local pull, context = Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = guid, spellName = "Opening Bolt", hp = 100 })
+	local pull, context =
+		Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = guid, spellName = "Opening Bolt", hp = 100 })
 	Harness.emitAssociatedSpell({
 		t = 5,
 		pull = pull,
@@ -431,7 +736,10 @@ local function scenarioAssociatedAddSelfAuraDoesNotCreateBossPhase()
 	local cleave = Harness.ability(model, bossKey, "Commander Cleave")
 	local addAuraSegmentKey = auraSegmentKey("aura", "boss", "Helper Frenzy")
 	Harness.assertTrue(cleave ~= nil, "Boss ability after associated add aura should be learned")
-	Harness.assertTrue(not (cleave.segmentStats and cleave.segmentStats[addAuraSegmentKey]), "Associated add self aura must not create a boss aura phase")
+	Harness.assertTrue(
+		not (cleave.segmentStats and cleave.segmentStats[addAuraSegmentKey]),
+		"Associated add self aura must not create a boss aura phase"
+	)
 end
 
 local function scenarioReenteredBossAuraPhaseShowsTimerAgain()
@@ -439,21 +747,58 @@ local function scenarioReenteredBossAuraPhaseShowsTimerAgain()
 	local boss = "Chromatic Cycle Sentinel"
 	local firstGuid = Harness.makeGuid(boss, 212)
 	Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = firstGuid, spellName = "Opening Bolt", hp = 100 })
-	Harness.emitSpell({ t = 10, sourceName = boss, sourceGUID = firstGuid, spellName = "Red Infusion", hp = 96, eventType = "SPELL_AURA_APPLIED", selfTarget = true })
+	Harness.emitSpell({
+		t = 10,
+		sourceName = boss,
+		sourceGUID = firstGuid,
+		spellName = "Red Infusion",
+		hp = 96,
+		eventType = "SPELL_AURA_APPLIED",
+		selfTarget = true,
+	})
 	Harness.emitSpell({ t = 13, sourceName = boss, sourceGUID = firstGuid, spellName = "Flame Buffet", hp = 95 })
 	Harness.finishPull(35)
 
 	local secondGuid = Harness.makeGuid(boss, 213)
 	Harness.emitSpell({ t = 100, sourceName = boss, sourceGUID = secondGuid, spellName = "Opening Bolt", hp = 100 })
-	Harness.emitSpell({ t = 110, sourceName = boss, sourceGUID = secondGuid, spellName = "Red Infusion", hp = 98, eventType = "SPELL_AURA_APPLIED", selfTarget = true })
+	Harness.emitSpell({
+		t = 110,
+		sourceName = boss,
+		sourceGUID = secondGuid,
+		spellName = "Red Infusion",
+		hp = 98,
+		eventType = "SPELL_AURA_APPLIED",
+		selfTarget = true,
+	})
 	Harness.emitSpell({ t = 113, sourceName = boss, sourceGUID = secondGuid, spellName = "Flame Buffet", hp = 97 })
-	Harness.emitSpell({ t = 120, sourceName = boss, sourceGUID = secondGuid, spellName = "Red Infusion", hp = 96, eventType = "SPELL_AURA_REMOVED", selfTarget = true })
-	Harness.emitSpell({ t = 140, sourceName = boss, sourceGUID = secondGuid, spellName = "Red Infusion", hp = 95, eventType = "SPELL_AURA_APPLIED", selfTarget = true })
+	Harness.emitSpell({
+		t = 120,
+		sourceName = boss,
+		sourceGUID = secondGuid,
+		spellName = "Red Infusion",
+		hp = 96,
+		eventType = "SPELL_AURA_REMOVED",
+		selfTarget = true,
+	})
+	Harness.emitSpell({
+		t = 140,
+		sourceName = boss,
+		sourceGUID = secondGuid,
+		spellName = "Red Infusion",
+		hp = 95,
+		eventType = "SPELL_AURA_APPLIED",
+		selfTarget = true,
+	})
 
 	Harness.setTime(141)
 	local timer = Harness.firstPredictionByName("Flame Buffet")
 	Harness.assertTrue(timer ~= nil, "Re-entered aura phase should show the learned phase timer again")
-	Harness.assertNear(timer.nextAt, 143, 0.2, "Re-entered aura phase should anchor the timer on the latest aura application")
+	Harness.assertNear(
+		timer.nextAt,
+		143,
+		0.2,
+		"Re-entered aura phase should anchor the timer on the latest aura application"
+	)
 end
 
 local function scenarioRecurringBossAuraPhaseLearnsPhaseRule()
@@ -461,19 +806,51 @@ local function scenarioRecurringBossAuraPhaseLearnsPhaseRule()
 	local boss = "Chromatic Recurrence Sentinel"
 	local guid = Harness.makeGuid(boss, 216)
 	Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = guid, spellName = "Opening Bolt", hp = 100 })
-	Harness.emitSpell({ t = 10, sourceName = boss, sourceGUID = guid, spellName = "Red Infusion", hp = 96, eventType = "SPELL_AURA_APPLIED", selfTarget = true })
+	Harness.emitSpell({
+		t = 10,
+		sourceName = boss,
+		sourceGUID = guid,
+		spellName = "Red Infusion",
+		hp = 96,
+		eventType = "SPELL_AURA_APPLIED",
+		selfTarget = true,
+	})
 	Harness.emitSpell({ t = 13, sourceName = boss, sourceGUID = guid, spellName = "Flame Buffet", hp = 95 })
-	Harness.emitSpell({ t = 20, sourceName = boss, sourceGUID = guid, spellName = "Red Infusion", hp = 94, eventType = "SPELL_AURA_REMOVED", selfTarget = true })
-	Harness.emitSpell({ t = 40, sourceName = boss, sourceGUID = guid, spellName = "Red Infusion", hp = 90, eventType = "SPELL_AURA_APPLIED", selfTarget = true })
+	Harness.emitSpell({
+		t = 20,
+		sourceName = boss,
+		sourceGUID = guid,
+		spellName = "Red Infusion",
+		hp = 94,
+		eventType = "SPELL_AURA_REMOVED",
+		selfTarget = true,
+	})
+	Harness.emitSpell({
+		t = 40,
+		sourceName = boss,
+		sourceGUID = guid,
+		spellName = "Red Infusion",
+		hp = 90,
+		eventType = "SPELL_AURA_APPLIED",
+		selfTarget = true,
+	})
 	Harness.emitSpell({ t = 43, sourceName = boss, sourceGUID = guid, spellName = "Flame Buffet", hp = 89 })
 	Harness.finishPull(70)
 
 	local bossKey = addon.Core.Util.bossKey(boss, guid)
 	local model = Harness.encounter(bossKey)
 	local buffet = Harness.ability(model, bossKey, "Flame Buffet")
-	local segment = buffet and buffet.segmentStats and buffet.segmentStats[auraSegmentKey("aura", "boss", "Red Infusion")]
-	Harness.assertTrue(segment ~= nil and (segment.phaseOffsetSamples or 0) == 2, "Recurring aura phase should learn one phase-offset sample per phase entry")
-	Harness.assertTrue(buffet.selectedRule and buffet.selectedRule.type == "phase_start_offset", "Recurring phase-only ability should prefer the phase rule over a global time interval")
+	local segment = buffet
+		and buffet.segmentStats
+		and buffet.segmentStats[auraSegmentKey("aura", "boss", "Red Infusion")]
+	Harness.assertTrue(
+		segment ~= nil and (segment.phaseOffsetSamples or 0) == 2,
+		"Recurring aura phase should learn one phase-offset sample per phase entry"
+	)
+	Harness.assertTrue(
+		buffet.selectedRule and buffet.selectedRule.type == "phase_start_offset",
+		"Recurring phase-only ability should prefer the phase rule over a global time interval"
+	)
 end
 
 local function scenarioBossAuraPhaseOutranksPlayerAuraNoise()
@@ -485,22 +862,89 @@ local function scenarioBossAuraPhaseOutranksPlayerAuraNoise()
 	local playerSegmentKey = auraSegmentKey("aura", "player", "Brood Affliction: Blue")
 
 	Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = guid, spellName = "Opening Bite", hp = 100 })
-	Harness.emitSpell({ t = 10, sourceName = boss, sourceGUID = guid, spellName = "Chromatic Adaptation: Arcane", hp = 96, eventType = "SPELL_AURA_APPLIED", selfTarget = true })
-	Harness.emitSpell({ t = 12, sourceName = boss, sourceGUID = guid, spellName = "Brood Affliction: Blue", hp = 95, eventType = "SPELL_AURA_APPLIED", destGUID = "Player-1", destName = "Replay Tank", destFlags = playerFlags })
-	Harness.emitSpell({ t = 16, sourceName = boss, sourceGUID = guid, spellName = "Arcane Breath", hp = 93, eventType = "SPELL_CAST_START" })
-	Harness.emitSpell({ t = 30, sourceName = boss, sourceGUID = guid, spellName = "Chromatic Adaptation: Arcane", hp = 88, eventType = "SPELL_AURA_REMOVED", selfTarget = true })
-	Harness.emitSpell({ t = 50, sourceName = boss, sourceGUID = guid, spellName = "Chromatic Adaptation: Arcane", hp = 82, eventType = "SPELL_AURA_APPLIED", selfTarget = true })
-	Harness.emitSpell({ t = 52, sourceName = boss, sourceGUID = guid, spellName = "Brood Affliction: Blue", hp = 81, eventType = "SPELL_AURA_APPLIED", destGUID = "Player-2", destName = "Replay Healer", destFlags = playerFlags })
-	Harness.emitSpell({ t = 56, sourceName = boss, sourceGUID = guid, spellName = "Arcane Breath", hp = 79, eventType = "SPELL_CAST_START" })
+	Harness.emitSpell({
+		t = 10,
+		sourceName = boss,
+		sourceGUID = guid,
+		spellName = "Chromatic Adaptation: Arcane",
+		hp = 96,
+		eventType = "SPELL_AURA_APPLIED",
+		selfTarget = true,
+	})
+	Harness.emitSpell({
+		t = 12,
+		sourceName = boss,
+		sourceGUID = guid,
+		spellName = "Brood Affliction: Blue",
+		hp = 95,
+		eventType = "SPELL_AURA_APPLIED",
+		destGUID = "Player-1",
+		destName = "Replay Tank",
+		destFlags = playerFlags,
+	})
+	Harness.emitSpell({
+		t = 16,
+		sourceName = boss,
+		sourceGUID = guid,
+		spellName = "Arcane Breath",
+		hp = 93,
+		eventType = "SPELL_CAST_START",
+	})
+	Harness.emitSpell({
+		t = 30,
+		sourceName = boss,
+		sourceGUID = guid,
+		spellName = "Chromatic Adaptation: Arcane",
+		hp = 88,
+		eventType = "SPELL_AURA_REMOVED",
+		selfTarget = true,
+	})
+	Harness.emitSpell({
+		t = 50,
+		sourceName = boss,
+		sourceGUID = guid,
+		spellName = "Chromatic Adaptation: Arcane",
+		hp = 82,
+		eventType = "SPELL_AURA_APPLIED",
+		selfTarget = true,
+	})
+	Harness.emitSpell({
+		t = 52,
+		sourceName = boss,
+		sourceGUID = guid,
+		spellName = "Brood Affliction: Blue",
+		hp = 81,
+		eventType = "SPELL_AURA_APPLIED",
+		destGUID = "Player-2",
+		destName = "Replay Healer",
+		destFlags = playerFlags,
+	})
+	Harness.emitSpell({
+		t = 56,
+		sourceName = boss,
+		sourceGUID = guid,
+		spellName = "Arcane Breath",
+		hp = 79,
+		eventType = "SPELL_CAST_START",
+	})
 	Harness.finishPull(80)
 
 	local bossKey = addon.Core.Util.bossKey(boss, guid)
 	local model = Harness.encounter(bossKey)
 	local breath = Harness.ability(model, bossKey, "Arcane Breath")
 	local bossSegment = breath and breath.segmentStats and breath.segmentStats[bossSegmentKey]
-	Harness.assertTrue(bossSegment ~= nil and (bossSegment.phaseOffsetSamples or 0) == 2, "Boss self-aura phase should own repeated breath timing despite player aura noise")
-	Harness.assertTrue(not (breath.segmentStats and breath.segmentStats[playerSegmentKey]), "Player aura noise must not steal the active boss phase for following boss abilities")
-	Harness.assertTrue(breath.selectedRule and breath.selectedRule.type == "phase_start_offset", "Boss aura phase timing should remain displayable")
+	Harness.assertTrue(
+		bossSegment ~= nil and (bossSegment.phaseOffsetSamples or 0) == 2,
+		"Boss self-aura phase should own repeated breath timing despite player aura noise"
+	)
+	Harness.assertTrue(
+		not (breath.segmentStats and breath.segmentStats[playerSegmentKey]),
+		"Player aura noise must not steal the active boss phase for following boss abilities"
+	)
+	Harness.assertTrue(
+		breath.selectedRule and breath.selectedRule.type == "phase_start_offset",
+		"Boss aura phase timing should remain displayable"
+	)
 end
 
 local function scenarioPlayerAuraPhaseRules()
@@ -509,11 +953,51 @@ local function scenarioPlayerAuraPhaseRules()
 	local guid = Harness.makeGuid(boss, 211)
 	local playerFlags = addon.Core.Constants.FLAG_PLAYER
 	Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = guid, spellName = "Opening Bolt", hp = 100 })
-	Harness.emitSpell({ t = 8, sourceName = boss, sourceGUID = guid, spellName = "Frost Mark", hp = 98, eventType = "SPELL_AURA_APPLIED", destGUID = "Player-1", destName = "Replay Tank", destFlags = playerFlags })
-	Harness.emitSpell({ t = 9, sourceName = boss, sourceGUID = guid, spellName = "Frost Mark", hp = 97, eventType = "SPELL_AURA_APPLIED", destGUID = "Player-2", destName = "Replay Healer", destFlags = playerFlags })
+	Harness.emitSpell({
+		t = 8,
+		sourceName = boss,
+		sourceGUID = guid,
+		spellName = "Frost Mark",
+		hp = 98,
+		eventType = "SPELL_AURA_APPLIED",
+		destGUID = "Player-1",
+		destName = "Replay Tank",
+		destFlags = playerFlags,
+	})
+	Harness.emitSpell({
+		t = 9,
+		sourceName = boss,
+		sourceGUID = guid,
+		spellName = "Frost Mark",
+		hp = 97,
+		eventType = "SPELL_AURA_APPLIED",
+		destGUID = "Player-2",
+		destName = "Replay Healer",
+		destFlags = playerFlags,
+	})
 	Harness.emitSpell({ t = 12, sourceName = boss, sourceGUID = guid, spellName = "Frost Pulse", hp = 96 })
-	Harness.emitSpell({ t = 15, sourceName = boss, sourceGUID = guid, spellName = "Frost Mark", hp = 95, eventType = "SPELL_AURA_REMOVED", destGUID = "Player-1", destName = "Replay Tank", destFlags = playerFlags })
-	Harness.emitSpell({ t = 16, sourceName = boss, sourceGUID = guid, spellName = "Frost Mark", hp = 94, eventType = "SPELL_AURA_REMOVED", destGUID = "Player-2", destName = "Replay Healer", destFlags = playerFlags })
+	Harness.emitSpell({
+		t = 15,
+		sourceName = boss,
+		sourceGUID = guid,
+		spellName = "Frost Mark",
+		hp = 95,
+		eventType = "SPELL_AURA_REMOVED",
+		destGUID = "Player-1",
+		destName = "Replay Tank",
+		destFlags = playerFlags,
+	})
+	Harness.emitSpell({
+		t = 16,
+		sourceName = boss,
+		sourceGUID = guid,
+		spellName = "Frost Mark",
+		hp = 94,
+		eventType = "SPELL_AURA_REMOVED",
+		destGUID = "Player-2",
+		destName = "Replay Healer",
+		destFlags = playerFlags,
+	})
 	Harness.emitSpell({ t = 19, sourceName = boss, sourceGUID = guid, spellName = "Arcane Reset", hp = 93 })
 	Harness.finishPull(40)
 
@@ -522,10 +1006,26 @@ local function scenarioPlayerAuraPhaseRules()
 	local mark = Harness.ability(model, bossKey, "Frost Mark")
 	local pulse = Harness.ability(model, bossKey, "Frost Pulse")
 	local reset = Harness.ability(model, bossKey, "Arcane Reset")
-	Harness.assertTrue(mark ~= nil and mark.selectedRule and mark.selectedRule.type == "routine_noise", "Pure player aura phase state should be hidden by default")
-	Harness.assertTrue(mark.suppressionReason == "player_aura_phase_state", "Pure player aura state should explain its suppression reason")
-	Harness.assertTrue(pulse ~= nil and pulse.segmentStats and pulse.segmentStats[auraSegmentKey("aura", "player", "Frost Mark")] ~= nil, "First active player aura should create a player phase segment")
-	Harness.assertTrue(reset ~= nil and reset.segmentStats and reset.segmentStats[auraSegmentKey("aura_clear", "player", "Frost Mark")] ~= nil, "Last removed player aura should create a clear phase segment")
+	Harness.assertTrue(
+		mark ~= nil and mark.selectedRule and mark.selectedRule.type == "routine_noise",
+		"Pure player aura phase state should be hidden by default"
+	)
+	Harness.assertTrue(
+		mark.suppressionReason == "player_aura_phase_state",
+		"Pure player aura state should explain its suppression reason"
+	)
+	Harness.assertTrue(
+		pulse ~= nil
+			and pulse.segmentStats
+			and pulse.segmentStats[auraSegmentKey("aura", "player", "Frost Mark")] ~= nil,
+		"First active player aura should create a player phase segment"
+	)
+	Harness.assertTrue(
+		reset ~= nil
+			and reset.segmentStats
+			and reset.segmentStats[auraSegmentKey("aura_clear", "player", "Frost Mark")] ~= nil,
+		"Last removed player aura should create a clear phase segment"
+	)
 end
 
 local function scenarioStableIntervalOutranksRepeatedPlayerAuraPhase()
@@ -538,18 +1038,54 @@ local function scenarioStableIntervalOutranksRepeatedPlayerAuraPhase()
 		if cycle == 0 then
 			Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = guid, spellName = "Opening Bite", hp = 100 })
 		end
-		Harness.emitSpell({ t = base + 10, sourceName = boss, sourceGUID = guid, spellName = "Burning Ground", hp = 95 - cycle * 15, eventType = "SPELL_AURA_APPLIED", destGUID = "Player-1", destName = "Replay Tank", destFlags = playerFlags })
-		Harness.emitSpell({ t = base + 15, sourceName = boss, sourceGUID = guid, spellName = "Burning Ground", hp = 94 - cycle * 15, eventType = "SPELL_AURA_REMOVED", destGUID = "Player-1", destName = "Replay Tank", destFlags = playerFlags })
-		Harness.emitSpell({ t = base + 20, sourceName = boss, sourceGUID = guid, spellName = "Deep Breath", hp = 92 - cycle * 15, eventType = "SPELL_CAST_START" })
+		Harness.emitSpell({
+			t = base + 10,
+			sourceName = boss,
+			sourceGUID = guid,
+			spellName = "Burning Ground",
+			hp = 95 - cycle * 15,
+			eventType = "SPELL_AURA_APPLIED",
+			destGUID = "Player-1",
+			destName = "Replay Tank",
+			destFlags = playerFlags,
+		})
+		Harness.emitSpell({
+			t = base + 15,
+			sourceName = boss,
+			sourceGUID = guid,
+			spellName = "Burning Ground",
+			hp = 94 - cycle * 15,
+			eventType = "SPELL_AURA_REMOVED",
+			destGUID = "Player-1",
+			destName = "Replay Tank",
+			destFlags = playerFlags,
+		})
+		Harness.emitSpell({
+			t = base + 20,
+			sourceName = boss,
+			sourceGUID = guid,
+			spellName = "Deep Breath",
+			hp = 92 - cycle * 15,
+			eventType = "SPELL_CAST_START",
+		})
 	end
 	Harness.finishPull(190)
 
 	local bossKey = addon.Core.Util.bossKey(boss, guid)
 	local model = Harness.encounter(bossKey)
 	local breath = Harness.ability(model, bossKey, "Deep Breath")
-	Harness.assertTrue(breath ~= nil and (breath.intervalSamples or 0) == 2, "Fixture should collect stable Deep Breath interval evidence")
-	Harness.assertTrue(breath.segmentStats and breath.segmentStats[auraSegmentKey("aura_clear", "player", "Burning Ground")] ~= nil, "Fixture should also collect repeated player-aura phase evidence")
-	Harness.assertTrue(breath.selectedRule and breath.selectedRule.type == "time_interval", "Stable timed evidence should outrank repeated player-aura phase coincidences")
+	Harness.assertTrue(
+		breath ~= nil and (breath.intervalSamples or 0) == 2,
+		"Fixture should collect stable Deep Breath interval evidence"
+	)
+	Harness.assertTrue(
+		breath.segmentStats and breath.segmentStats[auraSegmentKey("aura_clear", "player", "Burning Ground")] ~= nil,
+		"Fixture should also collect repeated player-aura phase evidence"
+	)
+	Harness.assertTrue(
+		breath.selectedRule and breath.selectedRule.type == "time_interval",
+		"Stable timed evidence should outrank repeated player-aura phase coincidences"
+	)
 end
 
 local function scenarioAuraBoundaryDoesNotClassifyItself()
@@ -557,7 +1093,15 @@ local function scenarioAuraBoundaryDoesNotClassifyItself()
 	local boss = "Stance Sentinel"
 	local guid = Harness.makeGuid(boss, 217)
 	Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = guid, spellName = "Opening Bolt", hp = 100 })
-	Harness.emitSpell({ t = 5, sourceName = boss, sourceGUID = guid, spellName = "Battle Stance", hp = 98, eventType = "SPELL_AURA_APPLIED", selfTarget = true })
+	Harness.emitSpell({
+		t = 5,
+		sourceName = boss,
+		sourceGUID = guid,
+		spellName = "Battle Stance",
+		hp = 98,
+		eventType = "SPELL_AURA_APPLIED",
+		selfTarget = true,
+	})
 	Harness.emitSpell({ t = 8, sourceName = boss, sourceGUID = guid, spellName = "Stance Cleave", hp = 96 })
 	Harness.finishPull(30)
 
@@ -566,10 +1110,22 @@ local function scenarioAuraBoundaryDoesNotClassifyItself()
 	local stance = Harness.ability(model, bossKey, "Battle Stance")
 	local cleave = Harness.ability(model, bossKey, "Stance Cleave")
 	local stanceSegmentKey = auraSegmentKey("aura", "boss", "Battle Stance")
-	Harness.assertTrue(cleave ~= nil and cleave.segmentStats and cleave.segmentStats[stanceSegmentKey] ~= nil, "Boss aura should still segment following abilities")
-	Harness.assertTrue(stance ~= nil and not (stance.segmentStats and stance.segmentStats[stanceSegmentKey]), "Aura boundary event must not classify itself inside its own phase")
-	Harness.assertTrue(stance.selectedRule and stance.selectedRule.type == "routine_noise", "Pure boss self-aura phase state should be hidden by default")
-	Harness.assertTrue(stance.suppressionReason == "boss_self_aura_phase_state", "Pure boss self-aura state should explain its suppression reason")
+	Harness.assertTrue(
+		cleave ~= nil and cleave.segmentStats and cleave.segmentStats[stanceSegmentKey] ~= nil,
+		"Boss aura should still segment following abilities"
+	)
+	Harness.assertTrue(
+		stance ~= nil and not (stance.segmentStats and stance.segmentStats[stanceSegmentKey]),
+		"Aura boundary event must not classify itself inside its own phase"
+	)
+	Harness.assertTrue(
+		stance.selectedRule and stance.selectedRule.type == "routine_noise",
+		"Pure boss self-aura phase state should be hidden by default"
+	)
+	Harness.assertTrue(
+		stance.suppressionReason == "boss_self_aura_phase_state",
+		"Pure boss self-aura state should explain its suppression reason"
+	)
 end
 
 local function scenarioRepeatedTransitionSpell()
@@ -586,8 +1142,14 @@ local function scenarioRepeatedTransitionSpell()
 	local model = Harness.encounter(addon.Core.Util.bossKey(boss, guid))
 	local stomp = Harness.ability(model, addon.Core.Util.bossKey(boss, guid), "Smite Stomp")
 	Harness.assertTrue(stomp ~= nil, "Smite Stomp should be learned")
-	Harness.assertTrue(stomp.segmentStats.hp_65 ~= nil and stomp.segmentStats.hp_35 ~= nil, "Smite Stomp should be represented as repeated phase transitions")
-	Harness.assertTrue(stomp.selectedRule and stomp.selectedRule.type ~= "time_interval", "Repeated HP transition spell must not become a normal cooldown")
+	Harness.assertTrue(
+		stomp.segmentStats.hp_65 ~= nil and stomp.segmentStats.hp_35 ~= nil,
+		"Smite Stomp should be represented as repeated phase transitions"
+	)
+	Harness.assertTrue(
+		stomp.selectedRule and stomp.selectedRule.type ~= "time_interval",
+		"Repeated HP transition spell must not become a normal cooldown"
+	)
 end
 
 local function scenarioCouncilGrouping()
@@ -613,9 +1175,26 @@ local function scenarioEncounterOwnedAdd()
 	Harness.resetState("Replay Summons")
 	local boss = "Wolf Master"
 	local guid = Harness.makeGuid(boss, 500)
-	local pull, context = Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = guid, spellName = "Savage Bite", hp = 100 })
-	Harness.emitAssociatedSpell({ t = 12, pull = pull, ownerContext = context, sourceName = "Lupine Horror", sourceId = 501, spellName = "Summon Delusion", hp = 92 })
-	Harness.emitAssociatedSpell({ t = 36, pull = pull, ownerContext = context, sourceName = "Lupine Horror", sourceId = 501, spellName = "Summon Delusion", hp = 70 })
+	local pull, context =
+		Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = guid, spellName = "Savage Bite", hp = 100 })
+	Harness.emitAssociatedSpell({
+		t = 12,
+		pull = pull,
+		ownerContext = context,
+		sourceName = "Lupine Horror",
+		sourceId = 501,
+		spellName = "Summon Delusion",
+		hp = 92,
+	})
+	Harness.emitAssociatedSpell({
+		t = 36,
+		pull = pull,
+		ownerContext = context,
+		sourceName = "Lupine Horror",
+		sourceId = 501,
+		spellName = "Summon Delusion",
+		hp = 70,
+	})
 	Harness.finishPull(55)
 
 	local model = Harness.encounter(addon.Core.Util.bossKey(boss, guid))
@@ -629,19 +1208,53 @@ local function scenarioShortEncounterOwnedAddSuppressed()
 	Harness.resetState("Replay Short Add Summons")
 	local boss = "Necromancer Captain"
 	local guid = Harness.makeGuid(boss, 502)
-	local pull, context = Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = guid, spellName = "Bone Command", hp = 100 })
-	Harness.emitAssociatedSpell({ t = 5, pull = pull, ownerContext = context, sourceName = "Skeletal Ritualist", sourceId = 503, spellName = "Summon Risen Lackey", hp = 95 })
-	Harness.emitAssociatedSpell({ t = 10, pull = pull, ownerContext = context, sourceName = "Skeletal Ritualist", sourceId = 503, spellName = "Summon Risen Lackey", hp = 90 })
-	Harness.emitAssociatedSpell({ t = 15, pull = pull, ownerContext = context, sourceName = "Skeletal Ritualist", sourceId = 503, spellName = "Summon Risen Lackey", hp = 85 })
+	local pull, context =
+		Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = guid, spellName = "Bone Command", hp = 100 })
+	Harness.emitAssociatedSpell({
+		t = 5,
+		pull = pull,
+		ownerContext = context,
+		sourceName = "Skeletal Ritualist",
+		sourceId = 503,
+		spellName = "Summon Risen Lackey",
+		hp = 95,
+	})
+	Harness.emitAssociatedSpell({
+		t = 10,
+		pull = pull,
+		ownerContext = context,
+		sourceName = "Skeletal Ritualist",
+		sourceId = 503,
+		spellName = "Summon Risen Lackey",
+		hp = 90,
+	})
+	Harness.emitAssociatedSpell({
+		t = 15,
+		pull = pull,
+		ownerContext = context,
+		sourceName = "Skeletal Ritualist",
+		sourceId = 503,
+		spellName = "Summon Risen Lackey",
+		hp = 85,
+	})
 	Harness.finishPull(35)
 
 	local model = Harness.encounter(addon.Core.Util.bossKey(boss, guid))
 	local summon = Harness.ability(model, addon.Core.Util.bossKey(boss, guid), "Summon Risen Lackey")
 	Harness.assertTrue(summon ~= nil, "Short encounter-owned add summon should remain learned for diagnostics")
 	Harness.assertTrue(summon.encounterAssociated == true, "Short add summon should preserve encounter association")
-	Harness.assertTrue(summon.associatedSourceName == "Skeletal Ritualist", "Short add summon should retain its original source")
-	Harness.assertTrue(summon.autoSuppressed == true, "Short encounter-owned add summon should not become a displayed timer")
-	Harness.assertTrue(summon.suppressionReason == "short_interval_below_display_floor", "Short add summon should use display-floor suppression")
+	Harness.assertTrue(
+		summon.associatedSourceName == "Skeletal Ritualist",
+		"Short add summon should retain its original source"
+	)
+	Harness.assertTrue(
+		summon.autoSuppressed == true,
+		"Short encounter-owned add summon should not become a displayed timer"
+	)
+	Harness.assertTrue(
+		summon.suppressionReason == "short_interval_below_display_floor",
+		"Short add summon should use display-floor suppression"
+	)
 end
 
 local function scenarioLiveNoiseSuppression()
@@ -686,8 +1299,14 @@ local function scenarioLiveNoiseSuppression()
 	local model = Harness.encounter(addon.Core.Util.bossKey(boss, guid))
 	for index = 1, #spells do
 		local ability = Harness.ability(model, addon.Core.Util.bossKey(boss, guid), spells[index].name)
-		Harness.assertTrue(ability ~= nil, "Suppressed ability should remain available for diagnostics: " .. spells[index].name)
-		Harness.assertTrue(ability.autoSuppressed == true, "Suppressed ability should be auto-suppressed after promotion: " .. spells[index].name)
+		Harness.assertTrue(
+			ability ~= nil,
+			"Suppressed ability should remain available for diagnostics: " .. spells[index].name
+		)
+		Harness.assertTrue(
+			ability.autoSuppressed == true,
+			"Suppressed ability should be auto-suppressed after promotion: " .. spells[index].name
+		)
 	end
 end
 
@@ -696,7 +1315,13 @@ local function scenarioSubTenSecondIntervalSuppression()
 	local boss = "Spam Commander"
 	local guid = Harness.makeGuid(boss, 650)
 	for index = 0, 3 do
-		Harness.emitSpell({ t = index * 9.8, sourceName = boss, sourceGUID = guid, spellName = "Quick Jab", hp = 100 - index * 12 })
+		Harness.emitSpell({
+			t = index * 9.8,
+			sourceName = boss,
+			sourceGUID = guid,
+			spellName = "Quick Jab",
+			hp = 100 - index * 12,
+		})
 	end
 
 	local timer = Harness.firstPredictionByName("Quick Jab")
@@ -731,9 +1356,18 @@ local function scenarioMixedShortOutlierIntervalDisplaysAtFloor()
 		},
 	}
 	addon.Learning.RuleLearner.refreshRules(ability)
-	Harness.assertTrue(ability.autoSuppressed ~= true, "One short outlier must not hide an otherwise displayable cast timer")
-	Harness.assertTrue(ability.selectedRule and ability.selectedRule.type == "time_interval", "Mixed interval evidence should keep a time timer")
-	Harness.assertTrue(ability.selectedRule.minInterval == addon.Core.Config.getMinTimerDisplayInterval(), "Mixed short interval timer should clamp display minimum to the configured floor")
+	Harness.assertTrue(
+		ability.autoSuppressed ~= true,
+		"One short outlier must not hide an otherwise displayable cast timer"
+	)
+	Harness.assertTrue(
+		ability.selectedRule and ability.selectedRule.type == "time_interval",
+		"Mixed interval evidence should keep a time timer"
+	)
+	Harness.assertTrue(
+		ability.selectedRule.minInterval == addon.Core.Config.getMinTimerDisplayInterval(),
+		"Mixed short interval timer should clamp display minimum to the configured floor"
+	)
 end
 
 local function scenarioNearFloorCastStartIntervalDisplaysAtFloor()
@@ -758,9 +1392,18 @@ local function scenarioNearFloorCastStartIntervalDisplaysAtFloor()
 		},
 	}
 	addon.Learning.RuleLearner.refreshRules(ability)
-	Harness.assertTrue(ability.autoSuppressed ~= true, "Near-floor cast-start timers should survive interrupt/retry jitter")
-	Harness.assertTrue(ability.selectedRule and ability.selectedRule.type == "time_interval", "Near-floor cast-start evidence should keep a time timer")
-	Harness.assertTrue(ability.selectedRule.minInterval == addon.Core.Config.getMinTimerDisplayInterval(), "Near-floor cast timer should clamp display minimum to the configured floor")
+	Harness.assertTrue(
+		ability.autoSuppressed ~= true,
+		"Near-floor cast-start timers should survive interrupt/retry jitter"
+	)
+	Harness.assertTrue(
+		ability.selectedRule and ability.selectedRule.type == "time_interval",
+		"Near-floor cast-start evidence should keep a time timer"
+	)
+	Harness.assertTrue(
+		ability.selectedRule.minInterval == addon.Core.Config.getMinTimerDisplayInterval(),
+		"Near-floor cast timer should clamp display minimum to the configured floor"
+	)
 end
 
 local function scenarioUnstableWideIntervalSuppression()
@@ -779,8 +1422,14 @@ local function scenarioUnstableWideIntervalSuppression()
 	local model = Harness.encounter(addon.Core.Util.bossKey(boss, guid))
 	local erraticStorm = Harness.ability(model, addon.Core.Util.bossKey(boss, guid), spellName)
 	Harness.assertTrue(erraticStorm ~= nil, "Unstable timer evidence should remain available for diagnostics")
-	Harness.assertTrue(erraticStorm.autoSuppressed == true, "Extremely unstable intervals should be auto-suppressed after promotion")
-	Harness.assertTrue(erraticStorm.suppressionReason == "unstable_time_interval", "Unstable interval suppression should explain the reason")
+	Harness.assertTrue(
+		erraticStorm.autoSuppressed == true,
+		"Extremely unstable intervals should be auto-suppressed after promotion"
+	)
+	Harness.assertTrue(
+		erraticStorm.suppressionReason == "unstable_time_interval",
+		"Unstable interval suppression should explain the reason"
+	)
 
 	local weakPhaseAbility = {
 		spellKey = addon.Core.Util.timerAbilityKey(nil, "Erratic Weak Phase"),
@@ -801,8 +1450,14 @@ local function scenarioUnstableWideIntervalSuppression()
 		},
 	}
 	addon.Learning.RuleLearner.refreshRules(weakPhaseAbility)
-	Harness.assertTrue(weakPhaseAbility.autoSuppressed == true, "Unstable timers must not fall back to weak HP or gap phase rules")
-	Harness.assertTrue(weakPhaseAbility.suppressionReason == "unstable_time_interval", "Weak phase fallback should keep the unstable interval reason")
+	Harness.assertTrue(
+		weakPhaseAbility.autoSuppressed == true,
+		"Unstable timers must not fall back to weak HP or gap phase rules"
+	)
+	Harness.assertTrue(
+		weakPhaseAbility.suppressionReason == "unstable_time_interval",
+		"Weak phase fallback should keep the unstable interval reason"
+	)
 
 	local strongPhaseAbility = {
 		spellKey = addon.Core.Util.timerAbilityKey(nil, "Erratic Strong Phase"),
@@ -823,8 +1478,14 @@ local function scenarioUnstableWideIntervalSuppression()
 		},
 	}
 	addon.Learning.RuleLearner.refreshRules(strongPhaseAbility)
-	Harness.assertTrue(strongPhaseAbility.selectedRule and strongPhaseAbility.selectedRule.type == "phase_start_offset", "Strong boss-aura phase evidence may survive unstable global intervals")
-	Harness.assertTrue(strongPhaseAbility.autoSuppressed ~= true, "Strong boss-aura phase evidence should not be suppressed by unstable global intervals")
+	Harness.assertTrue(
+		strongPhaseAbility.selectedRule and strongPhaseAbility.selectedRule.type == "phase_start_offset",
+		"Strong boss-aura phase evidence may survive unstable global intervals"
+	)
+	Harness.assertTrue(
+		strongPhaseAbility.autoSuppressed ~= true,
+		"Strong boss-aura phase evidence should not be suppressed by unstable global intervals"
+	)
 
 	local phaseIntervalAbility = {
 		spellKey = addon.Core.Util.timerAbilityKey(nil, "Erratic Phase Timer"),
@@ -851,8 +1512,14 @@ local function scenarioUnstableWideIntervalSuppression()
 		},
 	}
 	addon.Learning.RuleLearner.refreshRules(phaseIntervalAbility)
-	Harness.assertTrue(phaseIntervalAbility.selectedRule and phaseIntervalAbility.selectedRule.type == "phase_time_interval", "Stable intervals inside a boss-aura phase should survive unstable global gaps")
-	Harness.assertTrue(phaseIntervalAbility.autoSuppressed ~= true, "Phase-local timer evidence should not be suppressed as global instability")
+	Harness.assertTrue(
+		phaseIntervalAbility.selectedRule and phaseIntervalAbility.selectedRule.type == "phase_time_interval",
+		"Stable intervals inside a boss-aura phase should survive unstable global gaps"
+	)
+	Harness.assertTrue(
+		phaseIntervalAbility.autoSuppressed ~= true,
+		"Phase-local timer evidence should not be suppressed as global instability"
+	)
 end
 
 local function scenarioDerivedEffectsAndTerminalCastsSuppressed()
@@ -871,8 +1538,14 @@ local function scenarioDerivedEffectsAndTerminalCastsSuppressed()
 		},
 	}
 	addon.Learning.RuleLearner.refreshRules(explosion)
-	Harness.assertTrue(explosion.autoSuppressed == true, "Damage-only derived effects should not become displayed timers")
-	Harness.assertTrue(explosion.suppressionReason == "effect_only_damage", "Damage-only suppression should explain that no cast or aura anchor exists")
+	Harness.assertTrue(
+		explosion.autoSuppressed == true,
+		"Damage-only derived effects should not become displayed timers"
+	)
+	Harness.assertTrue(
+		explosion.suppressionReason == "effect_only_damage",
+		"Damage-only suppression should explain that no cast or aura anchor exists"
+	)
 
 	local terminalChannel = {
 		spellKey = addon.Core.Util.timerAbilityKey(nil, "Armageddon"),
@@ -891,8 +1564,14 @@ local function scenarioDerivedEffectsAndTerminalCastsSuppressed()
 		},
 	}
 	addon.Learning.RuleLearner.refreshRules(terminalChannel)
-	Harness.assertTrue(terminalChannel.autoSuppressed == true, "Terminal low-HP channels should not become cooldown timers")
-	Harness.assertTrue(terminalChannel.suppressionReason == "terminal_low_hp_cast", "Terminal cast suppression should explain the low-HP end state")
+	Harness.assertTrue(
+		terminalChannel.autoSuppressed == true,
+		"Terminal low-HP channels should not become cooldown timers"
+	)
+	Harness.assertTrue(
+		terminalChannel.suppressionReason == "terminal_low_hp_cast",
+		"Terminal cast suppression should explain the low-HP end state"
+	)
 
 	local addCast = {
 		spellKey = addon.Core.Util.timerAbilityKey(nil, "Greater Polymorph"),
@@ -908,8 +1587,14 @@ local function scenarioDerivedEffectsAndTerminalCastsSuppressed()
 		},
 	}
 	addon.Learning.RuleLearner.refreshRules(addCast)
-	Harness.assertTrue(addCast.autoSuppressed == true, "Single interrupted casts should stay diagnostic until stronger boss evidence exists")
-	Harness.assertTrue(addCast.suppressionReason == "single_interrupted_cast", "Single interrupted casts should have a specific suppression reason")
+	Harness.assertTrue(
+		addCast.autoSuppressed == true,
+		"Single interrupted casts should stay diagnostic until stronger boss evidence exists"
+	)
+	Harness.assertTrue(
+		addCast.suppressionReason == "single_interrupted_cast",
+		"Single interrupted casts should have a specific suppression reason"
+	)
 end
 
 local function scenarioInterruptedSpamDoesNotBecomeLongTimer()
@@ -935,9 +1620,20 @@ local function scenarioInterruptedSpamDoesNotBecomeLongTimer()
 	local model = Harness.encounter(addon.Core.Util.bossKey(boss, guid))
 	local lightningBolt = Harness.ability(model, addon.Core.Util.bossKey(boss, guid), "Lightning Bolt")
 	Harness.assertTrue(lightningBolt ~= nil, "Interrupted spam ability should remain available for diagnostics")
-	Harness.assertNear(lightningBolt.minObservedGap, 2.5, 0.01, "Observed activation gaps should retain sub-model-floor casts")
-	Harness.assertTrue(lightningBolt.autoSuppressed == true, "Interrupted spam ability should be auto-suppressed after promotion")
-	Harness.assertTrue(lightningBolt.suppressionReason == "short_activation_gap_below_display_floor", "Suppression should use the observed short activation gap")
+	Harness.assertNear(
+		lightningBolt.minObservedGap,
+		2.5,
+		0.01,
+		"Observed activation gaps should retain sub-model-floor casts"
+	)
+	Harness.assertTrue(
+		lightningBolt.autoSuppressed == true,
+		"Interrupted spam ability should be auto-suppressed after promotion"
+	)
+	Harness.assertTrue(
+		lightningBolt.suppressionReason == "short_activation_gap_below_display_floor",
+		"Suppression should use the observed short activation gap"
+	)
 end
 
 local function scenarioPlayerInterruptLearnsInterruptedBossSpell()
@@ -973,7 +1669,15 @@ local function scenarioPlayerInterruptLearnsInterruptedBossSpell()
 
 	emitInterrupt(0)
 	emitInterrupt(2.5)
-	Harness.emitCombatLogSpell({ t = 15, sourceName = boss, sourceGUID = guid, spellName = "Lightning Bolt", spellId = 9001, eventType = "SPELL_CAST_START", hp = 60 })
+	Harness.emitCombatLogSpell({
+		t = 15,
+		sourceName = boss,
+		sourceGUID = guid,
+		spellName = "Lightning Bolt",
+		spellId = 9001,
+		eventType = "SPELL_CAST_START",
+		hp = 60,
+	})
 	local pull = addon.Capture.EncounterState.getCurrent()
 	local context = pull and pull.bossContexts and pull.bossContexts[actorKey] or nil
 	if context then
@@ -986,9 +1690,18 @@ local function scenarioPlayerInterruptLearnsInterruptedBossSpell()
 
 	local model = Harness.encounter(addon.Core.Util.bossKey(boss, guid))
 	local lightningBolt = Harness.ability(model, addon.Core.Util.bossKey(boss, guid), "Lightning Bolt")
-	Harness.assertTrue(lightningBolt ~= nil, "Interrupted boss spell should be learned under the boss spell, not the player interrupt spell")
-	Harness.assertTrue(lightningBolt.events.SPELL_INTERRUPT == 2, "Player interrupt events should count as interrupted boss spell evidence")
-	Harness.assertTrue(lightningBolt.autoSuppressed == true, "Player-interrupted spam should be auto-suppressed after promotion")
+	Harness.assertTrue(
+		lightningBolt ~= nil,
+		"Interrupted boss spell should be learned under the boss spell, not the player interrupt spell"
+	)
+	Harness.assertTrue(
+		lightningBolt.events.SPELL_INTERRUPT == 2,
+		"Player interrupt events should count as interrupted boss spell evidence"
+	)
+	Harness.assertTrue(
+		lightningBolt.autoSuppressed == true,
+		"Player-interrupted spam should be auto-suppressed after promotion"
+	)
 end
 
 local function scenarioLegacyUncountedSpamGapSuppressed()
@@ -1005,7 +1718,10 @@ local function scenarioLegacyUncountedSpamGapSuppressed()
 	}
 
 	local reason = addon.Learning.RelevanceScorer.routineReasonForAbility(ability)
-	Harness.assertTrue(reason == "uncounted_activation_gap_below_model_floor", "Legacy spam models with many uncounted gaps should be suppressed")
+	Harness.assertTrue(
+		reason == "uncounted_activation_gap_below_model_floor",
+		"Legacy spam models with many uncounted gaps should be suppressed"
+	)
 end
 
 local function scenarioAuraStackStateBuffSuppressed()
@@ -1038,7 +1754,10 @@ local function scenarioAuraStackStateBuffSuppressed()
 	local ability = Harness.ability(Harness.encounter(actorKey), actorKey, "Stress")
 	Harness.assertTrue(ability ~= nil, "Stack-state buff should remain available for diagnostics")
 	Harness.assertTrue(ability.autoSuppressed == true, "Stack-state buff must not become a displayed timer")
-	Harness.assertTrue(ability.suppressionReason == "aura_stack_state_update", "Suppression should explain aura stack state noise")
+	Harness.assertTrue(
+		ability.suppressionReason == "aura_stack_state_update",
+		"Suppression should explain aura stack state noise"
+	)
 end
 
 local function scenarioPlayerAuraDoseStateSuppressed()
@@ -1077,8 +1796,14 @@ local function scenarioPlayerAuraDoseStateSuppressed()
 	local actorKey = addon.Core.Util.bossKey(boss, guid)
 	local ability = Harness.ability(Harness.encounter(actorKey), actorKey, "Coward State")
 	Harness.assertTrue(ability ~= nil, "Player aura dose state should remain available for diagnostics")
-	Harness.assertTrue(ability.autoSuppressed == true, "Player aura dose state must not become a displayed HP or phase timer")
-	Harness.assertTrue(ability.selectedRule and ability.selectedRule.type == "routine_noise", "Player aura dose state should select routine noise")
+	Harness.assertTrue(
+		ability.autoSuppressed == true,
+		"Player aura dose state must not become a displayed HP or phase timer"
+	)
+	Harness.assertTrue(
+		ability.selectedRule and ability.selectedRule.type == "routine_noise",
+		"Player aura dose state should select routine noise"
+	)
 end
 
 local function scenarioSpellIconFallsBackToSpellInfo()
@@ -1097,7 +1822,10 @@ local function scenarioSpellIconFallsBackToSpellInfo()
 	local texture = addon.Core.Util.spellIconTexture(nil, "spell:12345")
 	GetSpellTexture = previousGetSpellTexture
 	GetSpellInfo = previousGetSpellInfo
-	Harness.assertTrue(texture == "Interface\\Icons\\Spell_Test", "Spell icons should fall back to GetSpellInfo icon paths")
+	Harness.assertTrue(
+		texture == "Interface\\Icons\\Spell_Test",
+		"Spell icons should fall back to GetSpellInfo icon paths"
+	)
 end
 
 local function scenarioTenSecondIntervalAllowed()
@@ -1114,7 +1842,10 @@ local function scenarioTenSecondIntervalAllowed()
 	local model = Harness.encounter(addon.Core.Util.bossKey(boss, guid))
 	local heavyStrike = Harness.ability(model, addon.Core.Util.bossKey(boss, guid), "Heavy Strike")
 	Harness.assertTrue(heavyStrike ~= nil, "10s ability should be learned")
-	Harness.assertTrue(heavyStrike.autoSuppressed ~= true, "10s ability should not be auto-suppressed by the display floor")
+	Harness.assertTrue(
+		heavyStrike.autoSuppressed ~= true,
+		"10s ability should not be auto-suppressed by the display floor"
+	)
 end
 
 local function scenarioDisplayFloorPrecisionBoundaryAllowed()
@@ -1123,13 +1854,22 @@ local function scenarioDisplayFloorPrecisionBoundaryAllowed()
 	local guid = Harness.makeGuid(boss, 657)
 	local floor = addon.Core.Constants.MIN_TIMER_DISPLAY_INTERVAL_SECONDS
 	Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = guid, spellName = "Measured Strike", hp = 100 })
-	Harness.emitSpell({ t = floor - 0.000000000001, sourceName = boss, sourceGUID = guid, spellName = "Measured Strike", hp = 70 })
+	Harness.emitSpell({
+		t = floor - 0.000000000001,
+		sourceName = boss,
+		sourceGUID = guid,
+		spellName = "Measured Strike",
+		hp = 70,
+	})
 	Harness.finishPull(28)
 
 	local model = Harness.encounter(addon.Core.Util.bossKey(boss, guid))
 	local measuredStrike = Harness.ability(model, addon.Core.Util.bossKey(boss, guid), "Measured Strike")
 	Harness.assertTrue(measuredStrike ~= nil, "Display-floor boundary ability should be learned")
-	Harness.assertTrue(measuredStrike.autoSuppressed ~= true, "Floating-point drift at the display floor must not suppress a 10s ability")
+	Harness.assertTrue(
+		measuredStrike.autoSuppressed ~= true,
+		"Floating-point drift at the display floor must not suppress a 10s ability"
+	)
 end
 
 local function scenarioConfigMinimumDelayRefreshesRules()
@@ -1137,17 +1877,32 @@ local function scenarioConfigMinimumDelayRefreshesRules()
 	local boss = "Config Commander"
 	local guid = Harness.makeGuid(boss, 656)
 	for index = 0, 3 do
-		Harness.emitSpell({ t = index * 9.8, sourceName = boss, sourceGUID = guid, spellName = "Quick Jab", hp = 100 - index })
+		Harness.emitSpell({
+			t = index * 9.8,
+			sourceName = boss,
+			sourceGUID = guid,
+			spellName = "Quick Jab",
+			hp = 100 - index,
+		})
 	end
 	Harness.finishPull(40)
 
 	local model = Harness.encounter(addon.Core.Util.bossKey(boss, guid))
 	local quickJab = Harness.ability(model, addon.Core.Util.bossKey(boss, guid), "Quick Jab")
-	Harness.assertTrue(quickJab ~= nil and quickJab.autoSuppressed == true, "Default minimum delay should suppress 9.8s repeats")
+	Harness.assertTrue(
+		quickJab ~= nil and quickJab.autoSuppressed == true,
+		"Default minimum delay should suppress 9.8s repeats"
+	)
 
 	addon.Core.Config.setMinTimerDisplayInterval(9)
-	Harness.assertTrue(quickJab.autoSuppressed ~= true, "Lowering the minimum delay should refresh learned rule suppression")
-	Harness.assertTrue(quickJab.selectedRule and quickJab.selectedRule.type == "time_interval", "Lowered minimum delay should restore the time rule")
+	Harness.assertTrue(
+		quickJab.autoSuppressed ~= true,
+		"Lowering the minimum delay should refresh learned rule suppression"
+	)
+	Harness.assertTrue(
+		quickJab.selectedRule and quickJab.selectedRule.type == "time_interval",
+		"Lowered minimum delay should restore the time rule"
+	)
 
 	addon.Core.Config.setMinTimerDisplayInterval(10)
 	Harness.assertTrue(quickJab.autoSuppressed == true, "Raising the minimum delay should suppress the ability again")
@@ -1171,7 +1926,10 @@ local function scenarioKnownRoutineSpellSuppressesLiveProvisional()
 		Harness.finishPull(bossIndex * 100 + 30, "unit_died")
 	end
 
-	Harness.assertTrue(addon.Learning.RelevanceScorer.isKnownRoutineSpell(addon.Core.Util.timerAbilityKey(nil, spellName)), "Routine spell index should learn shared filler from confirmed bosses")
+	Harness.assertTrue(
+		addon.Learning.RelevanceScorer.isKnownRoutineSpell(addon.Core.Util.timerAbilityKey(nil, spellName)),
+		"Routine spell index should learn shared filler from confirmed bosses"
+	)
 
 	local boss = "Fresh Boss"
 	local guid = Harness.makeGuid(boss, 710)
@@ -1179,7 +1937,10 @@ local function scenarioKnownRoutineSpellSuppressesLiveProvisional()
 	Harness.emitSpell({ t = 320, sourceName = boss, sourceGUID = guid, spellName = spellName, hp = 70 })
 
 	local timer = Harness.firstPredictionByName(spellName)
-	Harness.assertTrue(timer == nil, "Known global routine spells must not appear as live provisional timers even after a long first interval")
+	Harness.assertTrue(
+		timer == nil,
+		"Known global routine spells must not appear as live provisional timers even after a long first interval"
+	)
 end
 
 local function scenarioKnownRoutineSpellSuppressesPersistentSparseModel()
@@ -1210,8 +1971,14 @@ local function scenarioKnownRoutineSpellSuppressesPersistentSparseModel()
 	local model = Harness.encounter(actorKey)
 	local ability = Harness.ability(model, actorKey, spellName)
 	Harness.assertTrue(ability ~= nil, "Sparse shared routine spell should be learned for diagnostics")
-	Harness.assertTrue(ability.autoSuppressed == true, "Sparse shared routine spell should be suppressed after promotion")
-	Harness.assertTrue(ability.suppressionReason == "shared_routine_spell", "Persistent sparse model should use shared routine evidence")
+	Harness.assertTrue(
+		ability.autoSuppressed == true,
+		"Sparse shared routine spell should be suppressed after promotion"
+	)
+	Harness.assertTrue(
+		ability.suppressionReason == "shared_routine_spell",
+		"Persistent sparse model should use shared routine evidence"
+	)
 end
 
 local function scenarioConfigDisplayOverrideForSuppressedAbility()
@@ -1225,7 +1992,10 @@ local function scenarioConfigDisplayOverrideForSuppressedAbility()
 
 	local model = Harness.encounter(actorKey)
 	local quickJab = Harness.ability(model, actorKey, "Quick Jab")
-	Harness.assertTrue(quickJab ~= nil and quickJab.autoSuppressed == true, "Override fixture should start as auto-suppressed")
+	Harness.assertTrue(
+		quickJab ~= nil and quickJab.autoSuppressed == true,
+		"Override fixture should start as auto-suppressed"
+	)
 
 	local zoneKey = Harness.currentZone().key
 	addon.Core.Config.setAbilityDisplayMode(zoneKey, model.key, quickJab.key, "show")
@@ -1245,34 +2015,105 @@ local function scenarioCombatLogPayloadNormalization()
 	local flags = Harness.hostileFlags()
 	local guid = Harness.makeGuid("Payload Boss", 658)
 	local timestamp, eventType, sourceGUID, sourceName, sourceFlags, destGUID, destName, destFlags, spellId, spellName, spellSchool =
-		addon.Capture.CombatLog.normalizePayload(3, "SPELL_CAST_SUCCESS", guid, "Payload Boss", flags, "Player-1", "Tester", 0, 44, "Payload Blast", 1)
-	Harness.assertTrue(timestamp == 3 and eventType == "SPELL_CAST_SUCCESS", "Old CLEU payload should keep timestamp and subevent")
-	Harness.assertTrue(sourceGUID == guid and sourceName == "Payload Boss" and sourceFlags == flags, "Old CLEU payload should keep source fields")
-	Harness.assertTrue(destGUID == "Player-1" and destName == "Tester" and destFlags == 0, "Old CLEU payload should keep dest fields")
-	Harness.assertTrue(spellId == 44 and spellName == "Payload Blast" and spellSchool == 1, "Old CLEU payload should keep spell fields")
+		addon.Capture.CombatLog.normalizePayload(
+			3,
+			"SPELL_CAST_SUCCESS",
+			guid,
+			"Payload Boss",
+			flags,
+			"Player-1",
+			"Tester",
+			0,
+			44,
+			"Payload Blast",
+			1
+		)
+	Harness.assertTrue(
+		timestamp == 3 and eventType == "SPELL_CAST_SUCCESS",
+		"Old CLEU payload should keep timestamp and subevent"
+	)
+	Harness.assertTrue(
+		sourceGUID == guid and sourceName == "Payload Boss" and sourceFlags == flags,
+		"Old CLEU payload should keep source fields"
+	)
+	Harness.assertTrue(
+		destGUID == "Player-1" and destName == "Tester" and destFlags == 0,
+		"Old CLEU payload should keep dest fields"
+	)
+	Harness.assertTrue(
+		spellId == 44 and spellName == "Payload Blast" and spellSchool == 1,
+		"Old CLEU payload should keep spell fields"
+	)
 
 	timestamp, eventType, sourceGUID, sourceName, sourceFlags, destGUID, destName, destFlags, spellId, spellName, spellSchool =
-		addon.Capture.CombatLog.normalizePayload(4, "SPELL_CAST_SUCCESS", false, guid, "Payload Boss", flags, 0, "Player-2", "Tester", 0, 0, 45, "Modern Blast", 2)
-	Harness.assertTrue(timestamp == 4 and eventType == "SPELL_CAST_SUCCESS", "Modern CLEU payload should keep timestamp and subevent")
-	Harness.assertTrue(sourceGUID == guid and sourceName == "Payload Boss" and sourceFlags == flags, "Modern CLEU payload should skip hideCaster and source raid flags")
-	Harness.assertTrue(destGUID == "Player-2" and destName == "Tester" and destFlags == 0, "Modern CLEU payload should skip dest raid flags")
-	Harness.assertTrue(spellId == 45 and spellName == "Modern Blast" and spellSchool == 2, "Modern CLEU payload should keep spell fields")
+		addon.Capture.CombatLog.normalizePayload(
+			4,
+			"SPELL_CAST_SUCCESS",
+			false,
+			guid,
+			"Payload Boss",
+			flags,
+			0,
+			"Player-2",
+			"Tester",
+			0,
+			0,
+			45,
+			"Modern Blast",
+			2
+		)
+	Harness.assertTrue(
+		timestamp == 4 and eventType == "SPELL_CAST_SUCCESS",
+		"Modern CLEU payload should keep timestamp and subevent"
+	)
+	Harness.assertTrue(
+		sourceGUID == guid and sourceName == "Payload Boss" and sourceFlags == flags,
+		"Modern CLEU payload should skip hideCaster and source raid flags"
+	)
+	Harness.assertTrue(
+		destGUID == "Player-2" and destName == "Tester" and destFlags == 0,
+		"Modern CLEU payload should skip dest raid flags"
+	)
+	Harness.assertTrue(
+		spellId == 45 and spellName == "Modern Blast" and spellSchool == 2,
+		"Modern CLEU payload should keep spell fields"
+	)
 end
 
 local function scenarioCombatLogHandlerKeepsSpellNames()
 	Harness.resetState("Replay Combat Handler")
 	local boss = "Payload Healer"
 	local guid = Harness.makeGuid(boss, 6581)
-	Harness.emitCombatLogSpell({ t = 0, sourceName = boss, sourceGUID = guid, spellName = "Holy Light", spellId = 635, eventType = "SPELL_HEAL", hp = 100 })
-	Harness.emitCombatLogSpell({ t = 24, sourceName = boss, sourceGUID = guid, spellName = "Holy Light", spellId = 635, eventType = "SPELL_HEAL", hp = 70 })
+	Harness.emitCombatLogSpell({
+		t = 0,
+		sourceName = boss,
+		sourceGUID = guid,
+		spellName = "Holy Light",
+		spellId = 635,
+		eventType = "SPELL_HEAL",
+		hp = 100,
+	})
+	Harness.emitCombatLogSpell({
+		t = 24,
+		sourceName = boss,
+		sourceGUID = guid,
+		spellName = "Holy Light",
+		spellId = 635,
+		eventType = "SPELL_HEAL",
+		hp = 70,
+	})
 
 	local pullState = addon.Learning.AbilityLearner.getCurrentPullState()
 	local actorKey = addon.Core.Util.actorKey(boss, guid)
 	local bossState = pullState and pullState.bosses and pullState.bosses[actorKey] or nil
 	local holyLight = bossState and bossState.abilities[addon.Core.Util.timerAbilityKey(635, "Holy Light")] or nil
-	local eventNameAbility = bossState and bossState.abilities[addon.Core.Util.timerAbilityKey(nil, "SPELL_HEAL")] or nil
+	local eventNameAbility = bossState and bossState.abilities[addon.Core.Util.timerAbilityKey(nil, "SPELL_HEAL")]
+		or nil
 	Harness.assertTrue(holyLight ~= nil, "CombatLog handler should learn the real spell name from the full CLEU path")
-	Harness.assertTrue(holyLight.spellName == "Holy Light", "CombatLog handler should not replace spell name with subevent")
+	Harness.assertTrue(
+		holyLight.spellName == "Holy Light",
+		"CombatLog handler should not replace spell name with subevent"
+	)
 	Harness.assertTrue(eventNameAbility == nil, "CombatLog handler must not create SPELL_HEAL as an ability")
 end
 
@@ -1280,8 +2121,22 @@ local function scenarioHealOnlySpellCanBecomeTimer()
 	Harness.resetState("Replay Boss Heal")
 	local boss = "Healing Commander"
 	local guid = Harness.makeGuid(boss, 659)
-	Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = guid, spellName = "Holy Light", eventType = "SPELL_HEAL", hp = 100 })
-	Harness.emitSpell({ t = 24, sourceName = boss, sourceGUID = guid, spellName = "Holy Light", eventType = "SPELL_HEAL", hp = 72 })
+	Harness.emitSpell({
+		t = 0,
+		sourceName = boss,
+		sourceGUID = guid,
+		spellName = "Holy Light",
+		eventType = "SPELL_HEAL",
+		hp = 100,
+	})
+	Harness.emitSpell({
+		t = 24,
+		sourceName = boss,
+		sourceGUID = guid,
+		spellName = "Holy Light",
+		eventType = "SPELL_HEAL",
+		hp = 72,
+	})
 
 	local timer = Harness.firstPredictionByName("Holy Light")
 	Harness.assertTrue(timer ~= nil, "A heal-only boss spell should be eligible for live timing")
@@ -1339,8 +2194,14 @@ local function scenarioSavedVariablesCleanCombatLogSubeventAbilities()
 	local encounter = addon.db.learned.zones.cleanup_zone.encounters.cleanup_boss
 	Harness.assertTrue(encounter.abilities.bad == nil, "SavedVariables cleanup should remove event-name abilities")
 	Harness.assertTrue(encounter.abilities.good ~= nil, "SavedVariables cleanup should preserve real spell abilities")
-	Harness.assertTrue(addon.db.config.overrides.zones.cleanup_zone.encounters.cleanup_boss.abilities.bad == nil, "SavedVariables cleanup should remove stale overrides for deleted abilities")
-	Harness.assertTrue(addon.db.config.overrides.zones.cleanup_zone.encounters.cleanup_boss.abilities.good ~= nil, "SavedVariables cleanup should preserve overrides for real abilities")
+	Harness.assertTrue(
+		addon.db.config.overrides.zones.cleanup_zone.encounters.cleanup_boss.abilities.bad == nil,
+		"SavedVariables cleanup should remove stale overrides for deleted abilities"
+	)
+	Harness.assertTrue(
+		addon.db.config.overrides.zones.cleanup_zone.encounters.cleanup_boss.abilities.good ~= nil,
+		"SavedVariables cleanup should preserve overrides for real abilities"
+	)
 end
 
 local manualLearnedData
@@ -1371,14 +2232,26 @@ local function scenarioSavedVariablesMigratesOldWarningLeadTimeDefault()
 	_G.BossTrackerCharDB = {}
 	addon.Core.SavedVariables.init()
 
-	Harness.assertTrue(addon.db.config.warningLeadTime == C.DEFAULT_CONFIG.warningLeadTime, "Old stored warning default should migrate to the current default")
-	Harness.assertTrue(addon.db.configMigrations.warningLeadTimeDefault3 == true, "Warning default migration should be marked complete")
-	Harness.assertTrue(migrationWithIdExists(addon.db, "warningLeadTimeDefault3"), "Warning default migration should leave a migration breadcrumb")
+	Harness.assertTrue(
+		addon.db.config.warningLeadTime == C.DEFAULT_CONFIG.warningLeadTime,
+		"Old stored warning default should migrate to the current default"
+	)
+	Harness.assertTrue(
+		addon.db.configMigrations.warningLeadTimeDefault3 == true,
+		"Warning default migration should be marked complete"
+	)
+	Harness.assertTrue(
+		migrationWithIdExists(addon.db, "warningLeadTimeDefault3"),
+		"Warning default migration should leave a migration breadcrumb"
+	)
 
 	addon.db.config.warningLeadTime = 5
 	addon.Core.SavedVariables.init()
 
-	Harness.assertTrue(addon.db.config.warningLeadTime == 5, "Completed warning default migration should not override a later player value")
+	Harness.assertTrue(
+		addon.db.config.warningLeadTime == 5,
+		"Completed warning default migration should not override a later player value"
+	)
 end
 
 local function scenarioSavedVariablesRestoreFromCharacterBackup()
@@ -1395,7 +2268,10 @@ local function scenarioSavedVariablesRestoreFromCharacterBackup()
 	Harness.finishPull(45)
 
 	local zoneKey = addon.Core.Util.zoneInfo().key
-	Harness.assertTrue(addon.db.learned.zones[zoneKey].encounters[encounterKey] ~= nil, "Backup fixture should learn an encounter")
+	Harness.assertTrue(
+		addon.db.learned.zones[zoneKey].encounters[encounterKey] ~= nil,
+		"Backup fixture should learn an encounter"
+	)
 	addon.Core.Config.setAbilityDisplayMode(zoneKey, encounterKey, abilityKey, "hide")
 	addon.Core.Config.setWarningLeadTime(9)
 	addon.db.config.timersEnabled = false
@@ -1405,10 +2281,22 @@ local function scenarioSavedVariablesRestoreFromCharacterBackup()
 	addon.Core.SavedVariables.syncLearnedBackup(true)
 	local backup = _G.BossTrackerCharDB.learnedBackup
 	Harness.assertTrue(backup ~= nil and backup.learned ~= nil, "Character backup should be written after learning")
-	Harness.assertTrue(storedEvidenceKillCount(backup.evidence) == 1, "Character backup should include permanent evidence")
-	Harness.assertTrue(backup.evidence.incomplete == nil, "Character backup should not include session-local incomplete evidence")
-	Harness.assertTrue(backup.overrides.zones[zoneKey].encounters[encounterKey].abilities[abilityKey].display == "hide", "Character backup should include ability overrides")
-	Harness.assertTrue(backup.config.warningLeadTime == 9 and backup.config.timersEnabled == false, "Character backup should include player-facing timer settings")
+	Harness.assertTrue(
+		storedEvidenceKillCount(backup.evidence) == 1,
+		"Character backup should include permanent evidence"
+	)
+	Harness.assertTrue(
+		backup.evidence.incomplete == nil,
+		"Character backup should not include session-local incomplete evidence"
+	)
+	Harness.assertTrue(
+		backup.overrides.zones[zoneKey].encounters[encounterKey].abilities[abilityKey].display == "hide",
+		"Character backup should include ability overrides"
+	)
+	Harness.assertTrue(
+		backup.config.warningLeadTime == 9 and backup.config.timersEnabled == false,
+		"Character backup should include player-facing timer settings"
+	)
 
 	_G.BossTrackerDB = {}
 	_G.BossTrackerCharDB = {
@@ -1416,12 +2304,33 @@ local function scenarioSavedVariablesRestoreFromCharacterBackup()
 	}
 	addon.Core.SavedVariables.init()
 
-	Harness.assertTrue(addon.db.learned.zones[zoneKey].encounters[encounterKey] ~= nil, "Fresh account DB should restore learned data from character backup")
-	Harness.assertTrue(addon.Core.EvidenceStore.countPermanentKills() == 1, "Fresh account DB should restore permanent evidence from character backup")
-	Harness.assertTrue(addon.db.evidence.incomplete == nil, "Restored account evidence should not include character backup incomplete diagnostics")
-	Harness.assertTrue(addon.db.config.overrides.zones[zoneKey].encounters[encounterKey].abilities[abilityKey].display == "hide", "Fresh account DB should restore ability overrides from character backup")
-	Harness.assertTrue(addon.db.config.warningLeadTime == 9 and addon.db.config.timersEnabled == false, "Fresh account DB should restore player-facing timer settings from character backup")
-	Harness.assertTrue(migrationWithReasonExists(addon.db, "Restored learned data from per-character backup after account SavedVariables were empty."), "Restore should leave a migration breadcrumb")
+	Harness.assertTrue(
+		addon.db.learned.zones[zoneKey].encounters[encounterKey] ~= nil,
+		"Fresh account DB should restore learned data from character backup"
+	)
+	Harness.assertTrue(
+		addon.Core.EvidenceStore.countPermanentKills() == 1,
+		"Fresh account DB should restore permanent evidence from character backup"
+	)
+	Harness.assertTrue(
+		addon.db.evidence.incomplete == nil,
+		"Restored account evidence should not include character backup incomplete diagnostics"
+	)
+	Harness.assertTrue(
+		addon.db.config.overrides.zones[zoneKey].encounters[encounterKey].abilities[abilityKey].display == "hide",
+		"Fresh account DB should restore ability overrides from character backup"
+	)
+	Harness.assertTrue(
+		addon.db.config.warningLeadTime == 9 and addon.db.config.timersEnabled == false,
+		"Fresh account DB should restore player-facing timer settings from character backup"
+	)
+	Harness.assertTrue(
+		migrationWithReasonExists(
+			addon.db,
+			"Restored learned data from per-character backup after account SavedVariables were empty."
+		),
+		"Restore should leave a migration breadcrumb"
+	)
 
 	local evidenceOnlyBackup = copyTable(backup)
 	evidenceOnlyBackup.learned = { zones = {} }
@@ -1431,10 +2340,22 @@ local function scenarioSavedVariablesRestoreFromCharacterBackup()
 	}
 	addon.Core.SavedVariables.init()
 
-	Harness.assertTrue(addon.Core.EvidenceStore.countPermanentKills() == 1, "Evidence-only character backup should still restore permanent evidence")
-	Harness.assertTrue(addon.db.learnedMeta.rebuildRequired == true, "Evidence-only character backup should request a learned-data rebuild")
-	Harness.assertTrue(addon.Core.SavedVariables.rebuildLearnedIfNeeded() == true, "Evidence-only character backup should rebuild learned data from restored evidence")
-	Harness.assertTrue(addon.db.learned.zones[zoneKey].encounters[encounterKey] ~= nil, "Evidence-only character backup should recover the learned model after rebuild")
+	Harness.assertTrue(
+		addon.Core.EvidenceStore.countPermanentKills() == 1,
+		"Evidence-only character backup should still restore permanent evidence"
+	)
+	Harness.assertTrue(
+		addon.db.learnedMeta.rebuildRequired == true,
+		"Evidence-only character backup should request a learned-data rebuild"
+	)
+	Harness.assertTrue(
+		addon.Core.SavedVariables.rebuildLearnedIfNeeded() == true,
+		"Evidence-only character backup should rebuild learned data from restored evidence"
+	)
+	Harness.assertTrue(
+		addon.db.learned.zones[zoneKey].encounters[encounterKey] ~= nil,
+		"Evidence-only character backup should recover the learned model after rebuild"
+	)
 end
 
 local function scenarioSavedVariablesLateCharacterBackupRestoresAfterEmptyCharacterLogin()
@@ -1446,9 +2367,18 @@ local function scenarioSavedVariablesLateCharacterBackupRestoresAfterEmptyCharac
 	_G.BossTrackerDB = {}
 	_G.BossTrackerCharDB = {}
 	addon.Core.SavedVariables.init()
-	Harness.assertTrue(next(addon.db.learned.zones) == nil, "First login without a backup should leave learned data empty")
-	Harness.assertTrue(addon.db.learnedMeta and addon.db.learnedMeta.resetAt ~= nil, "First login without a backup should record a schema reset, not a manual clear")
-	Harness.assertTrue(addon.db.learnedMeta.clearedAt == nil, "First login without a backup must not create a manual clear tombstone")
+	Harness.assertTrue(
+		next(addon.db.learned.zones) == nil,
+		"First login without a backup should leave learned data empty"
+	)
+	Harness.assertTrue(
+		addon.db.learnedMeta and addon.db.learnedMeta.resetAt ~= nil,
+		"First login without a backup should record a schema reset, not a manual clear"
+	)
+	Harness.assertTrue(
+		addon.db.learnedMeta.clearedAt == nil,
+		"First login without a backup must not create a manual clear tombstone"
+	)
 
 	local emptyAccountDb = _G.BossTrackerDB
 	_G.BossTrackerDB = emptyAccountDb
@@ -1486,9 +2416,19 @@ local function scenarioSavedVariablesLateCharacterBackupRestoresAfterEmptyCharac
 	}
 	addon.Core.SavedVariables.init()
 
-	Harness.assertTrue(addon.db.learned.zones[zoneKey].encounters.late_backup_boss ~= nil, "A later character backup should restore after an earlier empty-character login")
-	Harness.assertTrue(addon.db.config.warningLeadTime == 7, "Late backup restore should include player-facing settings")
-	Harness.assertTrue(addon.db.config.overrides.zones[zoneKey].encounters.late_backup_boss.abilities[backupAbilityKey].warning == "raid", "Late backup restore should include ability overrides")
+	Harness.assertTrue(
+		addon.db.learned.zones[zoneKey].encounters.late_backup_boss ~= nil,
+		"A later character backup should restore after an earlier empty-character login"
+	)
+	Harness.assertTrue(
+		addon.db.config.warningLeadTime == 7,
+		"Late backup restore should include player-facing settings"
+	)
+	Harness.assertTrue(
+		addon.db.config.overrides.zones[zoneKey].encounters.late_backup_boss.abilities[backupAbilityKey].warning
+			== "raid",
+		"Late backup restore should include ability overrides"
+	)
 end
 
 local function scenarioSavedVariablesSchemaResetTombstoneDoesNotBlockLaterBackup()
@@ -1539,7 +2479,10 @@ local function scenarioSavedVariablesSchemaResetTombstoneDoesNotBlockLaterBackup
 	}
 	addon.Core.SavedVariables.init()
 
-	Harness.assertTrue(addon.db.learned.zones[zoneKey].encounters.reset_tombstone_boss ~= nil, "A schema-reset tombstone from the broken recovery build must not block a later character backup")
+	Harness.assertTrue(
+		addon.db.learned.zones[zoneKey].encounters.reset_tombstone_boss ~= nil,
+		"A schema-reset tombstone from the broken recovery build must not block a later character backup"
+	)
 end
 
 local function scenarioSavedVariablesCompactsDebugStoreAndDisablesVerboseDefaults()
@@ -1644,12 +2587,30 @@ local function scenarioSavedVariablesCompactsDebugStoreAndDisablesVerboseDefault
 	_G.BossTrackerCharDB = {}
 	addon.Core.SavedVariables.init()
 
-	Harness.assertTrue(addon.db.config.debugEnabled == false and addon.db.config.combatLogDebug == false, "Verbose debug capture should migrate to disabled by default")
-	Harness.assertTrue(addon.db.debug.logs.size == 0 and next(addon.db.debug.logs.items) == nil, "Stored debug logs should be cleared during compaction")
+	Harness.assertTrue(
+		addon.db.config.debugEnabled == false and addon.db.config.combatLogDebug == false,
+		"Verbose debug capture should migrate to disabled by default"
+	)
+	Harness.assertTrue(
+		addon.db.debug.logs.size == 0 and next(addon.db.debug.logs.items) == nil,
+		"Stored debug logs should be cleared during compaction"
+	)
 	Harness.assertTrue(#addon.db.debug.runs == 1, "Debug compaction should retain bounded run summaries")
-	Harness.assertTrue(addon.db.debug.runs[1].events == nil and addon.db.debug.runs[1].logs == nil and addon.db.debug.runs[1].bossContexts == nil, "Debug run details should not persist after compaction")
-	Harness.assertTrue(addon.db.debug.runs[1].pulls[1].events == nil and addon.db.debug.runs[1].pulls[1].spells == nil, "Debug pull summaries should not persist full pull payloads")
-	Harness.assertTrue(addon.db.configMigrations.debugCaptureDefaultOff1 == true and addon.db.configMigrations.debugStoreCompacted1 == true, "Debug migrations should be marked complete")
+	Harness.assertTrue(
+		addon.db.debug.runs[1].events == nil
+			and addon.db.debug.runs[1].logs == nil
+			and addon.db.debug.runs[1].bossContexts == nil,
+		"Debug run details should not persist after compaction"
+	)
+	Harness.assertTrue(
+		addon.db.debug.runs[1].pulls[1].events == nil and addon.db.debug.runs[1].pulls[1].spells == nil,
+		"Debug pull summaries should not persist full pull payloads"
+	)
+	Harness.assertTrue(
+		addon.db.configMigrations.debugCaptureDefaultOff1 == true
+			and addon.db.configMigrations.debugStoreCompacted1 == true,
+		"Debug migrations should be marked complete"
+	)
 end
 
 local function scenarioSavedVariablesDropsPersistedIncompleteEvidence()
@@ -1672,8 +2633,14 @@ local function scenarioSavedVariablesDropsPersistedIncompleteEvidence()
 	_G.BossTrackerCharDB = {}
 	addon.Core.SavedVariables.init()
 
-	Harness.assertTrue(addon.db.evidence.incomplete == nil, "SavedVariables init should remove legacy persisted incomplete evidence")
-	Harness.assertTrue(addon.Core.EvidenceStore.countIncomplete() == 0, "Legacy persisted incomplete evidence should not enter the session-local buffer")
+	Harness.assertTrue(
+		addon.db.evidence.incomplete == nil,
+		"SavedVariables init should remove legacy persisted incomplete evidence"
+	)
+	Harness.assertTrue(
+		addon.Core.EvidenceStore.countIncomplete() == 0,
+		"Legacy persisted incomplete evidence should not enter the session-local buffer"
+	)
 end
 
 function manualLearnedData(zoneKey, encounterKey, spellName)
@@ -1710,7 +2677,8 @@ function manualLearnedData(zoneKey, encounterKey, spellName)
 				},
 			},
 		},
-	}, abilityKey
+	},
+		abilityKey
 end
 
 local function scenarioSavedVariablesNewerCharacterBackupPromptsAndCanKeepAccount()
@@ -1753,9 +2721,18 @@ local function scenarioSavedVariablesNewerCharacterBackupPromptsAndCanKeepAccoun
 	}
 	addon.Core.SavedVariables.init()
 
-	Harness.assertTrue(addon.Core.SavedVariables.getPendingLearnedBackupConflict() ~= nil, "Newer character backup should create a pending conflict")
-	Harness.assertTrue(addon.db.learned.zones[zoneKey].encounters.account_boss ~= nil, "Account learned data should stay active before the player decides")
-	Harness.assertTrue(addon.db.learned.zones[zoneKey].encounters.backup_boss == nil, "Newer character backup must not overwrite account data automatically")
+	Harness.assertTrue(
+		addon.Core.SavedVariables.getPendingLearnedBackupConflict() ~= nil,
+		"Newer character backup should create a pending conflict"
+	)
+	Harness.assertTrue(
+		addon.db.learned.zones[zoneKey].encounters.account_boss ~= nil,
+		"Account learned data should stay active before the player decides"
+	)
+	Harness.assertTrue(
+		addon.db.learned.zones[zoneKey].encounters.backup_boss == nil,
+		"Newer character backup must not overwrite account data automatically"
+	)
 
 	local previousDialogs = StaticPopupDialogs
 	local previousShow = StaticPopup_Show
@@ -1766,19 +2743,54 @@ local function scenarioSavedVariablesNewerCharacterBackupPromptsAndCanKeepAccoun
 		shownBackupSummary = backupSummary
 		shownAccountSummary = accountSummary
 	end
-	Harness.assertTrue(addon.Core.SavedVariables.showLearnedBackupConflictPrompt() == true, "Newer character backup should show a decision popup")
-	Harness.assertTrue(shownKey == "BOSSTRACKER_LEARNED_BACKUP_CONFLICT", "Decision popup should use the backup conflict dialog")
-	Harness.assertTrue(type(shownBackupSummary) == "string" and type(shownAccountSummary) == "string", "Decision popup should show data summaries")
-	Harness.assertTrue(StaticPopupDialogs.BOSSTRACKER_LEARNED_BACKUP_CONFLICT.button1 == "Restore", "Decision popup should label the restore action clearly")
-	Harness.assertTrue(StaticPopupDialogs.BOSSTRACKER_LEARNED_BACKUP_CONFLICT.button2 == "Discard", "Decision popup should label the discard action clearly")
-	Harness.assertTrue(string.find(StaticPopupDialogs.BOSSTRACKER_LEARNED_BACKUP_CONFLICT.text, "newer BossTracker data than the global data", 1, true) ~= nil, "Decision popup should explain that the character data is newer")
+	Harness.assertTrue(
+		addon.Core.SavedVariables.showLearnedBackupConflictPrompt() == true,
+		"Newer character backup should show a decision popup"
+	)
+	Harness.assertTrue(
+		shownKey == "BOSSTRACKER_LEARNED_BACKUP_CONFLICT",
+		"Decision popup should use the backup conflict dialog"
+	)
+	Harness.assertTrue(
+		type(shownBackupSummary) == "string" and type(shownAccountSummary) == "string",
+		"Decision popup should show data summaries"
+	)
+	Harness.assertTrue(
+		StaticPopupDialogs.BOSSTRACKER_LEARNED_BACKUP_CONFLICT.button1 == "Restore",
+		"Decision popup should label the restore action clearly"
+	)
+	Harness.assertTrue(
+		StaticPopupDialogs.BOSSTRACKER_LEARNED_BACKUP_CONFLICT.button2 == "Discard",
+		"Decision popup should label the discard action clearly"
+	)
+	Harness.assertTrue(
+		string.find(
+			StaticPopupDialogs.BOSSTRACKER_LEARNED_BACKUP_CONFLICT.text,
+			"newer BossTracker data than the global data",
+			1,
+			true
+		) ~= nil,
+		"Decision popup should explain that the character data is newer"
+	)
 	StaticPopupDialogs = previousDialogs
 	StaticPopup_Show = previousShow
 
-	Harness.assertTrue(addon.Core.SavedVariables.keepCurrentLearnedData() == true, "Player should be able to keep current account data")
-	Harness.assertTrue(addon.Core.SavedVariables.getPendingLearnedBackupConflict() == nil, "Keeping account data should clear the pending conflict")
-	Harness.assertTrue(addon.charDB.learnedBackup.learned.zones[zoneKey].encounters.account_boss ~= nil, "Keeping account data should replace the character backup")
-	Harness.assertTrue(addon.charDB.learnedBackup.learned.zones[zoneKey].encounters.backup_boss == nil, "Keeping account data should remove the older character backup content")
+	Harness.assertTrue(
+		addon.Core.SavedVariables.keepCurrentLearnedData() == true,
+		"Player should be able to keep current account data"
+	)
+	Harness.assertTrue(
+		addon.Core.SavedVariables.getPendingLearnedBackupConflict() == nil,
+		"Keeping account data should clear the pending conflict"
+	)
+	Harness.assertTrue(
+		addon.charDB.learnedBackup.learned.zones[zoneKey].encounters.account_boss ~= nil,
+		"Keeping account data should replace the character backup"
+	)
+	Harness.assertTrue(
+		addon.charDB.learnedBackup.learned.zones[zoneKey].encounters.backup_boss == nil,
+		"Keeping account data should remove the older character backup content"
+	)
 end
 
 local function scenarioSavedVariablesNewerCharacterBackupCanRestore()
@@ -1836,11 +2848,28 @@ local function scenarioSavedVariablesNewerCharacterBackupCanRestore()
 	}
 	addon.Core.SavedVariables.init()
 
-	Harness.assertTrue(addon.Core.SavedVariables.restorePendingLearnedBackup() == true, "Player should be able to restore the newer character backup")
-	Harness.assertTrue(addon.db.learned.zones[zoneKey].encounters.backup_boss ~= nil, "Restoring should replace account data with the character backup")
-	Harness.assertTrue(addon.db.learned.zones[zoneKey].encounters.account_boss == nil, "Restoring should remove the older account model")
-	Harness.assertTrue(addon.db.config.overrides.zones[zoneKey].encounters.backup_boss.abilities[backupAbilityKey].warning == "personal", "Restoring should include warning overrides")
-	Harness.assertTrue(addon.db.migrations[#addon.db.migrations].reason == "Restored newer per-character learned data after player confirmation.", "Restoring should leave a player-confirmed migration breadcrumb")
+	Harness.assertTrue(
+		addon.Core.SavedVariables.restorePendingLearnedBackup() == true,
+		"Player should be able to restore the newer character backup"
+	)
+	Harness.assertTrue(
+		addon.db.learned.zones[zoneKey].encounters.backup_boss ~= nil,
+		"Restoring should replace account data with the character backup"
+	)
+	Harness.assertTrue(
+		addon.db.learned.zones[zoneKey].encounters.account_boss == nil,
+		"Restoring should remove the older account model"
+	)
+	Harness.assertTrue(
+		addon.db.config.overrides.zones[zoneKey].encounters.backup_boss.abilities[backupAbilityKey].warning
+			== "personal",
+		"Restoring should include warning overrides"
+	)
+	Harness.assertTrue(
+		addon.db.migrations[#addon.db.migrations].reason
+			== "Restored newer per-character learned data after player confirmation.",
+		"Restoring should leave a player-confirmed migration breadcrumb"
+	)
 end
 
 local function scenarioSavedVariablesExplicitClearBlocksCharacterRestore()
@@ -1884,9 +2913,18 @@ local function scenarioSavedVariablesExplicitClearBlocksCharacterRestore()
 	}
 	addon.Core.SavedVariables.init()
 
-	Harness.assertTrue(next(addon.db.learned.zones) == nil, "Explicitly cleared account data should not restore from an old character backup")
-	Harness.assertTrue(addon.charDB.learnedBackup == nil, "Explicitly cleared account data should remove stale character backup")
-	Harness.assertTrue(addon.Core.SavedVariables.getPendingLearnedBackupConflict() == nil, "Explicitly cleared account data should not ask about old backups")
+	Harness.assertTrue(
+		next(addon.db.learned.zones) == nil,
+		"Explicitly cleared account data should not restore from an old character backup"
+	)
+	Harness.assertTrue(
+		addon.charDB.learnedBackup == nil,
+		"Explicitly cleared account data should remove stale character backup"
+	)
+	Harness.assertTrue(
+		addon.Core.SavedVariables.getPendingLearnedBackupConflict() == nil,
+		"Explicitly cleared account data should not ask about old backups"
+	)
 end
 
 local function scenarioClearLearnedClearsConfigOverrides()
@@ -1902,8 +2940,14 @@ local function scenarioClearLearnedClearsConfigOverrides()
 	Harness.assertTrue(addon.db.config.overrides.zones["zone-a"] ~= nil, "Config override fixture should be present")
 	addon.Core.SavedVariables.clearLearnedData("Replay clear learned")
 	Harness.assertTrue(next(addon.db.learned.zones) == nil, "Clear learned should remove learned zones")
-	Harness.assertTrue(next(addon.db.config.overrides.zones) == nil, "Clear learned should also remove stale ability overrides")
-	Harness.assertTrue(addon.charDB.learnedBackup == nil, "Clear learned should remove the character learned-data backup")
+	Harness.assertTrue(
+		next(addon.db.config.overrides.zones) == nil,
+		"Clear learned should also remove stale ability overrides"
+	)
+	Harness.assertTrue(
+		addon.charDB.learnedBackup == nil,
+		"Clear learned should remove the character learned-data backup"
+	)
 end
 
 local function scenarioWarningRaidPermissionUsesWotlkApi()
@@ -1915,18 +2959,39 @@ local function scenarioWarningRaidPermissionUsesWotlkApi()
 	local previousIsRaidOfficer = IsRaidOfficer
 
 	IsInRaid = nil
-	GetNumRaidMembers = function() return 10 end
+	GetNumRaidMembers = function()
+		return 10
+	end
 	UnitIsGroupLeader = nil
-	IsRaidLeader = function() return true end
-	IsRaidOfficer = function() return false end
-	Harness.assertTrue(addon.Runtime.WarningEngine.canSendRaidWarning() == true, "WotLK raid leader API should allow raid warnings")
+	IsRaidLeader = function()
+		return true
+	end
+	IsRaidOfficer = function()
+		return false
+	end
+	Harness.assertTrue(
+		addon.Runtime.WarningEngine.canSendRaidWarning() == true,
+		"WotLK raid leader API should allow raid warnings"
+	)
 
-	IsRaidLeader = function() return false end
-	IsRaidOfficer = function() return true end
-	Harness.assertTrue(addon.Runtime.WarningEngine.canSendRaidWarning() == true, "WotLK raid officer API should allow raid warnings")
+	IsRaidLeader = function()
+		return false
+	end
+	IsRaidOfficer = function()
+		return true
+	end
+	Harness.assertTrue(
+		addon.Runtime.WarningEngine.canSendRaidWarning() == true,
+		"WotLK raid officer API should allow raid warnings"
+	)
 
-	IsRaidOfficer = function() return false end
-	Harness.assertTrue(addon.Runtime.WarningEngine.canSendRaidWarning() == false, "Raid members without permission should fall back to personal warnings")
+	IsRaidOfficer = function()
+		return false
+	end
+	Harness.assertTrue(
+		addon.Runtime.WarningEngine.canSendRaidWarning() == false,
+		"Raid members without permission should fall back to personal warnings"
+	)
 
 	IsInRaid = previousIsInRaid
 	GetNumRaidMembers = previousGetNumRaidMembers
@@ -1940,23 +3005,44 @@ local function scenarioPullTimerAnnouncementsAndPreciseBar()
 	Harness.setGroupMembers(4, 0)
 	Harness.clearAddonMessages()
 	Harness.clearChatMessagesSent()
-	Harness.assertTrue(Harness.registeredAddonPrefix(addon.Core.Constants.PULL_TIMER_PREFIX), "Pull timer addon prefix should be registered")
-	Harness.assertTrue(SlashCmdList.BOSSTRACKERPULL ~= nil, "/pull alias should be registered when no existing slash command owns it")
+	Harness.assertTrue(
+		Harness.registeredAddonPrefix(addon.Core.Constants.PULL_TIMER_PREFIX),
+		"Pull timer addon prefix should be registered"
+	)
+	Harness.assertTrue(
+		SlashCmdList.BOSSTRACKERPULL ~= nil,
+		"/pull alias should be registered when no existing slash command owns it"
+	)
 
 	local thresholds = addon.Runtime.PullTimer.buildAnnouncementThresholds(43)
 	local expectedThresholds = { 40, 35, 30, 25, 20, 15, 10, 5, 4, 3, 2, 1, 0 }
-	Harness.assertTrue(#thresholds == #expectedThresholds, "Forty-three second pull should create expected announcement count")
+	Harness.assertTrue(
+		#thresholds == #expectedThresholds,
+		"Forty-three second pull should create expected announcement count"
+	)
 	for index = 1, #expectedThresholds do
-		Harness.assertTrue(thresholds[index] == expectedThresholds[index], "Pull timer announcement threshold mismatch at index " .. tostring(index))
+		Harness.assertTrue(
+			thresholds[index] == expectedThresholds[index],
+			"Pull timer announcement threshold mismatch at index " .. tostring(index)
+		)
 	end
 
 	SlashCmdList.BOSSTRACKERPULL("40")
 	local addonMessages = Harness.sentAddonMessages()
-	Harness.assertTrue(addonMessages[1] and addonMessages[1].prefix == addon.Core.Constants.PULL_TIMER_PREFIX, "Pull timer should broadcast over its own addon prefix")
-	Harness.assertTrue(addonMessages[1].message == "START|40" and addonMessages[1].distribution == "PARTY", "Party pull timer should broadcast a start message")
+	Harness.assertTrue(
+		addonMessages[1] and addonMessages[1].prefix == addon.Core.Constants.PULL_TIMER_PREFIX,
+		"Pull timer should broadcast over its own addon prefix"
+	)
+	Harness.assertTrue(
+		addonMessages[1].message == "START|40" and addonMessages[1].distribution == "PARTY",
+		"Party pull timer should broadcast a start message"
+	)
 
 	local chatMessages = Harness.sentChatMessages()
-	Harness.assertTrue(chatMessages[1] and chatMessages[1].message == "Pull in 40", "Pull timer should announce the initial duration")
+	Harness.assertTrue(
+		chatMessages[1] and chatMessages[1].message == "Pull in 40",
+		"Pull timer should announce the initial duration"
+	)
 	local row = addon.Runtime.TimerScheduler.getPredictions(false)[1]
 	Harness.assertTrue(row and row.pullTimer == true and row.duration == 40, "Pull timer should be the first timer row")
 	Harness.assertNear(row.remaining, 40, 0.001, "Pull timer row should start from the precise duration")
@@ -1983,18 +3069,29 @@ local function scenarioPullTimerAnnouncementsAndPreciseBar()
 		addon.Runtime.PullTimer.tick()
 		if step.remaining then
 			row = addon.Runtime.TimerScheduler.getPredictions(false)[1]
-			Harness.assertNear(row.remaining, step.remaining, 0.001, "Pull timer row should keep precise remaining time")
+			Harness.assertNear(
+				row.remaining,
+				step.remaining,
+				0.001,
+				"Pull timer row should keep precise remaining time"
+			)
 		end
 		if step.message then
 			expectedChatCount = expectedChatCount + 1
 			chatMessages = Harness.sentChatMessages()
-			Harness.assertTrue(chatMessages[expectedChatCount] and chatMessages[expectedChatCount].message == step.message, "Pull timer announcement mismatch at t=" .. tostring(step.t))
+			Harness.assertTrue(
+				chatMessages[expectedChatCount] and chatMessages[expectedChatCount].message == step.message,
+				"Pull timer announcement mismatch at t=" .. tostring(step.t)
+			)
 		end
 	end
 
 	SlashCmdList.BOSSTRACKERPULL("20")
 	row = addon.Runtime.TimerScheduler.getPredictions(false)[1]
-	Harness.assertTrue(row and row.pullTimer == true and row.duration == 20, "Starting a new pull timer should overwrite the active timer")
+	Harness.assertTrue(
+		row and row.pullTimer == true and row.duration == 20,
+		"Starting a new pull timer should overwrite the active timer"
+	)
 	SlashCmdList.BOSSTRACKERPULL("cancel")
 	row = addon.Runtime.TimerScheduler.getPredictions(false)[1]
 	Harness.assertTrue(not (row and row.pullTimer), "Cancel should remove the active pull timer")
@@ -2025,7 +3122,10 @@ local function scenarioConfiguredWarningPlaysSound()
 	Harness.clearPlayedSounds()
 	Harness.setTime((timer.nextAt or 40) - 2)
 	local warningFrame = Harness.frame("BossTrackerWarningTicker")
-	Harness.assertTrue(warningFrame and warningFrame.scripts and warningFrame.scripts.OnUpdate, "Warning ticker frame should be available")
+	Harness.assertTrue(
+		warningFrame and warningFrame.scripts and warningFrame.scripts.OnUpdate,
+		"Warning ticker frame should be available"
+	)
 	warningFrame.scripts.OnUpdate(warningFrame, addon.Core.Constants.TIMER_UPDATE_SECONDS)
 
 	local sound = Harness.lastPlayedSound()
@@ -2058,19 +3158,28 @@ local function scenarioDelayedTimerHidesUntilObservedAgain()
 	local timer = Harness.firstPredictionByName("Phase Bolt")
 	Harness.assertTrue(timer ~= nil, "Missed timer should remain briefly visible")
 	Harness.assertTrue(timer.status == "delayed", "Missed timer should be marked delayed after its timing window")
-	Harness.assertTrue(countDebugEvents("prediction_timer_delayed") == 1, "Delayed timer should write a bounded diagnostic event")
+	Harness.assertTrue(
+		countDebugEvents("prediction_timer_delayed") == 1,
+		"Delayed timer should write a bounded diagnostic event"
+	)
 
 	Harness.setTime(69)
 	timer = Harness.firstPredictionByName("Phase Bolt")
 	Harness.assertTrue(timer == nil, "Delayed timer should leave the active list after the visible delay period")
-	Harness.assertTrue(countDebugEvents("prediction_timer_delay_hidden") == 1, "Hidden delayed timer should write a diagnostic event")
+	Harness.assertTrue(
+		countDebugEvents("prediction_timer_delay_hidden") == 1,
+		"Hidden delayed timer should write a diagnostic event"
+	)
 
 	Harness.emitSpell({ t = 80, sourceName = boss, sourceGUID = guid, spellName = "Phase Bolt", hp = 60 })
 	timer = Harness.firstPredictionByName("Phase Bolt")
 	Harness.assertTrue(timer ~= nil, "Observed activation should restart the timer")
 	Harness.assertTrue(timer.status ~= "delayed", "Restarted timer should not stay delayed")
 	Harness.assertNear(timer.remaining, 30, 0.2, "Restarted timer should use the observed activation as the new anchor")
-	Harness.assertTrue(countDebugEvents("prediction_timer_delay_resolved") == 1, "Observed activation should resolve the delayed diagnostic")
+	Harness.assertTrue(
+		countDebugEvents("prediction_timer_delay_resolved") == 1,
+		"Observed activation should resolve the delayed diagnostic"
+	)
 end
 
 local function scenarioLearnedDelayedTimerHidesUntilObservedAgain()
@@ -2087,20 +3196,37 @@ local function scenarioLearnedDelayedTimerHidesUntilObservedAgain()
 	Harness.setTime(130.1)
 	local timer = Harness.firstPredictionByName("Phase Bolt")
 	Harness.assertTrue(timer ~= nil, "Missed learned timer should remain briefly visible")
-	Harness.assertTrue(timer.status == "delayed", "Missed learned timer should be marked delayed after its timing window")
-	Harness.assertTrue(countDebugEvents("prediction_timer_delayed") == 1, "Learned delayed timer should write a bounded diagnostic event")
+	Harness.assertTrue(
+		timer.status == "delayed",
+		"Missed learned timer should be marked delayed after its timing window"
+	)
+	Harness.assertTrue(
+		countDebugEvents("prediction_timer_delayed") == 1,
+		"Learned delayed timer should write a bounded diagnostic event"
+	)
 
 	Harness.setTime(139)
 	timer = Harness.firstPredictionByName("Phase Bolt")
 	Harness.assertTrue(timer == nil, "Hidden learned delay should leave the active list before the next activation")
-	Harness.assertTrue(countDebugEvents("prediction_timer_delay_hidden") == 1, "Hidden learned delay should write a diagnostic event")
+	Harness.assertTrue(
+		countDebugEvents("prediction_timer_delay_hidden") == 1,
+		"Hidden learned delay should write a diagnostic event"
+	)
 
 	Harness.emitSpell({ t = 150, sourceName = boss, sourceGUID = nextGuid, spellName = "Phase Bolt", hp = 70 })
 	timer = Harness.firstPredictionByName("Phase Bolt")
 	Harness.assertTrue(timer ~= nil, "Observed learned activation should restart the timer")
 	Harness.assertTrue(timer.status ~= "delayed", "Restarted learned timer should not stay delayed")
-	Harness.assertNear(timer.remaining, 30, 0.2, "Restarted learned timer should use the observed activation as the new anchor")
-	Harness.assertTrue(countDebugEvents("prediction_timer_delay_resolved") == 1, "Observed learned activation should resolve the delayed diagnostic")
+	Harness.assertNear(
+		timer.remaining,
+		30,
+		0.2,
+		"Restarted learned timer should use the observed activation as the new anchor"
+	)
+	Harness.assertTrue(
+		countDebugEvents("prediction_timer_delay_resolved") == 1,
+		"Observed learned activation should resolve the delayed diagnostic"
+	)
 end
 
 local function scenarioSlashHelpAvoidsRawPipeSeparators()
@@ -2115,7 +3241,10 @@ local function scenarioSlashHelpAvoidsRawPipeSeparators()
 		if string.find(message, "/btr sync target, player, group, raid", 1, true) then
 			foundSyncHelp = true
 		end
-		Harness.assertTrue(string.find(message, "target|player|group|raid", 1, true) == nil, "Slash help must not print raw pipe separators because WoW chat treats pipes as escape markers")
+		Harness.assertTrue(
+			string.find(message, "target|player|group|raid", 1, true) == nil,
+			"Slash help must not print raw pipe separators because WoW chat treats pipes as escape markers"
+		)
 	end
 	Harness.assertTrue(foundSyncHelp == true, "Slash help should show the sync target choices")
 end
@@ -2130,7 +3259,10 @@ local function scenarioPredictionDeduplicatesSameModelAbility()
 	Harness.emitSpell({ t = 12, sourceName = boss, sourceGUID = firstGuid, spellName = "Echo Nova", hp = 92 })
 	Harness.emitSpell({ t = 36, sourceName = boss, sourceGUID = firstGuid, spellName = "Echo Nova", hp = 64 })
 	Harness.finishPull(60, "unit_died")
-	Harness.assertTrue(Harness.ability(Harness.encounter(actorKey), actorKey, "Echo Nova") ~= nil, "Fixture should learn Echo Nova")
+	Harness.assertTrue(
+		Harness.ability(Harness.encounter(actorKey), actorKey, "Echo Nova") ~= nil,
+		"Fixture should learn Echo Nova"
+	)
 
 	Harness.emitSpell({ t = 100, sourceName = boss, sourceGUID = firstGuid, spellName = "Echo Nova", hp = 100 })
 	Harness.emitSpell({ t = 120, sourceName = boss, sourceGUID = secondGuid, spellName = "Mirror Step", hp = 100 })
@@ -2259,7 +3391,12 @@ local function scenarioPrimaryBossUsesDynamicGroupVariantModel()
 	local timer = Harness.firstPredictionByName(spellName)
 	Harness.assertTrue(timer ~= nil, "Primary boss should use learned timers from a previous dynamic add group variant")
 	Harness.assertTrue(timer.provisional ~= true, "Dynamic group variant fallback should use the persisted model")
-	Harness.assertNear(timer.remaining, 11, 0.2, "Persisted first offset should be scheduled from the current boss pull")
+	Harness.assertNear(
+		timer.remaining,
+		11,
+		0.2,
+		"Persisted first offset should be scheduled from the current boss pull"
+	)
 end
 
 local function markEliteBossFrame(context, hpPct, bossUnitToken)
@@ -2290,19 +3427,45 @@ local function scenarioRaidContainedBossFrameAddDoesNotGroupWithPrimary()
 	local addKey = addon.Core.Util.bossKey(add, addGuid)
 
 	Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = bossGuid, spellName = "Knock Away", hp = 100 })
-	local _, addContext = Harness.emitSpell({ t = 8, sourceName = add, sourceGUID = addGuid, spellName = "Lesser Flame Breath", hp = 100, boss = false })
+	local _, addContext = Harness.emitSpell({
+		t = 8,
+		sourceName = add,
+		sourceGUID = addGuid,
+		spellName = "Lesser Flame Breath",
+		hp = 100,
+		boss = false,
+	})
 	markEliteBossFrame(addContext, 100, "boss2")
-	Harness.emitSpell({ t = 18, sourceName = add, sourceGUID = addGuid, spellName = "Lesser Flame Breath", hp = 5, boss = false })
+	Harness.emitSpell({
+		t = 18,
+		sourceName = add,
+		sourceGUID = addGuid,
+		spellName = "Lesser Flame Breath",
+		hp = 5,
+		boss = false,
+	})
 	markEliteBossFrame(addContext, 5, "boss2")
 	Harness.emitSpell({ t = 30, sourceName = boss, sourceGUID = bossGuid, spellName = "Knock Away", hp = 60 })
 	Harness.emitSpell({ t = 60, sourceName = boss, sourceGUID = bossGuid, spellName = "Knock Away", hp = 2 })
 	Harness.finishPull(75, "unit_died")
 
 	local groupKey = "group:" .. table.concat({ bossKey, addKey }, "+")
-	Harness.assertTrue(Harness.encounter(bossKey) ~= nil, "The primary raid boss should keep its exact single-boss model")
-	Harness.assertTrue(Harness.encounter(groupKey) == nil, "Contained short boss-frame adds should not be folded into the primary raid encounter key")
-	Harness.assertTrue(Harness.encounter(addKey) == nil, "Contained short boss-frame adds should not become standalone raid encounters")
-	Harness.assertTrue(addon.Core.EvidenceStore.countPermanentKills() == 1, "Contained short boss-frame adds should not be committed as separate permanent evidence")
+	Harness.assertTrue(
+		Harness.encounter(bossKey) ~= nil,
+		"The primary raid boss should keep its exact single-boss model"
+	)
+	Harness.assertTrue(
+		Harness.encounter(groupKey) == nil,
+		"Contained short boss-frame adds should not be folded into the primary raid encounter key"
+	)
+	Harness.assertTrue(
+		Harness.encounter(addKey) == nil,
+		"Contained short boss-frame adds should not become standalone raid encounters"
+	)
+	Harness.assertTrue(
+		addon.Core.EvidenceStore.countPermanentKills() == 1,
+		"Contained short boss-frame adds should not be committed as separate permanent evidence"
+	)
 end
 
 local function scenarioRaidContainedCompanionBossStillGroupsWithPrimary()
@@ -2325,14 +3488,24 @@ local function scenarioRaidContainedCompanionBossStillGroupsWithPrimary()
 	table.sort(groupKeys)
 
 	Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = bossGuid, spellName = "Warden Smash", hp = 100 })
-	local _, companionContext = Harness.emitSpell({ t = 8, sourceName = companion, sourceGUID = companionGuid, spellName = "Lieutenant Cleave", hp = 100, boss = false })
+	local _, companionContext = Harness.emitSpell({
+		t = 8,
+		sourceName = companion,
+		sourceGUID = companionGuid,
+		spellName = "Lieutenant Cleave",
+		hp = 100,
+		boss = false,
+	})
 	markEliteBossFrame(companionContext, 100, "boss2")
 	for index = 1, 36 do
 		Harness.emitSpell({
 			t = 8 + index * 1.4,
 			sourceName = companion,
 			sourceGUID = companionGuid,
-			spellName = index % 4 == 0 and "Lieutenant Ward" or index % 3 == 0 and "Lieutenant Roar" or index % 2 == 0 and "Lieutenant Charge" or "Lieutenant Cleave",
+			spellName = index % 4 == 0 and "Lieutenant Ward"
+				or index % 3 == 0 and "Lieutenant Roar"
+				or index % 2 == 0 and "Lieutenant Charge"
+				or "Lieutenant Cleave",
 			hp = 100 - index * 2,
 			boss = false,
 		})
@@ -2342,7 +3515,10 @@ local function scenarioRaidContainedCompanionBossStillGroupsWithPrimary()
 	Harness.finishPull(75, "unit_died")
 
 	local groupKey = "group:" .. table.concat(groupKeys, "+")
-	Harness.assertTrue(Harness.encounter(groupKey) ~= nil, "Contained companion bosses with substantial evidence should still use a grouped raid encounter key")
+	Harness.assertTrue(
+		Harness.encounter(groupKey) ~= nil,
+		"Contained companion bosses with substantial evidence should still use a grouped raid encounter key"
+	)
 end
 
 local function scenarioClosedPhaseActorStillGroupsAfterContextEviction()
@@ -2391,13 +3567,20 @@ local function scenarioClosedPhaseActorStillGroupsAfterContextEviction()
 	end
 	Harness.finishPull(110, "out_of_combat")
 
-	local groupKey = "group:" .. table.concat({
-		addon.Core.Util.bossKey(grethok, grethokGuid),
-		addon.Core.Util.bossKey(razorgore, razorgoreGuid),
-	}, "+")
+	local groupKey = "group:"
+		.. table.concat({
+			addon.Core.Util.bossKey(grethok, grethokGuid),
+			addon.Core.Util.bossKey(razorgore, razorgoreGuid),
+		}, "+")
 	local group = Harness.encounter(groupKey)
-	Harness.assertTrue(group ~= nil, "Closed phase actors with preserved boss evidence should still group with the active phase boss")
-	Harness.assertTrue(Harness.encounter(addon.Core.Util.bossKey(razorgore, razorgoreGuid)) == nil, "Evicted phase context must not create a second single-boss encounter")
+	Harness.assertTrue(
+		group ~= nil,
+		"Closed phase actors with preserved boss evidence should still group with the active phase boss"
+	)
+	Harness.assertTrue(
+		Harness.encounter(addon.Core.Util.bossKey(razorgore, razorgoreGuid)) == nil,
+		"Evicted phase context must not create a second single-boss encounter"
+	)
 end
 
 local function scenarioContainedSingleActorEncounterMergesIntoGroup()
@@ -2419,11 +3602,15 @@ local function scenarioContainedSingleActorEncounterMergesIntoGroup()
 	Harness.emitSpell({ t = 16, sourceName = razorgore, sourceGUID = razorgoreGuid, spellName = "War Stomp", hp = 92 })
 	Harness.finishPull(35, "out_of_combat")
 
-	local groupKey = "group:" .. table.concat({
-		addon.Core.Util.bossKey(grethok, grethokGuid),
-		addon.Core.Util.bossKey(razorgore, razorgoreGuid),
-	}, "+")
-	Harness.assertTrue(Harness.encounter(groupKey) ~= nil, "Initial Grethok/Razorgore pull should create a group encounter")
+	local groupKey = "group:"
+		.. table.concat({
+			addon.Core.Util.bossKey(grethok, grethokGuid),
+			addon.Core.Util.bossKey(razorgore, razorgoreGuid),
+		}, "+")
+	Harness.assertTrue(
+		Harness.encounter(groupKey) ~= nil,
+		"Initial Grethok/Razorgore pull should create a group encounter"
+	)
 
 	Harness.emitSpell({ t = 100, sourceName = razorgore, sourceGUID = razorgoreGuid, spellName = "War Stomp", hp = 90 })
 	Harness.emitSpell({ t = 116, sourceName = razorgore, sourceGUID = razorgoreGuid, spellName = "War Stomp", hp = 78 })
@@ -2433,7 +3620,10 @@ local function scenarioContainedSingleActorEncounterMergesIntoGroup()
 	local single = Harness.encounter(addon.Core.Util.bossKey(razorgore, razorgoreGuid))
 	Harness.assertTrue(group ~= nil, "Group encounter should survive single-actor phase normalization")
 	Harness.assertTrue(single == nil, "Contained single-actor phase model should be merged into the existing group")
-	Harness.assertTrue((group.pullCount or 0) >= 2, "Merged group should retain pull evidence from the single-actor phase")
+	Harness.assertTrue(
+		(group.pullCount or 0) >= 2,
+		"Merged group should retain pull evidence from the single-actor phase"
+	)
 end
 
 local function scenarioPartyGroupVariantKeepsSingleActorEncounter()
@@ -2470,7 +3660,10 @@ local function scenarioPartyGroupVariantKeepsSingleActorEncounter()
 	local group = Harness.encounter("group:" .. table.concat(keys, "+"))
 	local single = Harness.encounter(firstKey)
 	Harness.assertTrue(group ~= nil, "Dungeon chain-pull should still keep the observed group variant")
-	Harness.assertTrue(group.actors[firstKey] ~= nil and group.actors[secondKey] ~= nil, "Group variant should contain both observed actors")
+	Harness.assertTrue(
+		group.actors[firstKey] ~= nil and group.actors[secondKey] ~= nil,
+		"Group variant should contain both observed actors"
+	)
 	Harness.assertTrue(single ~= nil, "Dungeon group variant must not delete the exact single-boss model")
 end
 
@@ -2478,8 +3671,24 @@ local function scenarioSingleSampleHpGateNotLiveTime()
 	Harness.resetState("Replay HP Gate")
 	local boss = "Phase Paladin"
 	local guid = Harness.makeGuid(boss, 660)
-	Harness.emitSpell({ t = 20, sourceName = boss, sourceGUID = guid, spellName = "Sanctuary Phase", hp = 24.8, eventType = "SPELL_AURA_APPLIED", selfTarget = true })
-	Harness.emitSpell({ t = 82, sourceName = boss, sourceGUID = guid, spellName = "Sanctuary Phase", hp = 22.1, eventType = "SPELL_AURA_APPLIED", selfTarget = true })
+	Harness.emitSpell({
+		t = 20,
+		sourceName = boss,
+		sourceGUID = guid,
+		spellName = "Sanctuary Phase",
+		hp = 24.8,
+		eventType = "SPELL_AURA_APPLIED",
+		selfTarget = true,
+	})
+	Harness.emitSpell({
+		t = 82,
+		sourceName = boss,
+		sourceGUID = guid,
+		spellName = "Sanctuary Phase",
+		hp = 22.1,
+		eventType = "SPELL_AURA_APPLIED",
+		selfTarget = true,
+	})
 
 	local timer = Harness.firstPredictionByName("Sanctuary Phase")
 	Harness.assertTrue(timer == nil, "A two-sample HP-gated phase ability must not become a live time timer")
@@ -2500,7 +3709,10 @@ local function scenarioTimedSingleCastDoesNotBecomeHpGateAfterTwoPulls()
 	local model = Harness.encounter(addon.Core.Util.bossKey(boss, guid))
 	local sleep = Harness.ability(model, addon.Core.Util.bossKey(boss, guid), "Timed Sleep")
 	Harness.assertTrue(sleep ~= nil, "Timed single-cast ability should be learned")
-	Harness.assertTrue(sleep.selectedRule and sleep.selectedRule.type ~= "hp_gate", "Two similar HP samples should not force HP display over timing")
+	Harness.assertTrue(
+		sleep.selectedRule and sleep.selectedRule.type ~= "hp_gate",
+		"Two similar HP samples should not force HP display over timing"
+	)
 end
 
 local function scenarioRepeatedSameHpAbilityDoesNotBecomeHpGate()
@@ -2520,7 +3732,10 @@ local function scenarioRepeatedSameHpAbilityDoesNotBecomeHpGate()
 	local guard = Harness.ability(model, addon.Core.Util.bossKey(boss, guid), "High Guard")
 	Harness.assertTrue(guard ~= nil, "Repeated same-HP ability should be learned")
 	Harness.assertTrue(not (guard.rules and guard.rules.hp_gate), "Repeated same-HP ability must not create an HP gate")
-	Harness.assertTrue(guard.selectedRule and guard.selectedRule.type ~= "hp_gate", "Repeated same-HP ability must not display as an HP gate")
+	Harness.assertTrue(
+		guard.selectedRule and guard.selectedRule.type ~= "hp_gate",
+		"Repeated same-HP ability must not display as an HP gate"
+	)
 end
 
 local function scenarioUnconfirmedEliteTrashNotPromoted()
@@ -2573,9 +3788,18 @@ local function scenarioDisplaylessFallbackEliteTrashSuppressed()
 
 	local model = Harness.encounter(addon.Core.Util.bossKey(mob, guid))
 	Harness.assertTrue(model ~= nil, "Confirmed low-HP fallback trash may be retained for diagnostics")
-	Harness.assertTrue(model.autoSuppressed == true, "Displayless fallback trash must not remain an active encounter model")
-	Harness.assertTrue(model.suppressionReason == "fallback_context_without_displayable_abilities", "Displayless fallback suppression should explain the learned model state")
-	Harness.assertTrue(addon.Core.EvidenceStore.countPermanentKills() == 0, "Low-HP fallback trash without boss identity must not enter permanent evidence")
+	Harness.assertTrue(
+		model.autoSuppressed == true,
+		"Displayless fallback trash must not remain an active encounter model"
+	)
+	Harness.assertTrue(
+		model.suppressionReason == "fallback_context_without_displayable_abilities",
+		"Displayless fallback suppression should explain the learned model state"
+	)
+	Harness.assertTrue(
+		addon.Core.EvidenceStore.countPermanentKills() == 0,
+		"Low-HP fallback trash without boss identity must not enter permanent evidence"
+	)
 end
 
 local function scenarioRaidEliteTrashRequiresBossSignal()
@@ -2607,7 +3831,10 @@ local function scenarioRaidEliteTrashRequiresBossSignal()
 	Harness.finishPull(55, "unit_died")
 
 	local model = Harness.encounter(addon.Core.Util.bossKey(mob, guid))
-	Harness.assertTrue(model == nil, "Raid elite trash without boss signal must not be promoted even with low HP and many events")
+	Harness.assertTrue(
+		model == nil,
+		"Raid elite trash without boss signal must not be promoted even with low HP and many events"
+	)
 end
 
 local function scenarioRaidFallbackLearnedModelDoesNotDisplay()
@@ -2744,13 +3971,22 @@ local function scenarioUnitDiedDefersWhileBossFrameAlive()
 
 	Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = guid, spellName = "Healing Stream", hp = 20 })
 	Harness.emitSpell({ t = 12, sourceName = boss, sourceGUID = guid, spellName = "Healing Stream", hp = 1 })
-	Harness.assertTrue(Harness.firstPredictionByName("Healing Stream") ~= nil, "Low-HP boss should have a live timer before UNIT_DIED")
+	Harness.assertTrue(
+		Harness.firstPredictionByName("Healing Stream") ~= nil,
+		"Low-HP boss should have a live timer before UNIT_DIED"
+	)
 
 	emitUnitDied(13, guid, boss)
 	local pull = addon.Capture.EncounterState.getCurrent()
 	local context = pull and pull.bossContexts[addon.Core.Util.actorKey(boss, guid)]
-	Harness.assertTrue(context and context.active == true, "UNIT_DIED should be deferred while the matching boss frame is still alive")
-	Harness.assertTrue(Harness.firstPredictionByName("Healing Stream") ~= nil, "Timer should remain visible while UNIT_DIED is deferred")
+	Harness.assertTrue(
+		context and context.active == true,
+		"UNIT_DIED should be deferred while the matching boss frame is still alive"
+	)
+	Harness.assertTrue(
+		Harness.firstPredictionByName("Healing Stream") ~= nil,
+		"Timer should remain visible while UNIT_DIED is deferred"
+	)
 
 	Harness.setUnit("boss1", {
 		name = boss,
@@ -2761,10 +3997,19 @@ local function scenarioUnitDiedDefersWhileBossFrameAlive()
 		combat = false,
 	})
 	emitUnitDied(14, guid, boss)
-	Harness.assertTrue(context.active == true, "Low-HP visual death grace should not close immediately after the first deferred UNIT_DIED")
+	Harness.assertTrue(
+		context.active == true,
+		"Low-HP visual death grace should not close immediately after the first deferred UNIT_DIED"
+	)
 	emitUnitDied(16, guid, boss)
-	Harness.assertTrue(context.active == false, "UNIT_DIED should close once the matching boss frame is no longer alive")
-	Harness.assertTrue(Harness.firstPredictionByName("Healing Stream") == nil, "Timer should disappear after confirmed boss death")
+	Harness.assertTrue(
+		context.active == false,
+		"UNIT_DIED should close once the matching boss frame is no longer alive"
+	)
+	Harness.assertTrue(
+		Harness.firstPredictionByName("Healing Stream") == nil,
+		"Timer should disappear after confirmed boss death"
+	)
 end
 
 local function scenarioUnitDiedUsesGuidBeforeName()
@@ -2773,7 +4018,14 @@ local function scenarioUnitDiedUsesGuidBeforeName()
 	local firstGuid = Harness.makeGuid(name, 721)
 	local secondGuid = Harness.makeGuid(name, 722)
 	Harness.emitSpell({ t = 0, sourceName = name, sourceGUID = firstGuid, spellName = "Strike", hp = 100, boss = false })
-	Harness.emitSpell({ t = 1, sourceName = name, sourceGUID = secondGuid, spellName = "Strike", hp = 100, boss = false })
+	Harness.emitSpell({
+		t = 1,
+		sourceName = name,
+		sourceGUID = secondGuid,
+		spellName = "Strike",
+		hp = 100,
+		boss = false,
+	})
 
 	local pull = addon.Capture.EncounterState.getCurrent()
 	local firstContext = pull.bossContexts[addon.Core.Util.actorKey(name, firstGuid)]
@@ -2795,7 +4047,10 @@ local function scenarioUnitDiedPreventsDeadContextReactivation()
 	local pull = addon.Capture.EncounterState.getCurrent()
 	local context = pull and pull.bossContexts[addon.Core.Util.actorKey(boss, guid)]
 	local eventCount = context and context.eventCount
-	Harness.assertTrue(context and context.active == false and context.endReason == "unit_died", "UNIT_DIED should close the boss context before cleanup events")
+	Harness.assertTrue(
+		context and context.active == false and context.endReason == "unit_died",
+		"UNIT_DIED should close the boss context before cleanup events"
+	)
 
 	Harness.emitCombatLogSpell({
 		t = 26,
@@ -2811,7 +4066,10 @@ local function scenarioUnitDiedPreventsDeadContextReactivation()
 
 	local bossKey = addon.Core.Util.bossKey(boss, guid)
 	local model = Harness.encounter(bossKey)
-	Harness.assertTrue(Harness.ability(model, bossKey, "Death Cleanup Aura") == nil, "Post-death cleanup events must not become learned boss abilities")
+	Harness.assertTrue(
+		Harness.ability(model, bossKey, "Death Cleanup Aura") == nil,
+		"Post-death cleanup events must not become learned boss abilities"
+	)
 end
 
 local function scenarioPartyKillCompletesBossContext()
@@ -2824,20 +4082,33 @@ local function scenarioPartyKillCompletesBossContext()
 	emitDeathLikeEvent(25, "PARTY_KILL", guid, boss)
 	local pull = addon.Capture.EncounterState.getCurrent()
 	local context = pull and pull.bossContexts[addon.Core.Util.actorKey(boss, guid)]
-	Harness.assertTrue(context and context.active == false and context.endReason == "unit_died", "PARTY_KILL should close a matching hostile boss context as completed")
+	Harness.assertTrue(
+		context and context.active == false and context.endReason == "unit_died",
+		"PARTY_KILL should close a matching hostile boss context as completed"
+	)
 
 	Harness.finishPull(30, "out_of_combat")
 	local bossKey = addon.Core.Util.bossKey(boss, guid)
-	Harness.assertTrue(Harness.encounter(bossKey) ~= nil, "PARTY_KILL completed bosses should be promoted like UNIT_DIED bosses")
-	Harness.assertTrue(addon.Core.EvidenceStore.countPermanentKills() == 1, "PARTY_KILL completed bosses should enter permanent evidence")
-	Harness.assertTrue(addon.Core.EvidenceStore.countIncomplete() == 0, "PARTY_KILL completed bosses should not remain incomplete")
+	Harness.assertTrue(
+		Harness.encounter(bossKey) ~= nil,
+		"PARTY_KILL completed bosses should be promoted like UNIT_DIED bosses"
+	)
+	Harness.assertTrue(
+		addon.Core.EvidenceStore.countPermanentKills() == 1,
+		"PARTY_KILL completed bosses should enter permanent evidence"
+	)
+	Harness.assertTrue(
+		addon.Core.EvidenceStore.countIncomplete() == 0,
+		"PARTY_KILL completed bosses should not remain incomplete"
+	)
 end
 
 local function firstDecodedEvidenceKill()
 	for _, instance in pairs(addon.db.evidence.instances or {}) do
 		for _, evidenceBoss in pairs(instance.bosses or {}) do
 			for _, storedKill in pairs(evidenceBoss.kills or {}) do
-				local decoded, decodeError = addon.Core.EvidenceStore.decodeStoredKill(instance, evidenceBoss, storedKill)
+				local decoded, decodeError =
+					addon.Core.EvidenceStore.decodeStoredKill(instance, evidenceBoss, storedKill)
 				Harness.assertTrue(decoded ~= nil, "Stored evidence kill should decode: " .. tostring(decodeError))
 				return decoded, storedKill
 			end
@@ -2913,8 +4184,46 @@ local function legacyPackedEventEvidenceBlock()
 			"",
 			""
 		),
-		Codec.line("A", 1, "legacy_evidence_boss_actor", "legacy_evidence_boss", "Legacy Evidence Boss", "boss-guid", 0, 300, "worldboss", "1", "boss1", "", "", 1000, 0, "0,1000;300,0", 0, 300),
-		Codec.line("A", 2, "legacy_evidence_player", "player", "Legacy Player", "player-guid", 0, 300, "player", "", "", "", "", "", "", "", "", ""),
+		Codec.line(
+			"A",
+			1,
+			"legacy_evidence_boss_actor",
+			"legacy_evidence_boss",
+			"Legacy Evidence Boss",
+			"boss-guid",
+			0,
+			300,
+			"worldboss",
+			"1",
+			"boss1",
+			"",
+			"",
+			1000,
+			0,
+			"0,1000;300,0",
+			0,
+			300
+		),
+		Codec.line(
+			"A",
+			2,
+			"legacy_evidence_player",
+			"player",
+			"Legacy Player",
+			"player-guid",
+			0,
+			300,
+			"player",
+			"",
+			"",
+			"",
+			"",
+			"",
+			"",
+			"",
+			"",
+			""
+		),
 		Codec.line("S", 1, "legacy_strike", "name:legacy_strike", "Legacy Strike", "77101"),
 		Codec.line("V", "CA:1,CS:2,DM:2"),
 		Codec.line("T", eventTuples),
@@ -2942,38 +4251,80 @@ local function scenarioEvidenceStoresCompletedBossEvidence()
 	Harness.emitSpell({ t = 20, sourceName = boss, sourceGUID = guid, spellName = "Measured Strike", hp = 70 })
 	Harness.finishPull(42, "unit_died")
 
-	Harness.assertTrue(addon.Core.EvidenceStore.countPermanentKills() == 1, "UNIT_DIED completed bosses should enter permanent evidence")
-	Harness.assertTrue(addon.Core.EvidenceStore.countIncomplete() == 0, "UNIT_DIED completed bosses should not enter incomplete evidence")
+	Harness.assertTrue(
+		addon.Core.EvidenceStore.countPermanentKills() == 1,
+		"UNIT_DIED completed bosses should enter permanent evidence"
+	)
+	Harness.assertTrue(
+		addon.Core.EvidenceStore.countIncomplete() == 0,
+		"UNIT_DIED completed bosses should not enter incomplete evidence"
+	)
 	local decoded, storedKill = firstDecodedEvidenceKill()
-	Harness.assertTrue(type(storedKill) == "table" and type(storedKill.p) == "string", "Permanent evidence kills should be stored as packed strings")
-	Harness.assertTrue(storedKill.events == nil and storedKill.actors == nil and storedKill.spells == nil and storedKill.facts == nil, "Packed stored kills should not retain expanded evidence tables")
-	Harness.assertTrue(#(decoded.kill.events or {}) == 0 and #(decoded.kill.facts or {}) == 2, "Packed stored kills should decode to durable evidence facts, not raw event tuples")
+	Harness.assertTrue(
+		type(storedKill) == "table" and type(storedKill.p) == "string",
+		"Permanent evidence kills should be stored as packed strings"
+	)
+	Harness.assertTrue(
+		storedKill.events == nil and storedKill.actors == nil and storedKill.spells == nil and storedKill.facts == nil,
+		"Packed stored kills should not retain expanded evidence tables"
+	)
+	Harness.assertTrue(
+		#(decoded.kill.events or {}) == 0 and #(decoded.kill.facts or {}) == 2,
+		"Packed stored kills should decode to durable evidence facts, not raw event tuples"
+	)
 
 	Harness.resetState("Replay Evidence Partial")
 	Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = guid, spellName = "Measured Strike", hp = 100 })
 	Harness.emitSpell({ t = 20, sourceName = boss, sourceGUID = guid, spellName = "Measured Strike", hp = 70 })
 	Harness.finishPull(30, "out_of_combat")
 
-	Harness.assertTrue(addon.Core.EvidenceStore.countPermanentKills() == 0, "Incomplete attempts must not enter permanent evidence")
-	Harness.assertTrue(addon.Core.EvidenceStore.countIncomplete() == 1, "Incomplete attempts should remain bounded separately")
-	Harness.assertTrue(addon.db.evidence.incomplete == nil, "Incomplete attempts should not be persisted in account evidence")
+	Harness.assertTrue(
+		addon.Core.EvidenceStore.countPermanentKills() == 0,
+		"Incomplete attempts must not enter permanent evidence"
+	)
+	Harness.assertTrue(
+		addon.Core.EvidenceStore.countIncomplete() == 1,
+		"Incomplete attempts should remain bounded separately"
+	)
+	Harness.assertTrue(
+		addon.db.evidence.incomplete == nil,
+		"Incomplete attempts should not be persisted in account evidence"
+	)
 
 	Harness.resetState("Replay Evidence Low HP Completion")
 	Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = guid, spellName = "Measured Strike", hp = 100 })
 	Harness.emitSpell({ t = 20, sourceName = boss, sourceGUID = guid, spellName = "Measured Strike", hp = 3 })
 	Harness.finishPull(30, "out_of_combat")
 
-	Harness.assertTrue(addon.Core.EvidenceStore.countPermanentKills() == 1, "Low-HP completed bosses should enter permanent evidence")
-	Harness.assertTrue(addon.Core.EvidenceStore.countIncomplete() == 0, "Low-HP completed bosses should not remain incomplete")
+	Harness.assertTrue(
+		addon.Core.EvidenceStore.countPermanentKills() == 1,
+		"Low-HP completed bosses should enter permanent evidence"
+	)
+	Harness.assertTrue(
+		addon.Core.EvidenceStore.countIncomplete() == 0,
+		"Low-HP completed bosses should not remain incomplete"
+	)
 	decoded = firstDecodedEvidenceKill()
-	Harness.assertTrue(decoded.kill.endReason == "low_hp_completion", "Low-HP completion should be stored as the evidence completion reason")
-	Harness.assertTrue(addon.Core.EvidenceCodec.validDecodedKill(decoded) == true, "Low-HP completion evidence should pass import validation")
+	Harness.assertTrue(
+		decoded.kill.endReason == "low_hp_completion",
+		"Low-HP completion should be stored as the evidence completion reason"
+	)
+	Harness.assertTrue(
+		addon.Core.EvidenceCodec.validDecodedKill(decoded) == true,
+		"Low-HP completion evidence should pass import validation"
+	)
 	decoded.kill.actors[1].class = "elite"
 	decoded.kill.actors[1].bossFrame = nil
-	Harness.assertTrue(addon.Core.EvidenceCodec.validDecodedKill(decoded) == false, "Low-HP completion evidence without boss identity facts should be rejected")
+	Harness.assertTrue(
+		addon.Core.EvidenceCodec.validDecodedKill(decoded) == false,
+		"Low-HP completion evidence without boss identity facts should be rejected"
+	)
 	decoded = firstDecodedEvidenceKill()
 	decoded.kill.actors[1].endHp10 = 700
-	Harness.assertTrue(addon.Core.EvidenceCodec.validDecodedKill(decoded) == false, "Low-HP completion evidence without low-HP actor facts should be rejected")
+	Harness.assertTrue(
+		addon.Core.EvidenceCodec.validDecodedKill(decoded) == false,
+		"Low-HP completion evidence without low-HP actor facts should be rejected"
+	)
 	decoded = firstDecodedEvidenceKill()
 	decoded.kill.actors[#decoded.kill.actors + 1] = copyTable(decoded.kill.actors[1])
 	decoded.kill.actors[#decoded.kill.actors].id = 2
@@ -2982,7 +4333,10 @@ local function scenarioEvidenceStoresCompletedBossEvidence()
 	decoded.kill.actors[#decoded.kill.actors].bossFrame = nil
 	decoded.kill.actors[#decoded.kill.actors].endHp10 = 10
 	decoded.kill.actors[1].endHp10 = 700
-	Harness.assertTrue(addon.Core.EvidenceCodec.validDecodedKill(decoded) == false, "Low-HP completion evidence should require the low-HP actor to carry boss identity")
+	Harness.assertTrue(
+		addon.Core.EvidenceCodec.validDecodedKill(decoded) == false,
+		"Low-HP completion evidence should require the low-HP actor to carry boss identity"
+	)
 
 	addon.db.learned = { zones = {} }
 	addon.Core.EvidenceStore.rebuildLearned()
@@ -3004,27 +4358,45 @@ local function scenarioEvidenceRejectsMalformedFactPayloads()
 
 	local invalid = copyTable(decoded)
 	invalid.kill.facts[1].code = "XX"
-	Harness.assertTrue(addon.Core.EvidenceCodec.validDecodedKill(invalid) == false, "Unknown activation fact codes should be rejected")
+	Harness.assertTrue(
+		addon.Core.EvidenceCodec.validDecodedKill(invalid) == false,
+		"Unknown activation fact codes should be rejected"
+	)
 
 	invalid = copyTable(decoded)
 	invalid.kill.facts[1].targetScope = "raid"
-	Harness.assertTrue(addon.Core.EvidenceCodec.validDecodedKill(invalid) == false, "Unknown activation target scopes should be rejected")
+	Harness.assertTrue(
+		addon.Core.EvidenceCodec.validDecodedKill(invalid) == false,
+		"Unknown activation target scopes should be rejected"
+	)
 
 	invalid = copyTable(decoded)
 	invalid.kill.facts[2].id = invalid.kill.facts[1].id
-	Harness.assertTrue(addon.Core.EvidenceCodec.validDecodedKill(invalid) == false, "Duplicate fact ids should be rejected")
+	Harness.assertTrue(
+		addon.Core.EvidenceCodec.validDecodedKill(invalid) == false,
+		"Duplicate fact ids should be rejected"
+	)
 
 	invalid = copyTable(decoded)
 	invalid.kill.actors[2] = copyTable(invalid.kill.actors[1])
-	Harness.assertTrue(addon.Core.EvidenceCodec.validDecodedKill(invalid) == false, "Duplicate actor ids should be rejected")
+	Harness.assertTrue(
+		addon.Core.EvidenceCodec.validDecodedKill(invalid) == false,
+		"Duplicate actor ids should be rejected"
+	)
 
 	invalid = copyTable(decoded)
 	invalid.kill.spells[2] = copyTable(invalid.kill.spells[1])
-	Harness.assertTrue(addon.Core.EvidenceCodec.validDecodedKill(invalid) == false, "Duplicate spell ids should be rejected")
+	Harness.assertTrue(
+		addon.Core.EvidenceCodec.validDecodedKill(invalid) == false,
+		"Duplicate spell ids should be rejected"
+	)
 
 	invalid = copyTable(decoded)
 	invalid.kill.facts[1].id = 0
-	Harness.assertTrue(addon.Core.EvidenceCodec.validDecodedKill(invalid) == false, "Non-positive fact ids should be rejected")
+	Harness.assertTrue(
+		addon.Core.EvidenceCodec.validDecodedKill(invalid) == false,
+		"Non-positive fact ids should be rejected"
+	)
 
 	invalid = copyTable(decoded)
 	invalid.kill.facts[#invalid.kill.facts + 1] = {
@@ -3041,34 +4413,61 @@ local function scenarioEvidenceRejectsMalformedFactPayloads()
 		targetCount = 1,
 		effectMask = 1,
 	}
-	Harness.assertTrue(addon.Core.EvidenceCodec.validDecodedKill(invalid) == false, "Inverted consequence time windows should be rejected")
+	Harness.assertTrue(
+		addon.Core.EvidenceCodec.validDecodedKill(invalid) == false,
+		"Inverted consequence time windows should be rejected"
+	)
 
 	invalid = copyTable(decoded)
 	invalid.kill.counters[1].code = "XX"
-	Harness.assertTrue(addon.Core.EvidenceCodec.validDecodedKill(invalid) == false, "Unknown counter event codes should be rejected")
+	Harness.assertTrue(
+		addon.Core.EvidenceCodec.validDecodedKill(invalid) == false,
+		"Unknown counter event codes should be rejected"
+	)
 
 	invalid = copyTable(decoded)
 	invalid.kill.counters[2] = copyTable(invalid.kill.counters[1])
-	Harness.assertTrue(addon.Core.EvidenceCodec.validDecodedKill(invalid) == false, "Duplicate counters should be rejected")
+	Harness.assertTrue(
+		addon.Core.EvidenceCodec.validDecodedKill(invalid) == false,
+		"Duplicate counters should be rejected"
+	)
 
 	local badBlock = string.gsub(storedKill.p, "F|ACT", "F|BAD", 1)
 	local badDecoded, decodeError = addon.Core.EvidenceCodec.decodeKillBlock(badBlock)
-	Harness.assertTrue(badDecoded == nil and decodeError == "invalid fact record", "Malformed fact lines should fail decoding")
+	Harness.assertTrue(
+		badDecoded == nil and decodeError == "invalid fact record",
+		"Malformed fact lines should fail decoding"
+	)
 
 	local unknownBlock = storedKill.p .. "~Z|unexpected"
 	local unknownDecoded, unknownError = addon.Core.EvidenceCodec.decodeKillBlock(unknownBlock)
-	Harness.assertTrue(unknownDecoded == nil and unknownError == "unknown kill record type", "Unknown packed record types should fail decoding")
+	Harness.assertTrue(
+		unknownDecoded == nil and unknownError == "unknown kill record type",
+		"Unknown packed record types should fail decoding"
+	)
 
 	local legacyEventBlock = storedKill.p .. "~T|"
 	local legacyEventDecoded, legacyEventError = addon.Core.EvidenceCodec.decodeKillBlock(legacyEventBlock)
-	Harness.assertTrue(legacyEventDecoded == nil and legacyEventError == "legacy event record in modern kill block", "Legacy raw event records should not be accepted in modern fact blocks")
+	Harness.assertTrue(
+		legacyEventDecoded == nil and legacyEventError == "legacy event record in modern kill block",
+		"Legacy raw event records should not be accepted in modern fact blocks"
+	)
 
 	local headerLine = addon.Core.EvidenceCodec.split(storedKill.p, "~")[1]
-	local duplicateHeaderDecoded, duplicateHeaderError = addon.Core.EvidenceCodec.decodeKillBlock(storedKill.p .. "~" .. headerLine)
-	Harness.assertTrue(duplicateHeaderDecoded == nil and duplicateHeaderError == "duplicate kill header", "Packed evidence blocks should reject duplicate headers")
+	local duplicateHeaderDecoded, duplicateHeaderError =
+		addon.Core.EvidenceCodec.decodeKillBlock(storedKill.p .. "~" .. headerLine)
+	Harness.assertTrue(
+		duplicateHeaderDecoded == nil and duplicateHeaderError == "duplicate kill header",
+		"Packed evidence blocks should reject duplicate headers"
+	)
 
-	local legacyFactDecoded, legacyFactError = addon.Core.EvidenceCodec.decodeKillBlock(legacyPackedEventEvidenceBlock() .. "~F|ACT|1|1|1|1|0|1000|CS|none|0|0||")
-	Harness.assertTrue(legacyFactDecoded == nil and legacyFactError == "fact record in legacy kill block", "Legacy packed event blocks should reject v2 fact records")
+	local legacyFactDecoded, legacyFactError = addon.Core.EvidenceCodec.decodeKillBlock(
+		legacyPackedEventEvidenceBlock() .. "~F|ACT|1|1|1|1|0|1000|CS|none|0|0||"
+	)
+	Harness.assertTrue(
+		legacyFactDecoded == nil and legacyFactError == "fact record in legacy kill block",
+		"Legacy packed event blocks should reject v2 fact records"
+	)
 end
 
 local function scenarioEvidenceRebuildSkipsInvalidDecodedFacts()
@@ -3080,13 +4479,19 @@ local function scenarioEvidenceRebuildSkipsInvalidDecodedFacts()
 	Harness.finishPull(42, "unit_died")
 
 	local _, storedKill = firstDecodedEvidenceKill()
-	Harness.assertTrue(type(storedKill) == "table" and type(storedKill.p) == "string", "Invalid rebuild fixture should have a packed kill")
+	Harness.assertTrue(
+		type(storedKill) == "table" and type(storedKill.p) == "string",
+		"Invalid rebuild fixture should have a packed kill"
+	)
 	storedKill.p = string.gsub(storedKill.p, "|CS|none|", "|CS|raid|", 1)
 	addon.db.learned = { zones = {} }
 
 	local promoted, rebuildError, stats = addon.Core.EvidenceStore.rebuildLearned({ preserveLegacy = false })
 	Harness.assertTrue(rebuildError == nil, "Invalid decoded facts should be skipped without crashing rebuild")
-	Harness.assertTrue(promoted == 0 and stats and stats.skippedCorruptEvidence == 1, "Invalid decoded facts should count as skipped corrupt evidence")
+	Harness.assertTrue(
+		promoted == 0 and stats and stats.skippedCorruptEvidence == 1,
+		"Invalid decoded facts should count as skipped corrupt evidence"
+	)
 	Harness.assertTrue(next(addon.db.learned.zones) == nil, "Invalid decoded facts should not produce learned models")
 end
 
@@ -3104,8 +4509,14 @@ local function scenarioEvidenceCommitsWhenLearnerIsBlocked()
 	Harness.finishPull(42, "unit_died")
 	addon.Learning.AbilityLearner.start()
 
-	Harness.assertTrue(addon.Core.EvidenceStore.countPermanentKills() == 1, "EvidenceStore should commit strong completed boss evidence even when learned scoring is blocked")
-	Harness.assertTrue(storedEvidenceKillCount(addon.charDB.learnedBackup and addon.charDB.learnedBackup.evidence) == 1, "Character backup should receive evidence captured while learned scoring was blocked")
+	Harness.assertTrue(
+		addon.Core.EvidenceStore.countPermanentKills() == 1,
+		"EvidenceStore should commit strong completed boss evidence even when learned scoring is blocked"
+	)
+	Harness.assertTrue(
+		storedEvidenceKillCount(addon.charDB.learnedBackup and addon.charDB.learnedBackup.evidence) == 1,
+		"Character backup should receive evidence captured while learned scoring was blocked"
+	)
 end
 
 local function scenarioEvidenceSchemaMismatchArchivesExistingStore()
@@ -3153,13 +4564,32 @@ local function scenarioEvidenceSchemaMismatchArchivesExistingStore()
 	_G.BossTrackerCharDB = {}
 	addon.Core.SavedVariables.init()
 
-	Harness.assertTrue(addon.db.evidence.schemaVersion == C.EVIDENCE_SCHEMA_VERSION, "Current evidence store should be reset to the supported schema")
-	Harness.assertTrue(type(addon.db.evidenceArchives) == "table" and #addon.db.evidenceArchives == 1, "Incompatible existing evidence should be archived instead of discarded")
-	Harness.assertTrue(addon.db.evidenceArchives[1].killCount == 1, "Evidence archive should preserve the permanent kill count")
-	Harness.assertTrue(addon.db.evidenceArchives[1].incompleteCount == nil and addon.db.evidenceArchives[1].evidence.incomplete == nil, "Evidence archives should not preserve temporary incomplete diagnostics")
+	Harness.assertTrue(
+		addon.db.evidence.schemaVersion == C.EVIDENCE_SCHEMA_VERSION,
+		"Current evidence store should be reset to the supported schema"
+	)
+	Harness.assertTrue(
+		type(addon.db.evidenceArchives) == "table" and #addon.db.evidenceArchives == 1,
+		"Incompatible existing evidence should be archived instead of discarded"
+	)
+	Harness.assertTrue(
+		addon.db.evidenceArchives[1].killCount == 1,
+		"Evidence archive should preserve the permanent kill count"
+	)
+	Harness.assertTrue(
+		addon.db.evidenceArchives[1].incompleteCount == nil and addon.db.evidenceArchives[1].evidence.incomplete == nil,
+		"Evidence archives should not preserve temporary incomplete diagnostics"
+	)
 	addon.Core.SavedVariables.syncLearnedBackup(true)
-	Harness.assertTrue(type(addon.charDB.learnedBackup.evidenceArchives) == "table" and #addon.charDB.learnedBackup.evidenceArchives == 1, "Character backup should include archived evidence")
-	Harness.assertTrue(addon.charDB.learnedBackup.evidenceArchives[1].evidence.incomplete == nil, "Character backup archives should not include temporary incomplete diagnostics")
+	Harness.assertTrue(
+		type(addon.charDB.learnedBackup.evidenceArchives) == "table"
+			and #addon.charDB.learnedBackup.evidenceArchives == 1,
+		"Character backup should include archived evidence"
+	)
+	Harness.assertTrue(
+		addon.charDB.learnedBackup.evidenceArchives[1].evidence.incomplete == nil,
+		"Character backup archives should not include temporary incomplete diagnostics"
+	)
 end
 
 local function scenarioEvidenceMigratesLegacyPackedEventsToFacts()
@@ -3212,18 +4642,42 @@ local function scenarioEvidenceMigratesLegacyPackedEventsToFacts()
 	_G.BossTrackerCharDB = {}
 	addon.Core.SavedVariables.init()
 
-	Harness.assertTrue(addon.db.evidence.schemaVersion == C.EVIDENCE_SCHEMA_VERSION, "Legacy event evidence should be migrated to the current evidence schema")
+	Harness.assertTrue(
+		addon.db.evidence.schemaVersion == C.EVIDENCE_SCHEMA_VERSION,
+		"Legacy event evidence should be migrated to the current evidence schema"
+	)
 	local stats = addon.db.evidenceMigrationStats and addon.db.evidenceMigrationStats[#addon.db.evidenceMigrationStats]
-	Harness.assertTrue(stats ~= nil and stats.converted == 1 and stats.skipped == 1, "Legacy event evidence migration should convert valid kills and report skipped ones")
-	Harness.assertTrue(type(addon.db.evidenceArchives) == "table" and #addon.db.evidenceArchives == 1, "Partial legacy evidence migration should archive the old store before replacing it")
-	Harness.assertTrue(addon.db.evidenceArchives[1].killCount == 2, "Partial migration archive should preserve both old permanent kill entries")
+	Harness.assertTrue(
+		stats ~= nil and stats.converted == 1 and stats.skipped == 1,
+		"Legacy event evidence migration should convert valid kills and report skipped ones"
+	)
+	Harness.assertTrue(
+		type(addon.db.evidenceArchives) == "table" and #addon.db.evidenceArchives == 1,
+		"Partial legacy evidence migration should archive the old store before replacing it"
+	)
+	Harness.assertTrue(
+		addon.db.evidenceArchives[1].killCount == 2,
+		"Partial migration archive should preserve both old permanent kill entries"
+	)
 	local decoded = firstDecodedEvidenceKill()
-	Harness.assertTrue(decoded ~= nil and decoded.kill.packedVersion == 2, "Migrated evidence should be re-packed with the current kill format")
-	Harness.assertTrue(#(decoded.kill.events or {}) == 0 and #(decoded.kill.facts or {}) >= 2, "Migrated evidence should expose facts instead of legacy event tuples")
+	Harness.assertTrue(
+		decoded ~= nil and decoded.kill.packedVersion == 2,
+		"Migrated evidence should be re-packed with the current kill format"
+	)
+	Harness.assertTrue(
+		#(decoded.kill.events or {}) == 0 and #(decoded.kill.facts or {}) >= 2,
+		"Migrated evidence should expose facts instead of legacy event tuples"
+	)
 	local counts = evidenceCodeCounts(decoded.kill)
-	Harness.assertTrue(counts.CA == 1 and counts.CS == 2 and counts.DM == 2, "Migrated counters should preserve legacy event counts")
+	Harness.assertTrue(
+		counts.CA == 1 and counts.CS == 2 and counts.DM == 2,
+		"Migrated counters should preserve legacy event counts"
+	)
 	local legacyActivationCounts = factCodeCounts(decoded.kill, "ACT")
-	Harness.assertTrue(legacyActivationCounts.CA == 1 and legacyActivationCounts.CS == 1, "Migrated cast lifecycle facts should dedupe cast success after cast start")
+	Harness.assertTrue(
+		legacyActivationCounts.CA == 1 and legacyActivationCounts.CS == 1,
+		"Migrated cast lifecycle facts should dedupe cast success after cast start"
+	)
 	local legacyEffectMask
 	for _, fact in ipairs(decoded.kill.facts or {}) do
 		if fact.type == "FX" and factSpellName(decoded.kill, fact) == "Legacy Strike" then
@@ -3239,16 +4693,41 @@ local function scenarioEvidenceMigratesLegacyPackedEventsToFacts()
 		and addon.db.learned.zones.legacy_evidence_zone.encounters.legacy_evidence_boss
 	local spellKey = addon.Core.Util.timerAbilityKey(nil, "Legacy Strike")
 	local abilityKey = addon.Core.ModelStore.abilityModelKey("legacy_evidence_boss", spellKey)
-	Harness.assertTrue(encounter ~= nil and encounter.abilities[abilityKey] ~= nil, "Migrated evidence should rebuild a learned encounter model")
+	Harness.assertTrue(
+		encounter ~= nil and encounter.abilities[abilityKey] ~= nil,
+		"Migrated evidence should rebuild a learned encounter model"
+	)
 end
 
 local function scenarioEvidenceKeepsTechnicalSpellIdsForSameName()
 	Harness.resetState("Replay Same Name Spell Evidence")
 	local boss = "Same Name Sentinel"
 	local guid = Harness.makeGuid(boss, 908)
-	Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = guid, spellName = "Shared Label", spellId = 81001, hp = 100 })
-	Harness.emitSpell({ t = 18, sourceName = boss, sourceGUID = guid, spellName = "Shared Label", spellId = 81002, eventType = "SPELL_AURA_APPLIED", hp = 74 })
-	Harness.emitSpell({ t = 36, sourceName = boss, sourceGUID = guid, spellName = "Shared Label", spellId = 81001, hp = 48 })
+	Harness.emitSpell({
+		t = 0,
+		sourceName = boss,
+		sourceGUID = guid,
+		spellName = "Shared Label",
+		spellId = 81001,
+		hp = 100,
+	})
+	Harness.emitSpell({
+		t = 18,
+		sourceName = boss,
+		sourceGUID = guid,
+		spellName = "Shared Label",
+		spellId = 81002,
+		eventType = "SPELL_AURA_APPLIED",
+		hp = 74,
+	})
+	Harness.emitSpell({
+		t = 36,
+		sourceName = boss,
+		sourceGUID = guid,
+		spellName = "Shared Label",
+		spellId = 81001,
+		hp = 48,
+	})
 	Harness.finishPull(50, "unit_died")
 
 	local decoded = firstDecodedEvidenceKill()
@@ -3262,9 +4741,18 @@ local function scenarioEvidenceKeepsTechnicalSpellIdsForSameName()
 			spellIds[spell.spellIds[idIndex]] = true
 		end
 	end
-	Harness.assertTrue(#(decoded.kill.spells or {}) == 2, "Same visible spell names with different spell ids should remain separate technical evidence entries")
-	Harness.assertTrue(spellIds[81001] and spellIds[81002], "Technical spell ids should be preserved in packed evidence")
-	Harness.assertTrue(displayKeys["name:shared_label"] == true, "Packed technical spell evidence should keep the visible timer key")
+	Harness.assertTrue(
+		#(decoded.kill.spells or {}) == 2,
+		"Same visible spell names with different spell ids should remain separate technical evidence entries"
+	)
+	Harness.assertTrue(
+		spellIds[81001] and spellIds[81002],
+		"Technical spell ids should be preserved in packed evidence"
+	)
+	Harness.assertTrue(
+		displayKeys["name:shared_label"] == true,
+		"Packed technical spell evidence should keep the visible timer key"
+	)
 
 	addon.Core.EvidenceStore.rebuildLearned()
 	local bossKey = addon.Core.Util.bossKey(boss, guid)
@@ -3293,15 +4781,75 @@ local function scenarioEvidenceHashUsesAllEventFacts()
 	local firstFacts = {}
 	local secondFacts = {}
 	for index = 1, 161 do
-		firstFacts[index] = { type = "ACT", id = index, owner = 1, source = 1, spell = 1, t10 = index, hp10 = 1000 - index, code = "CS", targetScope = "none", targetCount = 0, flags = 0 }
-		secondFacts[index] = { type = "ACT", id = index, owner = 1, source = 1, spell = 1, t10 = index, hp10 = 1000 - index, code = "CS", targetScope = "none", targetCount = 0, flags = 0 }
+		firstFacts[index] = {
+			type = "ACT",
+			id = index,
+			owner = 1,
+			source = 1,
+			spell = 1,
+			t10 = index,
+			hp10 = 1000 - index,
+			code = "CS",
+			targetScope = "none",
+			targetCount = 0,
+			flags = 0,
+		}
+		secondFacts[index] = {
+			type = "ACT",
+			id = index,
+			owner = 1,
+			source = 1,
+			spell = 1,
+			t10 = index,
+			hp10 = 1000 - index,
+			code = "CS",
+			targetScope = "none",
+			targetCount = 0,
+			flags = 0,
+		}
 	end
-	secondFacts[161] = { type = "ACT", id = 161, owner = 1, source = 1, spell = 1, t10 = 161, hp10 = 1, code = "CS", targetScope = "none", targetCount = 0, flags = 0 }
+	secondFacts[161] = {
+		type = "ACT",
+		id = 161,
+		owner = 1,
+		source = 1,
+		spell = 1,
+		t10 = 161,
+		hp10 = 1,
+		code = "CS",
+		targetScope = "none",
+		targetCount = 0,
+		flags = 0,
+	}
 
-	local firstHash = addon.Core.EvidenceStore.killHashForEvidence("zone:hash_lab", "boss:hash_sentinel", "tier:normal", firstFacts, actors, spells, 2000, "unit_died")
-	local secondHash = addon.Core.EvidenceStore.killHashForEvidence("zone:hash_lab", "boss:hash_sentinel", "tier:normal", secondFacts, actors, spells, 2000, "unit_died")
-	Harness.assertTrue(firstHash ~= nil and secondHash ~= nil and firstHash ~= secondHash, "Evidence content hashes must include late activation facts beyond the first 160 facts")
-	Harness.assertTrue(string.len(firstHash) >= 32, "Evidence content hashes must be stronger than the old 32-bit sync key")
+	local firstHash = addon.Core.EvidenceStore.killHashForEvidence(
+		"zone:hash_lab",
+		"boss:hash_sentinel",
+		"tier:normal",
+		firstFacts,
+		actors,
+		spells,
+		2000,
+		"unit_died"
+	)
+	local secondHash = addon.Core.EvidenceStore.killHashForEvidence(
+		"zone:hash_lab",
+		"boss:hash_sentinel",
+		"tier:normal",
+		secondFacts,
+		actors,
+		spells,
+		2000,
+		"unit_died"
+	)
+	Harness.assertTrue(
+		firstHash ~= nil and secondHash ~= nil and firstHash ~= secondHash,
+		"Evidence content hashes must include late activation facts beyond the first 160 facts"
+	)
+	Harness.assertTrue(
+		string.len(firstHash) >= 32,
+		"Evidence content hashes must be stronger than the old 32-bit sync key"
+	)
 
 	local twoSpellDictionary = {
 		spells[1],
@@ -3314,16 +4862,85 @@ local function scenarioEvidenceHashUsesAllEventFacts()
 		},
 	}
 	local orderedFacts = {
-		{ type = "ACT", id = 1, owner = 1, source = 1, spell = 1, t10 = 500, hp10 = 800, code = "CS", targetScope = "none", targetCount = 0, flags = 0 },
-		{ type = "ACT", id = 2, owner = 1, source = 1, spell = 2, t10 = 500, hp10 = 800, code = "CS", targetScope = "none", targetCount = 0, flags = 0 },
+		{
+			type = "ACT",
+			id = 1,
+			owner = 1,
+			source = 1,
+			spell = 1,
+			t10 = 500,
+			hp10 = 800,
+			code = "CS",
+			targetScope = "none",
+			targetCount = 0,
+			flags = 0,
+		},
+		{
+			type = "ACT",
+			id = 2,
+			owner = 1,
+			source = 1,
+			spell = 2,
+			t10 = 500,
+			hp10 = 800,
+			code = "CS",
+			targetScope = "none",
+			targetCount = 0,
+			flags = 0,
+		},
 	}
 	local permutedFacts = {
-		{ type = "ACT", id = 1, owner = 1, source = 1, spell = 2, t10 = 500, hp10 = 800, code = "CS", targetScope = "none", targetCount = 0, flags = 0 },
-		{ type = "ACT", id = 2, owner = 1, source = 1, spell = 1, t10 = 500, hp10 = 800, code = "CS", targetScope = "none", targetCount = 0, flags = 0 },
+		{
+			type = "ACT",
+			id = 1,
+			owner = 1,
+			source = 1,
+			spell = 2,
+			t10 = 500,
+			hp10 = 800,
+			code = "CS",
+			targetScope = "none",
+			targetCount = 0,
+			flags = 0,
+		},
+		{
+			type = "ACT",
+			id = 2,
+			owner = 1,
+			source = 1,
+			spell = 1,
+			t10 = 500,
+			hp10 = 800,
+			code = "CS",
+			targetScope = "none",
+			targetCount = 0,
+			flags = 0,
+		},
 	}
-	local orderedHash = addon.Core.EvidenceStore.killHashForEvidence("zone:hash_lab", "boss:hash_sentinel", "tier:normal", orderedFacts, actors, twoSpellDictionary, 2000, "unit_died")
-	local permutedHash = addon.Core.EvidenceStore.killHashForEvidence("zone:hash_lab", "boss:hash_sentinel", "tier:normal", permutedFacts, actors, twoSpellDictionary, 2000, "unit_died")
-	Harness.assertTrue(orderedHash == permutedHash, "Evidence content hashes should not depend on internal same-time fact id ordering")
+	local orderedHash = addon.Core.EvidenceStore.killHashForEvidence(
+		"zone:hash_lab",
+		"boss:hash_sentinel",
+		"tier:normal",
+		orderedFacts,
+		actors,
+		twoSpellDictionary,
+		2000,
+		"unit_died"
+	)
+	local permutedHash = addon.Core.EvidenceStore.killHashForEvidence(
+		"zone:hash_lab",
+		"boss:hash_sentinel",
+		"tier:normal",
+		permutedFacts,
+		actors,
+		twoSpellDictionary,
+		2000,
+		"unit_died"
+	)
+	Harness.assertTrue(
+		orderedHash == permutedHash,
+		"Evidence content hashes should not depend on internal same-time fact id ordering"
+	)
 end
 
 local function scenarioEvidenceCountsAreSegmentLocal()
@@ -3336,25 +4953,49 @@ local function scenarioEvidenceCountsAreSegmentLocal()
 	Harness.emitSpell({ t = 0, sourceName = firstBoss, sourceGUID = firstGuid, spellName = "Alpha Strike", hp = 100 })
 	Harness.emitSpell({ t = 20, sourceName = firstBoss, sourceGUID = firstGuid, spellName = "Alpha Strike", hp = 68 })
 	emitUnitDied(22, firstGuid, firstBoss)
-	Harness.emitSpell({ t = 60, sourceName = secondBoss, sourceGUID = secondGuid, spellName = "Beta Ward", eventType = "SPELL_AURA_APPLIED", hp = 100 })
-	Harness.emitSpell({ t = 80, sourceName = secondBoss, sourceGUID = secondGuid, spellName = "Beta Ward", eventType = "SPELL_AURA_APPLIED", hp = 64 })
+	Harness.emitSpell({
+		t = 60,
+		sourceName = secondBoss,
+		sourceGUID = secondGuid,
+		spellName = "Beta Ward",
+		eventType = "SPELL_AURA_APPLIED",
+		hp = 100,
+	})
+	Harness.emitSpell({
+		t = 80,
+		sourceName = secondBoss,
+		sourceGUID = secondGuid,
+		spellName = "Beta Ward",
+		eventType = "SPELL_AURA_APPLIED",
+		hp = 64,
+	})
 	Harness.finishPull(100, "unit_died")
 
-	Harness.assertTrue(addon.Core.EvidenceStore.countPermanentKills() == 2, "Separated killed boss segments should each enter permanent evidence")
+	Harness.assertTrue(
+		addon.Core.EvidenceStore.countPermanentKills() == 2,
+		"Separated killed boss segments should each enter permanent evidence"
+	)
 	local seenAlpha = false
 	local seenBeta = false
 	for _, instance in pairs(addon.db.evidence.instances or {}) do
 		for _, evidenceBoss in pairs(instance.bosses or {}) do
 			for _, storedKill in pairs(evidenceBoss.kills or {}) do
-				local decoded, decodeError = addon.Core.EvidenceStore.decodeStoredKill(instance, evidenceBoss, storedKill)
+				local decoded, decodeError =
+					addon.Core.EvidenceStore.decodeStoredKill(instance, evidenceBoss, storedKill)
 				Harness.assertTrue(decoded ~= nil, "Split-count evidence should decode: " .. tostring(decodeError))
 				local counts = evidenceCodeCounts(decoded.kill)
 				if decoded.boss.name == firstBoss then
 					seenAlpha = true
-					Harness.assertTrue(counts.CS == 2 and counts.AA == nil, "First boss kill should store only its cast-success event counts")
+					Harness.assertTrue(
+						counts.CS == 2 and counts.AA == nil,
+						"First boss kill should store only its cast-success event counts"
+					)
 				elseif decoded.boss.name == secondBoss then
 					seenBeta = true
-					Harness.assertTrue(counts.AA == 2 and counts.CS == nil, "Second boss kill should store only its aura event counts")
+					Harness.assertTrue(
+						counts.AA == 2 and counts.CS == nil,
+						"Second boss kill should store only its aura event counts"
+					)
 				end
 			end
 		end
@@ -3366,7 +5007,8 @@ local function scenarioEvidenceStoresAddHeavyKillsWithinCap()
 	Harness.resetState("Replay Evidence Add Heavy")
 	local boss = "Add Heavy Sentinel"
 	local guid = Harness.makeGuid(boss, 911)
-	local pull, context = Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = guid, spellName = "Command Swarm", hp = 100 })
+	local pull, context =
+		Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = guid, spellName = "Command Swarm", hp = 100 })
 	for index = 1, 24 do
 		Harness.emitAssociatedSpell({
 			t = index,
@@ -3381,10 +5023,19 @@ local function scenarioEvidenceStoresAddHeavyKillsWithinCap()
 	Harness.emitSpell({ t = 45, sourceName = boss, sourceGUID = guid, spellName = "Command Swarm", hp = 20 })
 	Harness.finishPull(60, "unit_died")
 
-	Harness.assertTrue(addon.Core.EvidenceStore.countPermanentKills() == 1, "Add-heavy killed encounters should still enter permanent evidence within the actor cap")
-	Harness.assertTrue(addon.Core.EvidenceStore.countIncomplete() == 0, "Add-heavy killed encounters inside the cap should not be marked incomplete")
+	Harness.assertTrue(
+		addon.Core.EvidenceStore.countPermanentKills() == 1,
+		"Add-heavy killed encounters should still enter permanent evidence within the actor cap"
+	)
+	Harness.assertTrue(
+		addon.Core.EvidenceStore.countIncomplete() == 0,
+		"Add-heavy killed encounters inside the cap should not be marked incomplete"
+	)
 	local decoded = firstDecodedEvidenceKill()
-	Harness.assertTrue(decoded ~= nil and #(decoded.kill.actors or {}) > 18, "Permanent evidence should retain add actor facts beyond the old actor cap")
+	Harness.assertTrue(
+		decoded ~= nil and #(decoded.kill.actors or {}) > 18,
+		"Permanent evidence should retain add actor facts beyond the old actor cap"
+	)
 end
 
 local function scenarioEvidenceStoresBoundedKillFromTruncatedPullDraft()
@@ -3428,11 +5079,23 @@ local function scenarioEvidenceStoresBoundedKillFromTruncatedPullDraft()
 
 	C.MAX_EVIDENCE_EVENTS_PER_KILL = previousEventLimit
 	C.MAX_EVIDENCE_FACTS_PER_KILL = previousFactLimit
-	Harness.assertTrue(addon.Core.EvidenceStore.countPermanentKills() == 1, "A completed boss component should still store bounded evidence when the pull draft overflows")
-	Harness.assertTrue(addon.Core.EvidenceStore.countIncomplete() == 0, "A stored truncated boss component should not leave an incomplete attempt")
+	Harness.assertTrue(
+		addon.Core.EvidenceStore.countPermanentKills() == 1,
+		"A completed boss component should still store bounded evidence when the pull draft overflows"
+	)
+	Harness.assertTrue(
+		addon.Core.EvidenceStore.countIncomplete() == 0,
+		"A stored truncated boss component should not leave an incomplete attempt"
+	)
 	local decoded = firstDecodedEvidenceKill()
-	Harness.assertTrue(decoded ~= nil and #(decoded.kill.facts or {}) == 12, "Truncated component evidence should stay within the configured packed fact cap")
-	Harness.assertTrue(decoded.boss.name == boss, "Truncated pull evidence should commit the completed boss component, not unrelated trash")
+	Harness.assertTrue(
+		decoded ~= nil and #(decoded.kill.facts or {}) == 12,
+		"Truncated component evidence should stay within the configured packed fact cap"
+	)
+	Harness.assertTrue(
+		decoded.boss.name == boss,
+		"Truncated pull evidence should commit the completed boss component, not unrelated trash"
+	)
 end
 
 local function scenarioEvidenceSamplingKeepsLateImportantEvents()
@@ -3485,8 +5148,14 @@ local function scenarioEvidenceSamplingKeepsLateImportantEvents()
 		end
 	end
 	local counts = evidenceCodeCounts(decoded.kill)
-	Harness.assertTrue(decoded ~= nil and #(decoded.kill.facts or {}) < 16, "Fact evidence should aggregate early dose noise instead of filling the cap")
-	Harness.assertTrue(decoded.kill.truncated ~= true, "Aggregated fact evidence should avoid truncation for dose-noise heavy pulls")
+	Harness.assertTrue(
+		decoded ~= nil and #(decoded.kill.facts or {}) < 16,
+		"Fact evidence should aggregate early dose noise instead of filling the cap"
+	)
+	Harness.assertTrue(
+		decoded.kill.truncated ~= true,
+		"Aggregated fact evidence should avoid truncation for dose-noise heavy pulls"
+	)
 	Harness.assertTrue(counts.AD == 30, "Aggregate counters should preserve the full dose-event count")
 	Harness.assertTrue(foundLate, "Evidence facts should retain the late high-priority boss activation")
 	Harness.assertTrue(latest >= 119.5, "Fact evidence should cover the late fight window")
@@ -3502,8 +5171,14 @@ local function scenarioEvidenceRebuildsLearnedModel()
 
 	local bossKey = addon.Core.Util.bossKey(boss, guid)
 	local direct = Harness.ability(Harness.encounter(bossKey), bossKey, "Clockwork Slam")
-	Harness.assertTrue(direct ~= nil and direct.minInterval == 24, "Fixture should learn a direct interval before rebuild")
-	Harness.assertTrue(addon.Core.EvidenceStore.countPermanentKills() == 1, "Fixture should capture one permanent kill before rebuild")
+	Harness.assertTrue(
+		direct ~= nil and direct.minInterval == 24,
+		"Fixture should learn a direct interval before rebuild"
+	)
+	Harness.assertTrue(
+		addon.Core.EvidenceStore.countPermanentKills() == 1,
+		"Fixture should capture one permanent kill before rebuild"
+	)
 
 	local promoted = addon.Core.EvidenceStore.rebuildLearned()
 	Harness.assertTrue(promoted >= 1, "Evidence rebuild should promote at least one encounter")
@@ -3539,16 +5214,32 @@ local function scenarioEvidenceRebuildPreservesBossContextStart()
 
 	local decoded = firstDecodedEvidenceKill()
 	Harness.assertTrue(decoded ~= nil, "Fixture should capture decodable evidence")
-	Harness.assertTrue(decoded.kill.actors[1].contextStart10 == 0, "Permanent evidence should store boss context start separately from the first spell event")
-	Harness.assertTrue(decoded.kill.actors[1].first10 == 70, "Permanent evidence should still preserve first observed event timing")
+	Harness.assertTrue(
+		decoded.kill.actors[1].contextStart10 == 0,
+		"Permanent evidence should store boss context start separately from the first spell event"
+	)
+	Harness.assertTrue(
+		decoded.kill.actors[1].first10 == 70,
+		"Permanent evidence should still preserve first observed event timing"
+	)
 
 	local direct = Harness.ability(Harness.encounter(bossKey), bossKey, "Late Warning")
-	Harness.assertNear(direct.avgFirstOffset, 7, 0.01, "Fixture should learn the live first offset from boss context start")
+	Harness.assertNear(
+		direct.avgFirstOffset,
+		7,
+		0.01,
+		"Fixture should learn the live first offset from boss context start"
+	)
 	local promoted = addon.Core.EvidenceStore.rebuildLearned()
 	Harness.assertTrue(promoted >= 1, "Evidence rebuild should promote the context-start fixture")
 	local rebuilt = Harness.ability(Harness.encounter(bossKey), bossKey, "Late Warning")
 	Harness.assertTrue(rebuilt ~= nil, "Evidence rebuild should recreate the context-start ability")
-	Harness.assertNear(rebuilt.avgFirstOffset, 7, 0.01, "Evidence rebuild should preserve boss context start for first-offset timers")
+	Harness.assertNear(
+		rebuilt.avgFirstOffset,
+		7,
+		0.01,
+		"Evidence rebuild should preserve boss context start for first-offset timers"
+	)
 end
 
 local function scenarioEvidenceRebuildPreservesPlayerAuraPhase()
@@ -3557,11 +5248,51 @@ local function scenarioEvidenceRebuildPreservesPlayerAuraPhase()
 	local guid = Harness.makeGuid(boss, 902)
 	local playerFlags = addon.Core.Constants.FLAG_PLAYER
 	Harness.emitSpell({ t = 0, sourceName = boss, sourceGUID = guid, spellName = "Opening Bolt", hp = 100 })
-	Harness.emitSpell({ t = 8, sourceName = boss, sourceGUID = guid, spellName = "Frost Mark", hp = 98, eventType = "SPELL_AURA_APPLIED", destGUID = "Player-1", destName = "Replay Tank", destFlags = playerFlags })
-	Harness.emitSpell({ t = 9, sourceName = boss, sourceGUID = guid, spellName = "Frost Mark", hp = 97, eventType = "SPELL_AURA_APPLIED", destGUID = "Player-2", destName = "Replay Healer", destFlags = playerFlags })
-	Harness.emitSpell({ t = 12, sourceName = boss, sourceGUID = guid, spellName = "Frost Mark", hp = 96, eventType = "SPELL_AURA_REMOVED", destGUID = "Player-1", destName = "Replay Tank", destFlags = playerFlags })
+	Harness.emitSpell({
+		t = 8,
+		sourceName = boss,
+		sourceGUID = guid,
+		spellName = "Frost Mark",
+		hp = 98,
+		eventType = "SPELL_AURA_APPLIED",
+		destGUID = "Player-1",
+		destName = "Replay Tank",
+		destFlags = playerFlags,
+	})
+	Harness.emitSpell({
+		t = 9,
+		sourceName = boss,
+		sourceGUID = guid,
+		spellName = "Frost Mark",
+		hp = 97,
+		eventType = "SPELL_AURA_APPLIED",
+		destGUID = "Player-2",
+		destName = "Replay Healer",
+		destFlags = playerFlags,
+	})
+	Harness.emitSpell({
+		t = 12,
+		sourceName = boss,
+		sourceGUID = guid,
+		spellName = "Frost Mark",
+		hp = 96,
+		eventType = "SPELL_AURA_REMOVED",
+		destGUID = "Player-1",
+		destName = "Replay Tank",
+		destFlags = playerFlags,
+	})
 	Harness.emitSpell({ t = 13, sourceName = boss, sourceGUID = guid, spellName = "Frost Pulse", hp = 95 })
-	Harness.emitSpell({ t = 16, sourceName = boss, sourceGUID = guid, spellName = "Frost Mark", hp = 94, eventType = "SPELL_AURA_REMOVED", destGUID = "Player-2", destName = "Replay Healer", destFlags = playerFlags })
+	Harness.emitSpell({
+		t = 16,
+		sourceName = boss,
+		sourceGUID = guid,
+		spellName = "Frost Mark",
+		hp = 94,
+		eventType = "SPELL_AURA_REMOVED",
+		destGUID = "Player-2",
+		destName = "Replay Healer",
+		destFlags = playerFlags,
+	})
 	Harness.emitSpell({ t = 19, sourceName = boss, sourceGUID = guid, spellName = "Arcane Reset", hp = 93 })
 	Harness.finishPull(35, "unit_died")
 
@@ -3569,16 +5300,28 @@ local function scenarioEvidenceRebuildPreservesPlayerAuraPhase()
 	local direct = Harness.ability(Harness.encounter(bossKey), bossKey, "Frost Pulse")
 	local segmentKey = auraSegmentKey("aura", "player", "Frost Mark")
 	local clearSegmentKey = auraSegmentKey("aura_clear", "player", "Frost Mark")
-	Harness.assertTrue(direct ~= nil and direct.segmentStats and direct.segmentStats[segmentKey] ~= nil, "Fixture should learn the player aura phase before rebuild")
+	Harness.assertTrue(
+		direct ~= nil and direct.segmentStats and direct.segmentStats[segmentKey] ~= nil,
+		"Fixture should learn the player aura phase before rebuild"
+	)
 	local directReset = Harness.ability(Harness.encounter(bossKey), bossKey, "Arcane Reset")
-	Harness.assertTrue(directReset ~= nil and directReset.segmentStats and directReset.segmentStats[clearSegmentKey] ~= nil, "Fixture should learn the player aura clear phase before rebuild")
+	Harness.assertTrue(
+		directReset ~= nil and directReset.segmentStats and directReset.segmentStats[clearSegmentKey] ~= nil,
+		"Fixture should learn the player aura clear phase before rebuild"
+	)
 
 	local promoted = addon.Core.EvidenceStore.rebuildLearned()
 	Harness.assertTrue(promoted >= 1, "Evidence rebuild should promote the player-aura encounter")
 	local rebuilt = Harness.ability(Harness.encounter(bossKey), bossKey, "Frost Pulse")
-	Harness.assertTrue(rebuilt ~= nil and rebuilt.segmentStats and rebuilt.segmentStats[segmentKey] ~= nil, "Evidence rebuild should preserve overlapping anonymous player aura phase facts")
+	Harness.assertTrue(
+		rebuilt ~= nil and rebuilt.segmentStats and rebuilt.segmentStats[segmentKey] ~= nil,
+		"Evidence rebuild should preserve overlapping anonymous player aura phase facts"
+	)
 	local rebuiltReset = Harness.ability(Harness.encounter(bossKey), bossKey, "Arcane Reset")
-	Harness.assertTrue(rebuiltReset ~= nil and rebuiltReset.segmentStats and rebuiltReset.segmentStats[clearSegmentKey] ~= nil, "Evidence rebuild should preserve anonymous player aura clear phase facts")
+	Harness.assertTrue(
+		rebuiltReset ~= nil and rebuiltReset.segmentStats and rebuiltReset.segmentStats[clearSegmentKey] ~= nil,
+		"Evidence rebuild should preserve anonymous player aura clear phase facts"
+	)
 end
 
 local function scenarioEvidenceRebuildPreservesPlayerAuraWaves()
@@ -3609,15 +5352,24 @@ local function scenarioEvidenceRebuildPreservesPlayerAuraWaves()
 			end
 		end
 	end
-	Harness.assertTrue(activationFacts == 3, "Permanent player aura evidence should store one activation per apply wave")
-	Harness.assertTrue(damageMaskSeen and not unexpectedEffectMask, "Player aura damage and miss consequences should use a stable bitmask")
+	Harness.assertTrue(
+		activationFacts == 3,
+		"Permanent player aura evidence should store one activation per apply wave"
+	)
+	Harness.assertTrue(
+		damageMaskSeen and not unexpectedEffectMask,
+		"Player aura damage and miss consequences should use a stable bitmask"
+	)
 
 	local promoted = addon.Core.EvidenceStore.rebuildLearned()
 	Harness.assertTrue(promoted >= 1, "Evidence rebuild should promote the player-aura wave encounter")
 	local bossKey = addon.Core.Util.bossKey(boss, guid)
 	local rebuilt = Harness.ability(Harness.encounter(bossKey), bossKey, spellName)
 	Harness.assertTrue(rebuilt ~= nil, "Evidence rebuild should preserve the player aura wave ability")
-	Harness.assertTrue(rebuilt.selectedRule and rebuilt.selectedRule.type == "time_interval", "Rebuilt player aura waves should select a time interval")
+	Harness.assertTrue(
+		rebuilt.selectedRule and rebuilt.selectedRule.type == "time_interval",
+		"Rebuilt player aura waves should select a time interval"
+	)
 	Harness.assertNear(rebuilt.minInterval, 15, 0.02, "Rebuilt player aura waves should keep the apply interval")
 end
 
@@ -3643,12 +5395,26 @@ local function scenarioEvidenceEngineVersionRebuildsFinalData()
 	addon.db.learnedMeta.rebuildReason = "test_engine"
 
 	local rebuiltNow, promoted = addon.Core.SavedVariables.rebuildLearnedIfNeeded()
-	Harness.assertTrue(rebuiltNow == true and promoted >= 1, "Stale interpretation-engine metadata should trigger an evidence rebuild")
+	Harness.assertTrue(
+		rebuiltNow == true and promoted >= 1,
+		"Stale interpretation-engine metadata should trigger an evidence rebuild"
+	)
 	ability = Harness.ability(Harness.encounter(bossKey), bossKey, "Version Slam")
 	Harness.assertTrue(ability ~= nil, "Engine rebuild should recreate the learned ability")
-	Harness.assertNear(ability.minInterval, 26, 0.01, "Engine rebuild should replace stale final timer data from evidence")
-	Harness.assertTrue(addon.db.learnedMeta.interpretationEngineVersion == addon.Core.Constants.INTERPRETATION_ENGINE_VERSION, "Engine rebuild should mark learned data with the current interpretation engine version")
-	Harness.assertTrue(addon.db.learnedMeta.rebuildRequired == nil, "Engine rebuild should clear the rebuild-required marker")
+	Harness.assertNear(
+		ability.minInterval,
+		26,
+		0.01,
+		"Engine rebuild should replace stale final timer data from evidence"
+	)
+	Harness.assertTrue(
+		addon.db.learnedMeta.interpretationEngineVersion == addon.Core.Constants.INTERPRETATION_ENGINE_VERSION,
+		"Engine rebuild should mark learned data with the current interpretation engine version"
+	)
+	Harness.assertTrue(
+		addon.db.learnedMeta.rebuildRequired == nil,
+		"Engine rebuild should clear the rebuild-required marker"
+	)
 end
 
 local function scenarioEngineRebuildPreservesLearnedOnlyLegacy()
@@ -3656,8 +5422,20 @@ local function scenarioEngineRebuildPreservesLearnedOnlyLegacy()
 	local C = addon.Core.Constants
 	local evidenceBoss = "Evidence Backed Sentinel"
 	local evidenceGuid = Harness.makeGuid(evidenceBoss, 1906)
-	Harness.emitSpell({ t = 0, sourceName = evidenceBoss, sourceGUID = evidenceGuid, spellName = "Evidence Slam", hp = 100 })
-	Harness.emitSpell({ t = 30, sourceName = evidenceBoss, sourceGUID = evidenceGuid, spellName = "Evidence Slam", hp = 20 })
+	Harness.emitSpell({
+		t = 0,
+		sourceName = evidenceBoss,
+		sourceGUID = evidenceGuid,
+		spellName = "Evidence Slam",
+		hp = 100,
+	})
+	Harness.emitSpell({
+		t = 30,
+		sourceName = evidenceBoss,
+		sourceGUID = evidenceGuid,
+		spellName = "Evidence Slam",
+		hp = 20,
+	})
 	Harness.finishPull(45, "unit_died")
 
 	local legacyZoneKey = "legacy_blackwing_lair"
@@ -3669,17 +5447,41 @@ local function scenarioEngineRebuildPreservesLearnedOnlyLegacy()
 	addon.db.learnedMeta.rebuildReason = "test_partial_engine"
 
 	local rebuiltNow, promoted = addon.Core.SavedVariables.rebuildLearnedIfNeeded()
-	Harness.assertTrue(rebuiltNow == true and promoted >= 1, "Partial engine rebuild should still replay permanent evidence")
+	Harness.assertTrue(
+		rebuiltNow == true and promoted >= 1,
+		"Partial engine rebuild should still replay permanent evidence"
+	)
 	local evidenceBossKey = addon.Core.Util.bossKey(evidenceBoss, evidenceGuid)
-	Harness.assertTrue(Harness.encounter(evidenceBossKey) ~= nil, "Evidence-backed encounter should remain current after rebuild")
+	Harness.assertTrue(
+		Harness.encounter(evidenceBossKey) ~= nil,
+		"Evidence-backed encounter should remain current after rebuild"
+	)
 	local legacyEncounter = addon.db.learned.zones[legacyZoneKey].encounters[legacyEncounterKey]
 	Harness.assertTrue(legacyEncounter ~= nil, "Learned-only encounter must not be deleted by an evidence rebuild")
-	Harness.assertTrue(legacyEncounter.legacyAfterRebuild == true, "Learned-only encounter should be marked as legacy after rebuild")
-	Harness.assertTrue(legacyEncounter.abilities[legacyAbilityKey].legacyAfterRebuild == true, "Learned-only ability should be marked as legacy after rebuild")
-	Harness.assertTrue(addon.Core.ModelStore.getEncounter(legacyZoneKey, legacyEncounterKey) == nil, "Legacy encounter should not feed runtime timer lookup")
-	Harness.assertTrue(addon.charDB.learnedBackup.learned.zones[legacyZoneKey].encounters[legacyEncounterKey] ~= nil, "Character backup must keep preserved legacy learned data")
-	Harness.assertTrue(addon.db.learnedMeta.rebuildCoverage == "partial", "Partial rebuild should be visible in learned metadata")
-	Harness.assertTrue((addon.db.learnedMeta.rebuildLegacyPreservedEncounters or 0) >= 1, "Partial rebuild should count preserved legacy encounters")
+	Harness.assertTrue(
+		legacyEncounter.legacyAfterRebuild == true,
+		"Learned-only encounter should be marked as legacy after rebuild"
+	)
+	Harness.assertTrue(
+		legacyEncounter.abilities[legacyAbilityKey].legacyAfterRebuild == true,
+		"Learned-only ability should be marked as legacy after rebuild"
+	)
+	Harness.assertTrue(
+		addon.Core.ModelStore.getEncounter(legacyZoneKey, legacyEncounterKey) == nil,
+		"Legacy encounter should not feed runtime timer lookup"
+	)
+	Harness.assertTrue(
+		addon.charDB.learnedBackup.learned.zones[legacyZoneKey].encounters[legacyEncounterKey] ~= nil,
+		"Character backup must keep preserved legacy learned data"
+	)
+	Harness.assertTrue(
+		addon.db.learnedMeta.rebuildCoverage == "partial",
+		"Partial rebuild should be visible in learned metadata"
+	)
+	Harness.assertTrue(
+		(addon.db.learnedMeta.rebuildLegacyPreservedEncounters or 0) >= 1,
+		"Partial rebuild should count preserved legacy encounters"
+	)
 end
 
 local function scenarioLiveCompletedPullClearsRevalidatedLegacy()
@@ -3712,12 +5514,30 @@ local function scenarioLiveCompletedPullClearsRevalidatedLegacy()
 	local refreshed = addon.db.learned.zones[zoneKey].encounters[bossKey]
 	local recovered = Harness.ability(refreshed, bossKey, "Recovered Slam")
 	local stale = refreshed.abilities[staleAbilityKey]
-	Harness.assertTrue(refreshed.legacyAfterRebuild ~= true, "A completed live pull should reactivate the legacy encounter it revalidates")
-	Harness.assertTrue(addon.Core.ModelStore.getEncounter(zoneKey, bossKey) == refreshed, "Revalidated legacy encounter should feed runtime lookup again")
-	Harness.assertTrue(recovered ~= nil and recovered.legacyAfterRebuild ~= true, "Observed legacy ability should no longer need evidence")
-	Harness.assertTrue(stale ~= nil and stale.legacyAfterRebuild == true, "Unobserved legacy abilities should still need fresh evidence")
-	Harness.assertTrue(refreshed.rebuildCoverage == "partial", "Partially revalidated encounters should keep partial coverage")
-	Harness.assertTrue(refreshed.legacyAbilityCount == 1, "Partial coverage should count only remaining legacy abilities")
+	Harness.assertTrue(
+		refreshed.legacyAfterRebuild ~= true,
+		"A completed live pull should reactivate the legacy encounter it revalidates"
+	)
+	Harness.assertTrue(
+		addon.Core.ModelStore.getEncounter(zoneKey, bossKey) == refreshed,
+		"Revalidated legacy encounter should feed runtime lookup again"
+	)
+	Harness.assertTrue(
+		recovered ~= nil and recovered.legacyAfterRebuild ~= true,
+		"Observed legacy ability should no longer need evidence"
+	)
+	Harness.assertTrue(
+		stale ~= nil and stale.legacyAfterRebuild == true,
+		"Unobserved legacy abilities should still need fresh evidence"
+	)
+	Harness.assertTrue(
+		refreshed.rebuildCoverage == "partial",
+		"Partially revalidated encounters should keep partial coverage"
+	)
+	Harness.assertTrue(
+		refreshed.legacyAbilityCount == 1,
+		"Partial coverage should count only remaining legacy abilities"
+	)
 end
 
 local function scenarioNewEvidenceAfterPartialRebuildRefreshesLegacyOnStartup()
@@ -3747,9 +5567,18 @@ local function scenarioNewEvidenceAfterPartialRebuildRefreshesLegacyOnStartup()
 	local rebuiltNow, promoted = addon.Core.SavedVariables.rebuildLearnedIfNeeded()
 	local refreshed = Harness.encounter(bossKey)
 	local ability = Harness.ability(refreshed, bossKey, "Deferred Slam")
-	Harness.assertTrue(rebuiltNow == true and promoted >= 1, "New permanent evidence after a partial rebuild should trigger startup refresh")
-	Harness.assertTrue(refreshed ~= nil and refreshed.legacyAfterRebuild ~= true, "Startup refresh should reactivate the evidence-backed encounter")
-	Harness.assertTrue(ability ~= nil and ability.legacyAfterRebuild ~= true, "Startup refresh should clear legacy state from evidence-backed abilities")
+	Harness.assertTrue(
+		rebuiltNow == true and promoted >= 1,
+		"New permanent evidence after a partial rebuild should trigger startup refresh"
+	)
+	Harness.assertTrue(
+		refreshed ~= nil and refreshed.legacyAfterRebuild ~= true,
+		"Startup refresh should reactivate the evidence-backed encounter"
+	)
+	Harness.assertTrue(
+		ability ~= nil and ability.legacyAfterRebuild ~= true,
+		"Startup refresh should clear legacy state from evidence-backed abilities"
+	)
 end
 
 local function scenarioOldBackupRestorePreservesLegacyAfterEngineRebuild()
@@ -3792,14 +5621,32 @@ local function scenarioOldBackupRestorePreservesLegacyAfterEngineRebuild()
 	}
 	addon.Core.SavedVariables.init()
 
-	Harness.assertTrue(addon.Core.SavedVariables.restorePendingLearnedBackup() == true, "Old-engine character backup should be restorable")
+	Harness.assertTrue(
+		addon.Core.SavedVariables.restorePendingLearnedBackup() == true,
+		"Old-engine character backup should be restorable"
+	)
 	local restored = addon.db.learned.zones[zoneKey].encounters.backup_boss
 	Harness.assertTrue(restored ~= nil, "Restored learned-only backup encounter must remain present")
-	Harness.assertTrue(restored.legacyAfterRebuild == true, "Restored learned-only backup should become marked legacy after rebuild")
-	Harness.assertTrue(restored.abilities[backupAbilityKey].legacyAfterRebuild == true, "Restored backup ability should become marked legacy after rebuild")
-	Harness.assertTrue(addon.Core.ModelStore.getEncounter(zoneKey, "backup_boss") == nil, "Restored legacy backup should not feed runtime timer lookup")
-	Harness.assertTrue(addon.charDB.learnedBackup.learned.zones[zoneKey].encounters.backup_boss ~= nil, "Backup rewrite must not drop restored legacy data")
-	Harness.assertTrue(addon.db.learnedMeta.interpretationEngineVersion == C.INTERPRETATION_ENGINE_VERSION, "Restore follow-up rebuild should mark metadata current")
+	Harness.assertTrue(
+		restored.legacyAfterRebuild == true,
+		"Restored learned-only backup should become marked legacy after rebuild"
+	)
+	Harness.assertTrue(
+		restored.abilities[backupAbilityKey].legacyAfterRebuild == true,
+		"Restored backup ability should become marked legacy after rebuild"
+	)
+	Harness.assertTrue(
+		addon.Core.ModelStore.getEncounter(zoneKey, "backup_boss") == nil,
+		"Restored legacy backup should not feed runtime timer lookup"
+	)
+	Harness.assertTrue(
+		addon.charDB.learnedBackup.learned.zones[zoneKey].encounters.backup_boss ~= nil,
+		"Backup rewrite must not drop restored legacy data"
+	)
+	Harness.assertTrue(
+		addon.db.learnedMeta.interpretationEngineVersion == C.INTERPRETATION_ENGINE_VERSION,
+		"Restore follow-up rebuild should mark metadata current"
+	)
 end
 
 local function scenarioMissingEvidenceEngineVersionRebuildsForFutureEngines()
@@ -3822,11 +5669,22 @@ local function scenarioMissingEvidenceEngineVersionRebuildsForFutureEngines()
 	local rebuiltNow, promoted = addon.Core.SavedVariables.rebuildLearnedIfNeeded()
 	addon.Core.Constants.INTERPRETATION_ENGINE_VERSION = originalEngineVersion
 
-	Harness.assertTrue(rebuiltNow == true and promoted >= 1, "Missing engine metadata should rebuild when the current engine is newer than the initial marker version")
+	Harness.assertTrue(
+		rebuiltNow == true and promoted >= 1,
+		"Missing engine metadata should rebuild when the current engine is newer than the initial marker version"
+	)
 	ability = Harness.ability(Harness.encounter(bossKey), bossKey, "Future Slam")
 	Harness.assertTrue(ability ~= nil, "Missing-engine rebuild should recreate the learned ability")
-	Harness.assertNear(ability.minInterval, 28, 0.01, "Missing-engine rebuild should replace stale final data from evidence")
-	Harness.assertTrue(addon.db.learnedMeta.interpretationEngineVersion == futureEngineVersion, "Missing-engine rebuild should record the future interpretation engine version")
+	Harness.assertNear(
+		ability.minInterval,
+		28,
+		0.01,
+		"Missing-engine rebuild should replace stale final data from evidence"
+	)
+	Harness.assertTrue(
+		addon.db.learnedMeta.interpretationEngineVersion == futureEngineVersion,
+		"Missing-engine rebuild should record the future interpretation engine version"
+	)
 end
 
 local function scenarioEvidenceSyncRoundTripRebuildsModel()
@@ -3838,21 +5696,33 @@ local function scenarioEvidenceSyncRoundTripRebuildsModel()
 	Harness.finishPull(60, "unit_died")
 
 	local payload, exportStatsOrError = addon.Core.EvidenceSync.exportPayload()
-	Harness.assertTrue(payload ~= nil, "Evidence sync should export captured kill evidence: " .. tostring(exportStatsOrError))
+	Harness.assertTrue(
+		payload ~= nil,
+		"Evidence sync should export captured kill evidence: " .. tostring(exportStatsOrError)
+	)
 	Harness.assertTrue(exportStatsOrError.exported == 1, "Evidence sync should export one kill")
 
 	addon.Core.SavedVariables.clearLearnedData("Test clears local data before sync import.")
-	Harness.assertTrue(addon.Core.EvidenceStore.countPermanentKills() == 0, "Test setup should clear local evidence before import")
+	Harness.assertTrue(
+		addon.Core.EvidenceStore.countPermanentKills() == 0,
+		"Test setup should clear local evidence before import"
+	)
 	local importStats, importError = addon.Core.EvidenceSync.importPayload(payload, "PeerTester")
 	Harness.assertTrue(importStats ~= nil, "Evidence sync should import exported payload: " .. tostring(importError))
 	Harness.assertTrue(importStats.imported == 1, "Evidence sync should import one new kill")
-	Harness.assertTrue(addon.Core.EvidenceStore.countPermanentKills() == 1, "Imported sync evidence should merge into permanent evidence")
+	Harness.assertTrue(
+		addon.Core.EvidenceStore.countPermanentKills() == 1,
+		"Imported sync evidence should merge into permanent evidence"
+	)
 
 	local bossKey = addon.Core.Util.bossKey(boss, guid)
 	local rebuilt = Harness.ability(Harness.encounter(bossKey), bossKey, "Peer Slam")
 	Harness.assertTrue(rebuilt ~= nil, "Imported sync evidence should rebuild the learned ability")
 	Harness.assertNear(rebuilt.minInterval, 30, 0.01, "Imported sync evidence should preserve interval evidence")
-	Harness.assertTrue(rebuilt.minDifficultyOrdinal == 1, "Imported sync evidence should preserve ability difficulty metadata")
+	Harness.assertTrue(
+		rebuilt.minDifficultyOrdinal == 1,
+		"Imported sync evidence should preserve ability difficulty metadata"
+	)
 
 	local function firstEvidenceKillHash()
 		local blocks = addon.Core.EvidenceStore.collectKillBlocks()
@@ -3867,10 +5737,19 @@ local function scenarioEvidenceSyncRoundTripRebuildsModel()
 	local tamperedHash = originalHash == "ffffffff" and "eeeeeeee" or "ffffffff"
 	local tamperedPayload = string.gsub(payload, originalHash, tamperedHash)
 	local duplicateStats, duplicateError = addon.Core.EvidenceSync.importPayload(tamperedPayload, "PeerTester")
-	Harness.assertTrue(duplicateStats ~= nil, "Tampered duplicate payload should remain parseable: " .. tostring(duplicateError))
+	Harness.assertTrue(
+		duplicateStats ~= nil,
+		"Tampered duplicate payload should remain parseable: " .. tostring(duplicateError)
+	)
 	Harness.assertTrue(duplicateStats.imported == 0, "Tampered duplicate evidence must not import as a new kill")
-	Harness.assertTrue(duplicateStats.duplicates == 1, "Tampered duplicate evidence should dedupe by recomputed content hash")
-	Harness.assertTrue(addon.Core.EvidenceStore.countPermanentKills() == 1, "Tampered duplicate evidence must not increase permanent evidence count")
+	Harness.assertTrue(
+		duplicateStats.duplicates == 1,
+		"Tampered duplicate evidence should dedupe by recomputed content hash"
+	)
+	Harness.assertTrue(
+		addon.Core.EvidenceStore.countPermanentKills() == 1,
+		"Tampered duplicate evidence must not increase permanent evidence count"
+	)
 
 	Harness.setUnit("target", {
 		name = "PeerSyncTarget",
@@ -3881,7 +5760,10 @@ local function scenarioEvidenceSyncRoundTripRebuildsModel()
 	local messages = Harness.sentAddonMessages()
 	local lastMessage = messages[#messages]
 	Harness.assertTrue(lastMessage ~= nil, "Evidence sync target command should send a request")
-	Harness.assertTrue(lastMessage.prefix == addon.Core.Constants.SYNC_PREFIX, "Evidence sync should use the configured prefix")
+	Harness.assertTrue(
+		lastMessage.prefix == addon.Core.Constants.SYNC_PREFIX,
+		"Evidence sync should use the configured prefix"
+	)
 	Harness.assertTrue(lastMessage.distribution == "WHISPER", "Target sync should whisper the request")
 	Harness.assertTrue(lastMessage.target == "PeerSyncTarget", "Target sync should preserve the selected player name")
 	Harness.assertTrue(string.sub(lastMessage.message, 1, 2) == "R|", "Target sync should send a request message")
@@ -3889,93 +5771,177 @@ local function scenarioEvidenceSyncRoundTripRebuildsModel()
 	Harness.assertTrue(sessionId ~= nil, "Target sync request should include a session id")
 
 	Harness.clearAddonMessages()
-	addon.Core.EvidenceSync.handleAddonMessage("CHAT_MSG_ADDON", addon.Core.Constants.SYNC_PREFIX, "A|" .. sessionId .. "|" .. addon.Core.Constants.VERSION, "WHISPER", "PeerSyncTarget")
+	addon.Core.EvidenceSync.handleAddonMessage(
+		"CHAT_MSG_ADDON",
+		addon.Core.Constants.SYNC_PREFIX,
+		"A|" .. sessionId .. "|" .. addon.Core.Constants.VERSION,
+		"WHISPER",
+		"PeerSyncTarget"
+	)
 	addon.Core.EvidenceSync.flushQueue(1000)
 	messages = Harness.sentAddonMessages()
 	Harness.assertTrue(#messages >= 1, "Accepted sync should send an evidence inventory")
-	Harness.assertTrue(string.sub(messages[1].message, 1, 2) == "M|", "Accepted sync should start with a hash inventory")
+	Harness.assertTrue(
+		string.sub(messages[1].message, 1, 2) == "M|",
+		"Accepted sync should start with a hash inventory"
+	)
 	for index = 1, #messages do
-		Harness.assertTrue(#messages[index].message <= 255, "Sync inventory message " .. tostring(index) .. " should stay below the client limit")
+		Harness.assertTrue(
+			#messages[index].message <= 255,
+			"Sync inventory message " .. tostring(index) .. " should stay below the client limit"
+		)
 	end
 
 	local wantedPayload = originalHash
 	local wantedPayloadHash = addon.Core.EvidenceCodec.hashString(wantedPayload)
 	Harness.clearAddonMessages()
-	addon.Core.EvidenceSync.handleAddonMessage("CHAT_MSG_ADDON", addon.Core.Constants.SYNC_PREFIX, table.concat({
-		"W",
-		sessionId,
-		tostring(#wantedPayload),
-		wantedPayloadHash,
-		"1",
-		"1",
-		addon.Core.Constants.VERSION,
-	}, "|"), "WHISPER", "PeerSyncTarget")
-	addon.Core.EvidenceSync.handleAddonMessage("CHAT_MSG_ADDON", addon.Core.Constants.SYNC_PREFIX, table.concat({
-		"w",
-		sessionId,
-		"1",
-		"1",
-		wantedPayload,
-	}, "|"), "WHISPER", "PeerSyncTarget")
+	addon.Core.EvidenceSync.handleAddonMessage(
+		"CHAT_MSG_ADDON",
+		addon.Core.Constants.SYNC_PREFIX,
+		table.concat({
+			"W",
+			sessionId,
+			tostring(#wantedPayload),
+			wantedPayloadHash,
+			"1",
+			"1",
+			addon.Core.Constants.VERSION,
+		}, "|"),
+		"WHISPER",
+		"PeerSyncTarget"
+	)
+	addon.Core.EvidenceSync.handleAddonMessage(
+		"CHAT_MSG_ADDON",
+		addon.Core.Constants.SYNC_PREFIX,
+		table.concat({
+			"w",
+			sessionId,
+			"1",
+			"1",
+			wantedPayload,
+		}, "|"),
+		"WHISPER",
+		"PeerSyncTarget"
+	)
 	addon.Core.EvidenceSync.flushQueue(1000)
 	messages = Harness.sentAddonMessages()
 	Harness.assertTrue(#messages >= 2, "Requested sync should send a header and at least one payload chunk")
-	Harness.assertTrue(string.sub(messages[1].message, 1, 2) == "H|", "Requested sync should start with a transfer header")
+	Harness.assertTrue(
+		string.sub(messages[1].message, 1, 2) == "H|",
+		"Requested sync should start with a transfer header"
+	)
 	for index = 1, #messages do
-		Harness.assertTrue(#messages[index].message <= 255, "Sync addon message " .. tostring(index) .. " should stay below the client limit")
+		Harness.assertTrue(
+			#messages[index].message <= 255,
+			"Sync addon message " .. tostring(index) .. " should stay below the client limit"
+		)
 	end
 
 	addon.Core.SavedVariables.clearLearnedData("Test clears local data before chunked sync receive.")
-	Harness.assertTrue(addon.Core.EvidenceStore.countPermanentKills() == 0, "Test setup should clear local evidence before chunked receive")
-	addon.Core.EvidenceSync.handleAddonMessage("CHAT_MSG_ADDON", addon.Core.Constants.SYNC_PREFIX, "R|" .. sessionId .. "|1.9.15|1|0", "WHISPER", "PeerSyncTarget")
+	Harness.assertTrue(
+		addon.Core.EvidenceStore.countPermanentKills() == 0,
+		"Test setup should clear local evidence before chunked receive"
+	)
+	addon.Core.EvidenceSync.handleAddonMessage(
+		"CHAT_MSG_ADDON",
+		addon.Core.Constants.SYNC_PREFIX,
+		"R|" .. sessionId .. "|1.9.15|1|0",
+		"WHISPER",
+		"PeerSyncTarget"
+	)
 	addon.Core.EvidenceSync.acceptRequest("PeerSyncTarget", sessionId)
 	Harness.clearAddonMessages()
 	for index = 1, #messages do
-		addon.Core.EvidenceSync.handleAddonMessage("CHAT_MSG_ADDON", addon.Core.Constants.SYNC_PREFIX, messages[index].message, "WHISPER", "Intruder")
+		addon.Core.EvidenceSync.handleAddonMessage(
+			"CHAT_MSG_ADDON",
+			addon.Core.Constants.SYNC_PREFIX,
+			messages[index].message,
+			"WHISPER",
+			"Intruder"
+		)
 	end
-	Harness.assertTrue(addon.Core.EvidenceStore.countPermanentKills() == 0, "Unauthorized sync headers must not import evidence")
+	Harness.assertTrue(
+		addon.Core.EvidenceStore.countPermanentKills() == 0,
+		"Unauthorized sync headers must not import evidence"
+	)
 	for index = 1, #messages do
-		addon.Core.EvidenceSync.handleAddonMessage("CHAT_MSG_ADDON", addon.Core.Constants.SYNC_PREFIX, messages[index].message, "WHISPER", "PeerSyncTarget")
+		addon.Core.EvidenceSync.handleAddonMessage(
+			"CHAT_MSG_ADDON",
+			addon.Core.Constants.SYNC_PREFIX,
+			messages[index].message,
+			"WHISPER",
+			"PeerSyncTarget"
+		)
 	end
-	Harness.assertTrue(addon.Core.EvidenceStore.countPermanentKills() == 1, "Chunked sync receive should import permanent evidence")
+	Harness.assertTrue(
+		addon.Core.EvidenceStore.countPermanentKills() == 1,
+		"Chunked sync receive should import permanent evidence"
+	)
 	rebuilt = Harness.ability(Harness.encounter(bossKey), bossKey, "Peer Slam")
 	Harness.assertTrue(rebuilt ~= nil, "Chunked sync receive should rebuild the learned ability")
 	Harness.assertNear(rebuilt.minInterval, 30, 0.01, "Chunked sync receive should preserve interval evidence")
 
 	Harness.clearAddonMessages()
-	addon.Core.EvidenceSync.handleAddonMessage("CHAT_MSG_ADDON", addon.Core.Constants.SYNC_PREFIX, "R|peer-session|" .. addon.Core.Constants.VERSION .. "|2|7", "WHISPER", "PeerSyncTarget")
+	addon.Core.EvidenceSync.handleAddonMessage(
+		"CHAT_MSG_ADDON",
+		addon.Core.Constants.SYNC_PREFIX,
+		"R|peer-session|" .. addon.Core.Constants.VERSION .. "|2|7",
+		"WHISPER",
+		"PeerSyncTarget"
+	)
 	addon.Core.EvidenceSync.acceptRequest("PeerSyncTarget", "peer-session")
 	addon.Core.EvidenceSync.flushQueue(1000)
 	messages = Harness.sentAddonMessages()
-	Harness.assertTrue(messages[1] ~= nil and messages[1].message == "A|peer-session|" .. addon.Core.Constants.VERSION, "Accepting a sync request should acknowledge the sender")
+	Harness.assertTrue(
+		messages[1] ~= nil and messages[1].message == "A|peer-session|" .. addon.Core.Constants.VERSION,
+		"Accepting a sync request should acknowledge the sender"
+	)
 	local reciprocalInventory
 	for index = 1, #messages do
 		if string.sub(messages[index].message, 1, 2) == "M|" then
 			reciprocalInventory = messages[index]
 		end
-		Harness.assertTrue(#messages[index].message <= 255, "Reciprocal sync message " .. tostring(index) .. " should stay below the client limit")
+		Harness.assertTrue(
+			#messages[index].message <= 255,
+			"Reciprocal sync message " .. tostring(index) .. " should stay below the client limit"
+		)
 	end
-	Harness.assertTrue(reciprocalInventory ~= nil and reciprocalInventory.distribution == "WHISPER", "Accepting a sync request should whisper local evidence inventory back")
+	Harness.assertTrue(
+		reciprocalInventory ~= nil and reciprocalInventory.distribution == "WHISPER",
+		"Accepting a sync request should whisper local evidence inventory back"
+	)
 
 	local reciprocalWantedPayload = firstEvidenceKillHash()
 	local reciprocalWantedHash = addon.Core.EvidenceCodec.hashString(reciprocalWantedPayload)
 	Harness.clearAddonMessages()
-	addon.Core.EvidenceSync.handleAddonMessage("CHAT_MSG_ADDON", addon.Core.Constants.SYNC_PREFIX, table.concat({
-		"W",
-		"peer-session",
-		tostring(#reciprocalWantedPayload),
-		reciprocalWantedHash,
-		"1",
-		"1",
-		addon.Core.Constants.VERSION,
-	}, "|"), "WHISPER", "PeerSyncTarget")
-	addon.Core.EvidenceSync.handleAddonMessage("CHAT_MSG_ADDON", addon.Core.Constants.SYNC_PREFIX, table.concat({
-		"w",
-		"peer-session",
-		"1",
-		"1",
-		reciprocalWantedPayload,
-	}, "|"), "WHISPER", "PeerSyncTarget")
+	addon.Core.EvidenceSync.handleAddonMessage(
+		"CHAT_MSG_ADDON",
+		addon.Core.Constants.SYNC_PREFIX,
+		table.concat({
+			"W",
+			"peer-session",
+			tostring(#reciprocalWantedPayload),
+			reciprocalWantedHash,
+			"1",
+			"1",
+			addon.Core.Constants.VERSION,
+		}, "|"),
+		"WHISPER",
+		"PeerSyncTarget"
+	)
+	addon.Core.EvidenceSync.handleAddonMessage(
+		"CHAT_MSG_ADDON",
+		addon.Core.Constants.SYNC_PREFIX,
+		table.concat({
+			"w",
+			"peer-session",
+			"1",
+			"1",
+			reciprocalWantedPayload,
+		}, "|"),
+		"WHISPER",
+		"PeerSyncTarget"
+	)
 	addon.Core.EvidenceSync.flushQueue(1000)
 	messages = Harness.sentAddonMessages()
 	local reciprocalHeader
@@ -3983,17 +5949,29 @@ local function scenarioEvidenceSyncRoundTripRebuildsModel()
 		if string.sub(messages[index].message, 1, 2) == "H|" then
 			reciprocalHeader = messages[index]
 		end
-		Harness.assertTrue(#messages[index].message <= 255, "Requested reciprocal sync message " .. tostring(index) .. " should stay below the client limit")
+		Harness.assertTrue(
+			#messages[index].message <= 255,
+			"Requested reciprocal sync message " .. tostring(index) .. " should stay below the client limit"
+		)
 	end
-	Harness.assertTrue(reciprocalHeader ~= nil and reciprocalHeader.distribution == "WHISPER", "Requested reciprocal sync should whisper local evidence back")
+	Harness.assertTrue(
+		reciprocalHeader ~= nil and reciprocalHeader.distribution == "WHISPER",
+		"Requested reciprocal sync should whisper local evidence back"
+	)
 
 	addon.Core.SavedVariables.clearLearnedData("Test allows sync request without local evidence.")
-	Harness.assertTrue(addon.Core.EvidenceStore.countPermanentKills() == 0, "Test setup should have no local evidence before empty request")
+	Harness.assertTrue(
+		addon.Core.EvidenceStore.countPermanentKills() == 0,
+		"Test setup should have no local evidence before empty request"
+	)
 	Harness.clearAddonMessages()
 	addon.Core.EvidenceSync.handleSlash("target")
 	messages = Harness.sentAddonMessages()
 	lastMessage = messages[#messages]
-	Harness.assertTrue(lastMessage ~= nil and string.sub(lastMessage.message, 1, 2) == "R|", "Sync request should still be allowed without local evidence")
+	Harness.assertTrue(
+		lastMessage ~= nil and string.sub(lastMessage.message, 1, 2) == "R|",
+		"Sync request should still be allowed without local evidence"
+	)
 	local advertisedKills = tonumber(string.match(lastMessage.message, "^R|[^|]+|[^|]+|([^|]+)|"))
 	Harness.assertTrue(advertisedKills == 0, "Empty local sync request should advertise zero local kills")
 
@@ -4002,8 +5980,14 @@ local function scenarioEvidenceSyncRoundTripRebuildsModel()
 	addon.Core.EvidenceSync.handleSlash("group")
 	messages = Harness.sentAddonMessages()
 	lastMessage = messages[#messages]
-	Harness.assertTrue(lastMessage ~= nil and lastMessage.prefix == addon.Core.Constants.SYNC_TRANSPORT_PREFIX, "Group sync should use the managed transport prefix")
-	Harness.assertTrue(string.sub(lastMessage.message, 1, 2) == "Q|", "Group sync should send a managed transport request")
+	Harness.assertTrue(
+		lastMessage ~= nil and lastMessage.prefix == addon.Core.Constants.SYNC_TRANSPORT_PREFIX,
+		"Group sync should use the managed transport prefix"
+	)
+	Harness.assertTrue(
+		string.sub(lastMessage.message, 1, 2) == "Q|",
+		"Group sync should send a managed transport request"
+	)
 	Harness.assertTrue(lastMessage.distribution == "PARTY", "Group sync should use party distribution outside raids")
 	Harness.assertTrue(lastMessage.target == nil, "Group sync request should not whisper a single target")
 
@@ -4012,8 +5996,14 @@ local function scenarioEvidenceSyncRoundTripRebuildsModel()
 	addon.Core.EvidenceSync.handleSlash("raid")
 	messages = Harness.sentAddonMessages()
 	lastMessage = messages[#messages]
-	Harness.assertTrue(lastMessage ~= nil and lastMessage.prefix == addon.Core.Constants.SYNC_TRANSPORT_PREFIX, "Raid sync should use the managed transport prefix")
-	Harness.assertTrue(string.sub(lastMessage.message, 1, 2) == "Q|", "Raid sync should send a managed transport request")
+	Harness.assertTrue(
+		lastMessage ~= nil and lastMessage.prefix == addon.Core.Constants.SYNC_TRANSPORT_PREFIX,
+		"Raid sync should use the managed transport prefix"
+	)
+	Harness.assertTrue(
+		string.sub(lastMessage.message, 1, 2) == "Q|",
+		"Raid sync should send a managed transport request"
+	)
 	Harness.assertTrue(lastMessage.distribution == "RAID", "Raid sync should use raid distribution")
 	Harness.assertTrue(lastMessage.target == nil, "Raid sync request should not whisper a single target")
 end
@@ -4031,12 +6021,21 @@ local function scenarioEvidenceSyncTransfersAllBatches()
 		local startedAt = index * 100
 		firstBossKey = firstBossKey or addon.Core.Util.bossKey(boss, guid)
 		Harness.emitSpell({ t = startedAt, sourceName = boss, sourceGUID = guid, spellName = "Batch Slam", hp = 100 })
-		Harness.emitSpell({ t = startedAt + 30, sourceName = boss, sourceGUID = guid, spellName = "Batch Slam", hp = 60 })
+		Harness.emitSpell({
+			t = startedAt + 30,
+			sourceName = boss,
+			sourceGUID = guid,
+			spellName = "Batch Slam",
+			hp = 60,
+		})
 		Harness.finishPull(startedAt + 60, "unit_died")
 	end
 
 	local payloads, exportStatsOrError = addon.Core.EvidenceSync.exportPayloads()
-	Harness.assertTrue(payloads ~= nil, "Batched evidence sync should export payloads: " .. tostring(exportStatsOrError))
+	Harness.assertTrue(
+		payloads ~= nil,
+		"Batched evidence sync should export payloads: " .. tostring(exportStatsOrError)
+	)
 	Harness.assertTrue(exportStatsOrError.exported == 5, "Batched evidence sync should export every permanent kill")
 	Harness.assertTrue(exportStatsOrError.total == 5, "Batched evidence sync should count all source kills")
 	Harness.assertTrue(#payloads == 3, "Batched evidence sync should split the full export into three payloads")
@@ -4053,15 +6052,33 @@ local function scenarioEvidenceSyncTransfersAllBatches()
 	Harness.assertTrue(sessionId ~= nil, "Batch sync request should include a session id")
 
 	Harness.clearAddonMessages()
-	addon.Core.EvidenceSync.handleAddonMessage("CHAT_MSG_ADDON", constants.SYNC_PREFIX, "A|" .. sessionId .. "|1.9.14", "WHISPER", "PeerBatchTarget")
+	addon.Core.EvidenceSync.handleAddonMessage(
+		"CHAT_MSG_ADDON",
+		constants.SYNC_PREFIX,
+		"A|" .. sessionId .. "|1.9.14",
+		"WHISPER",
+		"PeerBatchTarget"
+	)
 	messages = Harness.sentAddonMessages()
-	Harness.assertTrue(#messages == 1 and string.sub(messages[1].message, 1, 2) == "N|", "Multi-batch sync should fail clearly for peers without batch support")
+	Harness.assertTrue(
+		#messages == 1 and string.sub(messages[1].message, 1, 2) == "N|",
+		"Multi-batch sync should fail clearly for peers without batch support"
+	)
 
 	Harness.clearAddonMessages()
-	addon.Core.EvidenceSync.handleAddonMessage("CHAT_MSG_ADDON", constants.SYNC_PREFIX, "A|" .. sessionId .. "|" .. constants.VERSION, "WHISPER", "PeerBatchTarget")
+	addon.Core.EvidenceSync.handleAddonMessage(
+		"CHAT_MSG_ADDON",
+		constants.SYNC_PREFIX,
+		"A|" .. sessionId .. "|" .. constants.VERSION,
+		"WHISPER",
+		"PeerBatchTarget"
+	)
 	addon.Core.EvidenceSync.flushQueue(1000)
 	messages = Harness.sentAddonMessages()
-	Harness.assertTrue(messages[1] ~= nil and string.sub(messages[1].message, 1, 2) == "M|", "Batched sync should negotiate hash inventory before payload transfer")
+	Harness.assertTrue(
+		messages[1] ~= nil and string.sub(messages[1].message, 1, 2) == "M|",
+		"Batched sync should negotiate hash inventory before payload transfer"
+	)
 
 	local wantedHashes = {}
 	local blocks = addon.Core.EvidenceStore.collectKillBlocks()
@@ -4071,54 +6088,102 @@ local function scenarioEvidenceSyncTransfersAllBatches()
 	local wantedPayload = table.concat(wantedHashes, ",")
 	local wantedPayloadHash = addon.Core.EvidenceCodec.hashString(wantedPayload)
 	Harness.clearAddonMessages()
-	addon.Core.EvidenceSync.handleAddonMessage("CHAT_MSG_ADDON", constants.SYNC_PREFIX, table.concat({
-		"W",
-		sessionId,
-		tostring(#wantedPayload),
-		wantedPayloadHash,
-		"1",
-		tostring(#wantedHashes),
-		constants.VERSION,
-	}, "|"), "WHISPER", "PeerBatchTarget")
-	addon.Core.EvidenceSync.handleAddonMessage("CHAT_MSG_ADDON", constants.SYNC_PREFIX, table.concat({
-		"w",
-		sessionId,
-		"1",
-		"1",
-		wantedPayload,
-	}, "|"), "WHISPER", "PeerBatchTarget")
+	addon.Core.EvidenceSync.handleAddonMessage(
+		"CHAT_MSG_ADDON",
+		constants.SYNC_PREFIX,
+		table.concat({
+			"W",
+			sessionId,
+			tostring(#wantedPayload),
+			wantedPayloadHash,
+			"1",
+			tostring(#wantedHashes),
+			constants.VERSION,
+		}, "|"),
+		"WHISPER",
+		"PeerBatchTarget"
+	)
+	addon.Core.EvidenceSync.handleAddonMessage(
+		"CHAT_MSG_ADDON",
+		constants.SYNC_PREFIX,
+		table.concat({
+			"w",
+			sessionId,
+			"1",
+			"1",
+			wantedPayload,
+		}, "|"),
+		"WHISPER",
+		"PeerBatchTarget"
+	)
 	addon.Core.EvidenceSync.flushQueue(1000)
 	messages = Harness.sentAddonMessages()
 	constants.MAX_SYNC_KILLS_PER_PAYLOAD = originalKillsPerPayload
 
 	local headerCount = 0
 	for index = 1, #messages do
-		Harness.assertTrue(#messages[index].message <= 255, "Batched sync addon message " .. tostring(index) .. " should stay below the client limit")
+		Harness.assertTrue(
+			#messages[index].message <= 255,
+			"Batched sync addon message " .. tostring(index) .. " should stay below the client limit"
+		)
 		if string.sub(messages[index].message, 1, 2) == "H|" then
 			headerCount = headerCount + 1
 			local headerParts = {}
 			for part in string.gmatch(messages[index].message, "([^|]+)") do
 				headerParts[#headerParts + 1] = part
 			end
-			Harness.assertTrue(tonumber(headerParts[9]) == 3, "Batched sync header should advertise the total batch count")
-			Harness.assertTrue(tonumber(headerParts[10]) == 5, "Batched sync header should advertise the total kill count")
+			Harness.assertTrue(
+				tonumber(headerParts[9]) == 3,
+				"Batched sync header should advertise the total batch count"
+			)
+			Harness.assertTrue(
+				tonumber(headerParts[10]) == 5,
+				"Batched sync header should advertise the total kill count"
+			)
 		end
 	end
 	Harness.assertTrue(headerCount == 3, "Batched evidence sync should send one header per payload batch")
 
 	addon.Core.SavedVariables.clearLearnedData("Test clears local data before batched sync receive.")
-	Harness.assertTrue(addon.Core.EvidenceStore.countPermanentKills() == 0, "Test setup should clear local evidence before batched receive")
-	addon.Core.EvidenceSync.handleAddonMessage("CHAT_MSG_ADDON", constants.SYNC_PREFIX, "R|" .. sessionId .. "|1.9.15|5|0", "WHISPER", "PeerBatchTarget")
+	Harness.assertTrue(
+		addon.Core.EvidenceStore.countPermanentKills() == 0,
+		"Test setup should clear local evidence before batched receive"
+	)
+	addon.Core.EvidenceSync.handleAddonMessage(
+		"CHAT_MSG_ADDON",
+		constants.SYNC_PREFIX,
+		"R|" .. sessionId .. "|1.9.15|5|0",
+		"WHISPER",
+		"PeerBatchTarget"
+	)
 	addon.Core.EvidenceSync.acceptRequest("PeerBatchTarget", sessionId)
 	Harness.clearAddonMessages()
 	for index = 1, #messages do
-		addon.Core.EvidenceSync.handleAddonMessage("CHAT_MSG_ADDON", constants.SYNC_PREFIX, messages[index].message, "WHISPER", "Intruder")
+		addon.Core.EvidenceSync.handleAddonMessage(
+			"CHAT_MSG_ADDON",
+			constants.SYNC_PREFIX,
+			messages[index].message,
+			"WHISPER",
+			"Intruder"
+		)
 	end
-	Harness.assertTrue(addon.Core.EvidenceStore.countPermanentKills() == 0, "Unauthorized batched sync must not import evidence")
+	Harness.assertTrue(
+		addon.Core.EvidenceStore.countPermanentKills() == 0,
+		"Unauthorized batched sync must not import evidence"
+	)
 	for index = 1, #messages do
-		addon.Core.EvidenceSync.handleAddonMessage("CHAT_MSG_ADDON", constants.SYNC_PREFIX, messages[index].message, "WHISPER", "PeerBatchTarget")
+		addon.Core.EvidenceSync.handleAddonMessage(
+			"CHAT_MSG_ADDON",
+			constants.SYNC_PREFIX,
+			messages[index].message,
+			"WHISPER",
+			"PeerBatchTarget"
+		)
 	end
-	Harness.assertTrue(addon.Core.EvidenceStore.countPermanentKills() == 5, "Batched sync receive should import every permanent evidence kill")
+	Harness.assertTrue(
+		addon.Core.EvidenceStore.countPermanentKills() == 5,
+		"Batched sync receive should import every permanent evidence kill"
+	)
 	local rebuilt = Harness.ability(Harness.encounter(firstBossKey), firstBossKey, "Batch Slam")
 	Harness.assertTrue(rebuilt ~= nil, "Batched sync receive should rebuild learned models after the final batch")
 	Harness.assertNear(rebuilt.minInterval, 30, 0.01, "Batched sync receive should preserve timer evidence")
@@ -4128,10 +6193,19 @@ local function scenarioEvidenceSyncTransfersAllBatches()
 	addon.db.learnedMeta.interpretationEngineVersion = constants.INTERPRETATION_ENGINE_VERSION
 	addon.db.learnedMeta.rebuildRequired = nil
 	local duplicateStats, duplicateError = addon.Core.EvidenceSync.importPayload(payloads[1].payload, "PeerBatchTarget")
-	Harness.assertTrue(duplicateStats ~= nil, "Duplicate-only sync payload should remain importable: " .. tostring(duplicateError))
-	Harness.assertTrue(duplicateStats.imported == 0 and duplicateStats.duplicates == payloads[1].killCount, "Duplicate-only sync should detect existing evidence")
+	Harness.assertTrue(
+		duplicateStats ~= nil,
+		"Duplicate-only sync payload should remain importable: " .. tostring(duplicateError)
+	)
+	Harness.assertTrue(
+		duplicateStats.imported == 0 and duplicateStats.duplicates == payloads[1].killCount,
+		"Duplicate-only sync should detect existing evidence"
+	)
 	rebuilt = Harness.ability(Harness.encounter(firstBossKey), firstBossKey, "Batch Slam")
-	Harness.assertTrue(rebuilt ~= nil, "Duplicate-only sync should rebuild a missing learned cache from existing evidence")
+	Harness.assertTrue(
+		rebuilt ~= nil,
+		"Duplicate-only sync should rebuild a missing learned cache from existing evidence"
+	)
 end
 
 local function scenarioEvidenceSyncImportPreservesLocalLegacy()
@@ -4154,13 +6228,28 @@ local function scenarioEvidenceSyncImportPreservesLocalLegacy()
 	local importStats, importError = addon.Core.EvidenceSync.importPayload(payload, "PeerTester")
 	Harness.assertTrue(importStats ~= nil, "Evidence sync import should succeed: " .. tostring(importError))
 	Harness.assertTrue(importStats.imported == 1, "Evidence sync import should import one permanent kill")
-	Harness.assertTrue(addon.db.learned.zones[sourceZoneKey] ~= nil, "Imported evidence should rebuild the source encounter zone")
+	Harness.assertTrue(
+		addon.db.learned.zones[sourceZoneKey] ~= nil,
+		"Imported evidence should rebuild the source encounter zone"
+	)
 	local legacyEncounter = addon.db.learned.zones[legacyZoneKey].encounters[legacyEncounterKey]
 	Harness.assertTrue(legacyEncounter ~= nil, "Sync-triggered rebuild must not delete local learned-only encounters")
-	Harness.assertTrue(legacyEncounter.legacyAfterRebuild == true, "Sync-triggered rebuild should mark local learned-only encounters as legacy")
-	Harness.assertTrue(legacyEncounter.abilities[legacyAbilityKey].legacyAfterRebuild == true, "Sync-triggered rebuild should mark local learned-only abilities as legacy")
-	Harness.assertTrue(addon.Core.ModelStore.getEncounter(legacyZoneKey, legacyEncounterKey) == nil, "Sync-preserved legacy encounter should not feed runtime timer lookup")
-	Harness.assertTrue(addon.charDB.learnedBackup.learned.zones[legacyZoneKey].encounters[legacyEncounterKey] ~= nil, "Sync-triggered backup rewrite must retain local legacy data")
+	Harness.assertTrue(
+		legacyEncounter.legacyAfterRebuild == true,
+		"Sync-triggered rebuild should mark local learned-only encounters as legacy"
+	)
+	Harness.assertTrue(
+		legacyEncounter.abilities[legacyAbilityKey].legacyAfterRebuild == true,
+		"Sync-triggered rebuild should mark local learned-only abilities as legacy"
+	)
+	Harness.assertTrue(
+		addon.Core.ModelStore.getEncounter(legacyZoneKey, legacyEncounterKey) == nil,
+		"Sync-preserved legacy encounter should not feed runtime timer lookup"
+	)
+	Harness.assertTrue(
+		addon.charDB.learnedBackup.learned.zones[legacyZoneKey].encounters[legacyEncounterKey] ~= nil,
+		"Sync-triggered backup rewrite must retain local legacy data"
+	)
 end
 
 local function scenarioEvidenceDifficultyAbilityAvailability()
@@ -4197,8 +6286,14 @@ local function scenarioEvidenceDifficultyAbilityAvailability()
 	local ascended = Harness.ability(model, bossKey, "Ascended Blast")
 	Harness.assertTrue(shared ~= nil, "Shared lower-difficulty ability should be rebuilt")
 	Harness.assertTrue(ascended ~= nil, "Ascended-only ability should be rebuilt")
-	Harness.assertTrue(shared.minDifficultyOrdinal == 1, "Shared ability should remember normal as its minimum difficulty")
-	Harness.assertTrue(ascended.minDifficultyOrdinal == 4, "Ascended-only ability should remember ascended as its minimum difficulty")
+	Harness.assertTrue(
+		shared.minDifficultyOrdinal == 1,
+		"Shared ability should remember normal as its minimum difficulty"
+	)
+	Harness.assertTrue(
+		ascended.minDifficultyOrdinal == 4,
+		"Ascended-only ability should remember ascended as its minimum difficulty"
+	)
 
 	Harness.setInstanceInfo({
 		name = "Ascension Difficulty Lab",
@@ -4207,9 +6302,21 @@ local function scenarioEvidenceDifficultyAbilityAvailability()
 		mapId = 990001,
 	})
 	Harness.assertTrue(addon.Core.Difficulty.abilityAvailable(shared) == true, "Normal should show normal abilities")
-	Harness.assertTrue(addon.Core.Difficulty.abilityAvailable(ascended) == false, "Normal must not show ascended-only abilities")
-	Harness.emitSpell({ t = 200, sourceName = boss, sourceGUID = Harness.makeGuid(boss, 904), spellName = "Shared Strike", hp = 100 })
-	Harness.assertTrue(Harness.firstPredictionByName("Ascended Blast") == nil, "Normal timer predictions must not include ascended-only abilities")
+	Harness.assertTrue(
+		addon.Core.Difficulty.abilityAvailable(ascended) == false,
+		"Normal must not show ascended-only abilities"
+	)
+	Harness.emitSpell({
+		t = 200,
+		sourceName = boss,
+		sourceGUID = Harness.makeGuid(boss, 904),
+		spellName = "Shared Strike",
+		hp = 100,
+	})
+	Harness.assertTrue(
+		Harness.firstPredictionByName("Ascended Blast") == nil,
+		"Normal timer predictions must not include ascended-only abilities"
+	)
 	Harness.finishPull(205, "out_of_combat")
 
 	Harness.setInstanceInfo({
@@ -4218,8 +6325,14 @@ local function scenarioEvidenceDifficultyAbilityAvailability()
 		difficultyIndex = 4,
 		mapId = 990001,
 	})
-	Harness.assertTrue(addon.Core.Difficulty.abilityAvailable(shared) == true, "Ascended should inherit normal abilities")
-	Harness.assertTrue(addon.Core.Difficulty.abilityAvailable(ascended) == true, "Ascended should show ascended abilities")
+	Harness.assertTrue(
+		addon.Core.Difficulty.abilityAvailable(shared) == true,
+		"Ascended should inherit normal abilities"
+	)
+	Harness.assertTrue(
+		addon.Core.Difficulty.abilityAvailable(ascended) == true,
+		"Ascended should show ascended abilities"
+	)
 end
 
 local function scenarioBlankFivePlayerDifficultyInfersNormalOnly()
@@ -4252,7 +6365,10 @@ local function scenarioBlankFivePlayerDifficultyInfersNormalOnly()
 
 	local ambiguousRaid = addon.Core.Difficulty.current()
 	Harness.assertTrue(ambiguousRaid.ordinal == nil, "Blank raid difficulty index must remain unknown")
-	Harness.assertTrue(ambiguousRaid.key ~= "tier:ascended", "Blank raid index must not be guessed as an Ascension tier")
+	Harness.assertTrue(
+		ambiguousRaid.key ~= "tier:ascended",
+		"Blank raid index must not be guessed as an Ascension tier"
+	)
 end
 
 local function scenarioObservedDifficultySummaryUsesSeenTiers()
@@ -4264,13 +6380,19 @@ local function scenarioObservedDifficultySummaryUsesSeenTiers()
 		},
 	})
 	Harness.assertTrue(text == "N A", "Observed difficulty summary should list observed known tiers in order")
-	Harness.assertTrue(string.find(tooltip, "Normal", 1, true) ~= nil and string.find(tooltip, "Ascended", 1, true) ~= nil, "Observed difficulty tooltip should name known tiers")
+	Harness.assertTrue(
+		string.find(tooltip, "Normal", 1, true) ~= nil and string.find(tooltip, "Ascended", 1, true) ~= nil,
+		"Observed difficulty tooltip should name known tiers"
+	)
 
 	text, tooltip = Difficulty.abilityObservedDifficultySummary({
 		minDifficultyOrdinal = 2,
 	})
 	Harness.assertTrue(text == "H", "Observed difficulty summary should fall back to the minimum known tier")
-	Harness.assertTrue(string.find(tooltip, "Heroic", 1, true) ~= nil, "Minimum-tier fallback tooltip should name the tier")
+	Harness.assertTrue(
+		string.find(tooltip, "Heroic", 1, true) ~= nil,
+		"Minimum-tier fallback tooltip should name the tier"
+	)
 
 	text = Difficulty.abilityObservedDifficultySummary({
 		seenDifficulties = {

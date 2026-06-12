@@ -66,7 +66,8 @@ local function removeOldestEntry(tbl, preferInactive)
 	local oldestSeenAt
 	for key, value in pairs(tbl or {}) do
 		local canRemove = not preferInactive or not value.active
-		local seenAt = type(value) == "table" and (value.lastSeenAtSession or value.lastSeenAt or value.firstSeenAt) or nil
+		local seenAt = type(value) == "table" and (value.lastSeenAtSession or value.lastSeenAt or value.firstSeenAt)
+			or nil
 		if canRemove and (not removeKey or not seenAt or not oldestSeenAt or seenAt < oldestSeenAt) then
 			removeKey = key
 			oldestSeenAt = seenAt
@@ -187,22 +188,17 @@ local function isBossUnit(unit)
 end
 
 local function hasBossUnitSignal(context)
-	return context and (
-		context.sawBossUnit == true
-		or isBossUnit(context.bossUnitToken)
-		or isBossUnit(context.lastUnitToken)
-		or (
-			type(context.lastUnitSource) == "string"
-			and string.sub(context.lastUnitSource, 1, 9) == "boss_unit"
+	return context
+		and (
+			context.sawBossUnit == true
+			or isBossUnit(context.bossUnitToken)
+			or isBossUnit(context.lastUnitToken)
+			or (type(context.lastUnitSource) == "string" and string.sub(context.lastUnitSource, 1, 9) == "boss_unit")
 		)
-	)
 end
 
 local function isBossSignalContext(context)
-	return context and context.active and (
-		context.unitClassification == "worldboss"
-		or hasBossUnitSignal(context)
-	)
+	return context and context.active and (context.unitClassification == "worldboss" or hasBossUnitSignal(context))
 end
 
 local function maxBossUnitFrames()
@@ -283,13 +279,13 @@ local function closeBossContext(pull, context, reason)
 		eventCount = context.eventCount,
 		occurrenceCount = context.occurrenceCount,
 		score = context.score,
-			classification = context.unitClassification,
-			lastUnitSource = context.lastUnitSource,
-			lastUnitToken = context.lastUnitToken,
-			sawBossUnit = context.sawBossUnit,
-			bossUnitToken = context.bossUnitToken,
-			lastHpPct = context.lastHpPct,
-		})
+		classification = context.unitClassification,
+		lastUnitSource = context.lastUnitSource,
+		lastUnitToken = context.lastUnitToken,
+		sawBossUnit = context.sawBossUnit,
+		bossUnitToken = context.bossUnitToken,
+		lastHpPct = context.lastHpPct,
+	})
 
 	if addon.Learning.AbilityLearner and addon.Learning.AbilityLearner.finishBossContext then
 		addon.Learning.AbilityLearner.finishBossContext(pull, context, reason)
@@ -373,7 +369,13 @@ end
 
 local function noteRecordCandidates(eventRecord)
 	if eventRecord.sourceIsHostileNpc then
-		noteCandidate(eventRecord.sourceName, eventRecord.sourceGUID, eventRecord.sourceFlags, "source_event", C.EVENT_IMPORTANCE[eventRecord.eventType] or 1)
+		noteCandidate(
+			eventRecord.sourceName,
+			eventRecord.sourceGUID,
+			eventRecord.sourceFlags,
+			"source_event",
+			C.EVENT_IMPORTANCE[eventRecord.eventType] or 1
+		)
 	end
 	if eventRecord.destIsHostileNpc then
 		noteCandidate(eventRecord.destName, eventRecord.destGUID, eventRecord.destFlags, "dest_event", 1)
@@ -489,7 +491,9 @@ function EncounterState.noteSpellEvent(eventRecord)
 		eventRecord.bossContext = context
 	end
 
-	local pullSpellKey = tostring(eventRecord.bossKey or eventRecord.sourceActorKey or "unknown") .. "|" .. tostring(eventRecord.spellKey)
+	local pullSpellKey = tostring(eventRecord.bossKey or eventRecord.sourceActorKey or "unknown")
+		.. "|"
+		.. tostring(eventRecord.spellKey)
 	local spell = pull.spells[pullSpellKey]
 	if not spell then
 		spell = {
@@ -624,10 +628,20 @@ local function contextUnitAffectingCombat(context)
 	if not UnitAffectingCombat then
 		return false
 	end
-	if context and context.bossUnitToken and unitMatchesContext(context.bossUnitToken, context) and UnitAffectingCombat(context.bossUnitToken) then
+	if
+		context
+		and context.bossUnitToken
+		and unitMatchesContext(context.bossUnitToken, context)
+		and UnitAffectingCombat(context.bossUnitToken)
+	then
 		return true
 	end
-	if context and context.lastUnitToken and unitMatchesContext(context.lastUnitToken, context) and UnitAffectingCombat(context.lastUnitToken) then
+	if
+		context
+		and context.lastUnitToken
+		and unitMatchesContext(context.lastUnitToken, context)
+		and UnitAffectingCombat(context.lastUnitToken)
+	then
 		return true
 	end
 	for index = 1, maxBossUnitFrames() do
@@ -699,7 +713,8 @@ function EncounterState.markUnitDied(guid, name)
 			if shouldDeferUnitDeath(context) then
 				context.deathPending = true
 				context.deathPendingAtSession = context.deathPendingAtSession or now
-				context.deathPendingUntilSession = context.deathPendingUntilSession or (now + C.BOSS_DEATH_VISUAL_GRACE_SECONDS)
+				context.deathPendingUntilSession = context.deathPendingUntilSession
+					or (now + C.BOSS_DEATH_VISUAL_GRACE_SECONDS)
 				addon.Core.Logger.event({
 					kind = "boss_context_death_deferred",
 					pullId = state.current.id,
@@ -735,7 +750,8 @@ local function finishPull(reason)
 				bossName = context and context.name,
 				actorKey = context and context.actorKey,
 				lastHpPct = context and context.lastHpPct,
-				lastCombatAgo = context and context.lastCombatSeenAtSession and (now - context.lastCombatSeenAtSession) or nil,
+				lastCombatAgo = context and context.lastCombatSeenAtSession and (now - context.lastCombatSeenAtSession)
+					or nil,
 			})
 			return
 		end
@@ -878,7 +894,12 @@ local function tick()
 		end
 		if state.pendingEndAt and now >= state.pendingEndAt then
 			finishPull(state.pendingEndReason or "out_of_combat")
-		elseif not state.pendingEndAt and bossUnitCount == 0 and UnitAffectingCombat and not UnitAffectingCombat("player") then
+		elseif
+			not state.pendingEndAt
+			and bossUnitCount == 0
+			and UnitAffectingCombat
+			and not UnitAffectingCombat("player")
+		then
 			state.pendingEndAt = now + C.COMBAT_END_SETTLE_SECONDS
 			state.pendingEndReason = "out_of_combat"
 		end
@@ -889,7 +910,8 @@ function EncounterState.start()
 	addon.RegisterEvent("PLAYER_REGEN_DISABLED", "EncounterState", onPlayerRegenDisabled)
 	addon.RegisterEvent("PLAYER_REGEN_ENABLED", "EncounterState", onPlayerRegenEnabled)
 	addon.RegisterEvent("PLAYER_TARGET_CHANGED", "EncounterState", onPlayerTargetChanged)
-	local ok, registered = pcall(addon.RegisterEvent, "INSTANCE_ENCOUNTER_ENGAGE_UNIT", "EncounterState", onInstanceEncounterEngageUnit)
+	local ok, registered =
+		pcall(addon.RegisterEvent, "INSTANCE_ENCOUNTER_ENGAGE_UNIT", "EncounterState", onInstanceEncounterEngageUnit)
 	if not ok then
 		addon.Core.Logger.warn("EncounterState", "Optional boss-unit event registration failed", {
 			event = "INSTANCE_ENCOUNTER_ENGAGE_UNIT",

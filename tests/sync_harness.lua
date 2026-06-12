@@ -252,15 +252,21 @@ function Bus:deliver(message, recipient, options, state)
 		distribution = message.distribution,
 		target = message.target,
 	}
-	if options and options.corruptFirstChunk
+	if
+		options
+		and options.corruptFirstChunk
 		and not state.corruptedChunk
-		and (string.sub(delivered.message or "", 1, 2) == "C|" or string.sub(delivered.message or "", 1, 2) == "g|") then
+		and (string.sub(delivered.message or "", 1, 2) == "C|" or string.sub(delivered.message or "", 1, 2) == "g|")
+	then
 		delivered.message = delivered.message .. "x"
 		state.corruptedChunk = true
 	end
-	if options and options.dropFirstChunk
+	if
+		options
+		and options.dropFirstChunk
 		and not state.droppedChunk
-		and (string.sub(delivered.message or "", 1, 2) == "C|" or string.sub(delivered.message or "", 1, 2) == "g|") then
+		and (string.sub(delivered.message or "", 1, 2) == "C|" or string.sub(delivered.message or "", 1, 2) == "g|")
+	then
 		state.droppedChunk = true
 		self.dropped[#self.dropped + 1] = delivered
 		return
@@ -282,8 +288,11 @@ function Bus:deliver(message, recipient, options, state)
 		distribution = delivered.distribution,
 		target = delivered.target,
 	}
-	if options and options.duplicateChunks
-		and (string.sub(delivered.message or "", 1, 2) == "C|" or string.sub(delivered.message or "", 1, 2) == "g|") then
+	if
+		options
+		and options.duplicateChunks
+		and (string.sub(delivered.message or "", 1, 2) == "C|" or string.sub(delivered.message or "", 1, 2) == "g|")
+	then
 		recipient:receiveAddonMessage(delivered)
 	end
 end
@@ -320,26 +329,38 @@ function Bus:sendPayload(sender, receiver, sessionId, payload, options)
 	for startIndex = 1, #payload, chunkSize do
 		chunks[#chunks + 1] = string.sub(payload, startIndex, startIndex + chunkSize - 1)
 	end
-	self:enqueue(sender, sender.addon.Core.Constants.SYNC_PREFIX, table.concat({
-		"H",
-		sessionId,
-		tostring(#payload),
-		sender.addon.Core.EvidenceCodec.hashString(payload),
-		tostring(#chunks),
-		tostring(payloadKillCount(payload)),
-		sender.addon.Core.Constants.VERSION,
-		tostring(options.batchIndex or 1),
-		tostring(options.batchCount or 1),
-		tostring(options.totalKills or payloadKillCount(payload)),
-	}, "|"), "WHISPER", receiver.name)
-	for index = 1, #chunks do
-		self:enqueue(sender, sender.addon.Core.Constants.SYNC_PREFIX, table.concat({
-			"C",
+	self:enqueue(
+		sender,
+		sender.addon.Core.Constants.SYNC_PREFIX,
+		table.concat({
+			"H",
 			sessionId,
-			tostring(index),
+			tostring(#payload),
+			sender.addon.Core.EvidenceCodec.hashString(payload),
 			tostring(#chunks),
-			chunks[index],
-		}, "|"), "WHISPER", receiver.name)
+			tostring(payloadKillCount(payload)),
+			sender.addon.Core.Constants.VERSION,
+			tostring(options.batchIndex or 1),
+			tostring(options.batchCount or 1),
+			tostring(options.totalKills or payloadKillCount(payload)),
+		}, "|"),
+		"WHISPER",
+		receiver.name
+	)
+	for index = 1, #chunks do
+		self:enqueue(
+			sender,
+			sender.addon.Core.Constants.SYNC_PREFIX,
+			table.concat({
+				"C",
+				sessionId,
+				tostring(index),
+				tostring(#chunks),
+				chunks[index],
+			}, "|"),
+			"WHISPER",
+			receiver.name
+		)
 	end
 end
 
@@ -641,8 +662,22 @@ function Client:addKill(spec)
 	local guid = spec.guid or self:makeGuid(boss, 4000 + index)
 	local spell = spec.spell or "Sync Slam"
 	local startedAt = spec.startedAt or (index * 100)
-	self:emitSpell({ t = startedAt, sourceName = boss, sourceGUID = guid, spellName = spell, spellId = spec.spellId, hp = 100 })
-	self:emitSpell({ t = startedAt + (spec.interval or 30), sourceName = boss, sourceGUID = guid, spellName = spell, spellId = spec.spellId, hp = 60 })
+	self:emitSpell({
+		t = startedAt,
+		sourceName = boss,
+		sourceGUID = guid,
+		spellName = spell,
+		spellId = spec.spellId,
+		hp = 100,
+	})
+	self:emitSpell({
+		t = startedAt + (spec.interval or 30),
+		sourceName = boss,
+		sourceGUID = guid,
+		spellName = spell,
+		spellId = spec.spellId,
+		hp = 60,
+	})
 	if spec.extraSpell then
 		self:emitSpell({
 			t = startedAt + (spec.extraAt or 45),
@@ -685,9 +720,11 @@ end
 function Client:latestSessionTo(peer)
 	for index = #self.bus.queue, 1, -1 do
 		local message = self.bus.queue[index]
-		if message.sender == self
+		if
+			message.sender == self
 			and message.target == peer.name
-			and string.sub(message.message or "", 1, 2) == "R|" then
+			and string.sub(message.message or "", 1, 2) == "R|"
+		then
 			return string.match(message.message, "^R|([^|]+)|")
 		end
 	end

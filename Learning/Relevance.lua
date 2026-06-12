@@ -18,10 +18,7 @@ local IGNORED_EVENTS = {
 }
 
 local function isSpellLike(eventType)
-	return eventType and (
-		string.sub(eventType, 1, 5) == "SPELL"
-		or string.sub(eventType, 1, 5) == "RANGE"
-	)
+	return eventType and (string.sub(eventType, 1, 5) == "SPELL" or string.sub(eventType, 1, 5) == "RANGE")
 end
 
 function Relevance.evaluate(record)

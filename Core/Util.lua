@@ -89,7 +89,8 @@ end
 function Util.zoneInfo()
 	local instanceName, instanceType, difficultyIndex, difficultyName, maxPlayers, dynamicDifficulty, isDynamic, mapId
 	if type(GetInstanceInfo) == "function" then
-		instanceName, instanceType, difficultyIndex, difficultyName, maxPlayers, dynamicDifficulty, isDynamic, mapId = GetInstanceInfo()
+		instanceName, instanceType, difficultyIndex, difficultyName, maxPlayers, dynamicDifficulty, isDynamic, mapId =
+			GetInstanceInfo()
 	end
 
 	local zoneName = type(GetRealZoneText) == "function" and GetRealZoneText() or nil

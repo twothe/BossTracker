@@ -154,15 +154,16 @@ local function zoneSnapshot(zone)
 end
 
 local function difficultySnapshot(zone)
-	local difficulty = addon.Core.Difficulty and addon.Core.Difficulty.normalize(zone) or {
-		key = "unknown",
-		known = false,
-		rawIndex = zone and zone.difficultyIndex,
-		rawName = zone and zone.difficultyName,
-		maxPlayers = zone and zone.maxPlayers,
-		dynamicDifficulty = zone and zone.dynamicDifficulty,
-		isDynamic = zone and zone.isDynamic == true,
-	}
+	local difficulty = addon.Core.Difficulty and addon.Core.Difficulty.normalize(zone)
+		or {
+			key = "unknown",
+			known = false,
+			rawIndex = zone and zone.difficultyIndex,
+			rawName = zone and zone.difficultyName,
+			maxPlayers = zone and zone.maxPlayers,
+			dynamicDifficulty = zone and zone.dynamicDifficulty,
+			isDynamic = zone and zone.isDynamic == true,
+		}
 	return {
 		key = difficulty.key,
 		ordinal = difficulty.ordinal,
@@ -227,7 +228,8 @@ local function warnEvidenceRestartRequired(reason)
 		return
 	end
 	dependencyWarningShown = true
-	local message = "BossTracker update needs a full client restart before evidence storage can be upgraded. Evidence capture and rebuild are paused for this session; /reload is not enough after new addon files were added."
+	local message =
+		"BossTracker update needs a full client restart before evidence storage can be upgraded. Evidence capture and rebuild are paused for this session; /reload is not enough after new addon files were added."
 	if addon.Core.Logger then
 		if addon.Core.Logger.warn then
 			addon.Core.Logger.warn("EvidenceStore", "Required evidence module missing", {
@@ -244,12 +246,14 @@ local function warnEvidenceRestartRequired(reason)
 end
 
 local function migrateEvidenceStore(db, evidence)
-	if type(db) ~= "table"
+	if
+		type(db) ~= "table"
 		or type(evidence) ~= "table"
 		or tonumber(evidence.schemaVersion) == C.EVIDENCE_SCHEMA_VERSION
 		or not Codec
 		or not Converter
-		or type(Converter.convertV1Kill) ~= "function" then
+		or type(Converter.convertV1Kill) ~= "function"
+	then
 		return nil, "migration_not_available"
 	end
 
@@ -304,7 +308,8 @@ local function migrateEvidenceStore(db, evidence)
 					local hash = Codec.hashKill(targetInstance, targetBoss, converted.kill)
 					if hash then
 						converted.kill.hash = hash
-						local packed, packError = Codec.encodeStoredKill(targetInstance, targetBoss, converted.kill, hash)
+						local packed, packError =
+							Codec.encodeStoredKill(targetInstance, targetBoss, converted.kill, hash)
 						if packed then
 							targetBoss.kills[hash] = packed
 							stats.converted = stats.converted + 1
@@ -318,7 +323,9 @@ local function migrateEvidenceStore(db, evidence)
 					end
 				else
 					stats.skipped = stats.skipped + 1
-					stats.errors[#stats.errors + 1] = decodeError or convertError or "invalid_converted_kill:" .. tostring(storedHash)
+					stats.errors[#stats.errors + 1] = decodeError
+						or convertError
+						or "invalid_converted_kill:" .. tostring(storedHash)
 				end
 			end
 		end
@@ -377,10 +384,7 @@ local function store()
 end
 
 function EvidenceStore.isAvailable()
-	return suspended ~= true
-		and Codec ~= nil
-		and Converter ~= nil
-		and Classifier ~= nil
+	return suspended ~= true and Codec ~= nil and Converter ~= nil and Classifier ~= nil
 end
 
 local function draftKey(pull)
@@ -520,10 +524,7 @@ local function ensureActorFromContext(draft, context, t10Value)
 		draft,
 		context.startedAtSession or context.firstSeenAt or context.lastSeenAtSession or context.endedAtSession
 	)
-	local contextEnd10 = contextRelativeT10(
-		draft,
-		context.endedAtSession or context.lastSeenAtSession
-	) or t10Value
+	local contextEnd10 = contextRelativeT10(draft, context.endedAtSession or context.lastSeenAtSession) or t10Value
 	local actor = ensureActor(
 		draft,
 		context.actorKey,
@@ -612,16 +613,21 @@ local function destActor(draft, record, source, t10Value)
 		return source
 	end
 	if record.destIsHostileNpc or (record.destName and record.destGUID and record.destGUID == record.sourceGUID) then
-		return ensureActor(draft, Util.actorKey(record.destName, record.destGUID), nil, record.destName, record.destGUID, t10Value, nil)
+		return ensureActor(
+			draft,
+			Util.actorKey(record.destName, record.destGUID),
+			nil,
+			record.destName,
+			record.destGUID,
+			t10Value,
+			nil
+		)
 	end
 	return nil
 end
 
 local function anonymousPlayerTargetId(draft, record)
-	if not draft
-		or not record
-		or not record.destFlags
-		or not Util.flagSet(record.destFlags, C.FLAG_PLAYER) then
+	if not draft or not record or not record.destFlags or not Util.flagSet(record.destFlags, C.FLAG_PLAYER) then
 		return nil
 	end
 	local targetKey = record.destGUID or record.destName
@@ -722,7 +728,11 @@ local function appendFact(draft, fact)
 		end
 	else
 		noteDraftTruncation(draft, "fact_limit")
-		if draft.factSampling.minPriority == nil or not draft.factSampling.minIndex or not draft.facts[draft.factSampling.minIndex] then
+		if
+			draft.factSampling.minPriority == nil
+			or not draft.factSampling.minIndex
+			or not draft.facts[draft.factSampling.minIndex]
+		then
 			refreshLowestFactPriority(draft.facts, draft.factSampling)
 		end
 		if draft.factSampling.minPriority ~= nil and priority > draft.factSampling.minPriority then
@@ -788,17 +798,22 @@ local function addActivationFact(draft, owner, source, spell, record, code, targ
 	local key = lifecycleKey(owner, source, spell)
 	local previous = draft.factByLifecycle[key]
 	if previous then
-		local delta10 = (round10((record.t or Util.now()) - (draft.startedAtSession or 0)) or 0) - (tonumber(previous.t10) or 0)
-		if previous.code == "CA"
+		local delta10 = (round10((record.t or Util.now()) - (draft.startedAtSession or 0)) or 0)
+			- (tonumber(previous.t10) or 0)
+		if
+			previous.code == "CA"
 			and (code == "CS" or code == "DM" or code == "MS" or code == "AA" or code == "AR" or code == "HL" or code == "SM")
 			and delta10 >= 0
-			and delta10 <= math.floor(((tonumber(C.CAST_RESOLUTION_DEDUPE_SECONDS) or 12) * 10) + 0.5) then
+			and delta10 <= math.floor(((tonumber(C.CAST_RESOLUTION_DEDUPE_SECONDS) or 12) * 10) + 0.5)
+		then
 			return previous, false
 		end
-		if previous.code == "CS"
+		if
+			previous.code == "CS"
 			and (code == "DM" or code == "MS" or code == "AA" or code == "AR" or code == "HL" or code == "SM")
 			and delta10 >= 0
-			and delta10 <= math.floor(((tonumber(C.CAST_RESOLUTION_DEDUPE_SECONDS) or 12) * 10) + 0.5) then
+			and delta10 <= math.floor(((tonumber(C.CAST_RESOLUTION_DEDUPE_SECONDS) or 12) * 10) + 0.5)
+		then
 			return previous, false
 		end
 	end
@@ -826,7 +841,18 @@ local function addActivationFact(draft, owner, source, spell, record, code, targ
 	return nil, false
 end
 
-local function addPhaseFact(draft, owner, source, spell, record, code, targetScope, boundary, activeCount, playerTargetId)
+local function addPhaseFact(
+	draft,
+	owner,
+	source,
+	spell,
+	record,
+	code,
+	targetScope,
+	boundary,
+	activeCount,
+	playerTargetId
+)
 	local phaseScope = phaseScopeForTarget(targetScope)
 	if not phaseScope then
 		return nil
@@ -957,8 +983,7 @@ local function targetSlotKey(playerTargetId, dest)
 end
 
 local function auraActivationDedupeWindow10(targetScope)
-	local seconds = targetScope == "player"
-		and (tonumber(C.PLAYER_AURA_REAPPLY_DEDUPE_SECONDS) or 12)
+	local seconds = targetScope == "player" and (tonumber(C.PLAYER_AURA_REAPPLY_DEDUPE_SECONDS) or 12)
 		or (tonumber(C.EVENT_DEDUPE_SECONDS) or 1.5)
 	return math.floor(seconds * 10 + 0.5)
 end
@@ -1000,10 +1025,22 @@ local function recordAuraApplyFact(draft, owner, source, spell, record, code, ta
 	end
 	local wasActive = aura.active == true
 	aura.active = true
-	addPhaseFact(draft, owner, source, spell, record, code, targetScope, "start", math.max(1, tonumber(aura.activeCount) or 1), playerTargetId)
+	addPhaseFact(
+		draft,
+		owner,
+		source,
+		spell,
+		record,
+		code,
+		targetScope,
+		"start",
+		math.max(1, tonumber(aura.activeCount) or 1),
+		playerTargetId
+	)
 	local relativeT10 = round10((record.t or Util.now()) - (draft.startedAtSession or 0)) or 0
 	if not wasActive or shouldRecordAuraActivation(aura, relativeT10, targetScope) then
-		local fact, created = addActivationFact(draft, owner, source, spell, record, code, targetScope, flags, dest, playerTargetId)
+		local fact, created =
+			addActivationFact(draft, owner, source, spell, record, code, targetScope, flags, dest, playerTargetId)
 		if created and fact then
 			aura.lastActivation10 = fact.t10
 		end
@@ -1035,7 +1072,18 @@ local function recordAuraEndFact(draft, owner, source, spell, record, code, targ
 	if targetScope ~= "player" or (tonumber(aura.activeCount) or 0) <= 0 then
 		aura.active = false
 	end
-	addPhaseFact(draft, owner, source, spell, record, code, targetScope, "end", tonumber(aura.activeCount) or 0, playerTargetId)
+	addPhaseFact(
+		draft,
+		owner,
+		source,
+		spell,
+		record,
+		code,
+		targetScope,
+		"end",
+		tonumber(aura.activeCount) or 0,
+		playerTargetId
+	)
 	addConsequenceFact(draft, owner, source, spell, record, code, targetScope)
 end
 
@@ -1109,14 +1157,14 @@ function EvidenceStore.recordContext(pull, context)
 	if not draft then
 		return
 	end
-	local relativeT10 = round10((context.lastSeenAtSession or context.endedAtSession or Util.now()) - (draft.startedAtSession or 0)) or 0
+	local relativeT10 = round10(
+		(context.lastSeenAtSession or context.endedAtSession or Util.now()) - (draft.startedAtSession or 0)
+	) or 0
 	ensureActorFromContext(draft, context, relativeT10)
 end
 
 local function isEvidenceCompletionReason(reason)
-	return type(reason) == "string"
-		and C.EVIDENCE_COMPLETION_REASONS
-		and C.EVIDENCE_COMPLETION_REASONS[reason] == true
+	return type(reason) == "string" and C.EVIDENCE_COMPLETION_REASONS and C.EVIDENCE_COMPLETION_REASONS[reason] == true
 end
 
 local function decisionHasReason(decision, reason)
@@ -1152,27 +1200,21 @@ end
 
 local function contextHasBossIdentityEvidence(context, bossState)
 	return type(context) == "table"
-		and (
-			context.unitClassification == "worldboss"
-			or context.sawBossUnit == true
-			or isBossUnitToken(context.bossUnitToken)
-			or isBossUnitToken(context.lastUnitToken)
-			or (
-				type(context.lastUnitSource) == "string"
-				and string.sub(context.lastUnitSource, 1, 9) == "boss_unit"
-			)
-		)
+			and (context.unitClassification == "worldboss" or context.sawBossUnit == true or isBossUnitToken(
+				context.bossUnitToken
+			) or isBossUnitToken(context.lastUnitToken) or (type(context.lastUnitSource) == "string" and string.sub(
+				context.lastUnitSource,
+				1,
+				9
+			) == "boss_unit"))
 		or type(bossState) == "table"
-		and (
-			bossState.unitClassification == "worldboss"
-			or bossState.sawBossUnit == true
-			or isBossUnitToken(bossState.bossUnitToken)
-			or isBossUnitToken(bossState.lastUnitToken)
-			or (
-				type(bossState.lastUnitSource) == "string"
-				and string.sub(bossState.lastUnitSource, 1, 9) == "boss_unit"
-			)
-		)
+			and (bossState.unitClassification == "worldboss" or bossState.sawBossUnit == true or isBossUnitToken(
+				bossState.bossUnitToken
+			) or isBossUnitToken(bossState.lastUnitToken) or (type(bossState.lastUnitSource) == "string" and string.sub(
+				bossState.lastUnitSource,
+				1,
+				9
+			) == "boss_unit"))
 end
 
 local function evidenceZoneIsRaid(instance, kill)
@@ -1191,12 +1233,10 @@ local function singleBossActorForKill(boss, kill)
 	local selected
 	for index = 1, #(kill and kill.actors or {}) do
 		local actor = kill.actors[index]
-		if type(actor) == "table"
-			and (
-				actor.modelKey == boss.key
-				or actor.key == boss.key
-				or actor.name == boss.name
-			) then
+		if
+			type(actor) == "table"
+			and (actor.modelKey == boss.key or actor.key == boss.key or actor.name == boss.name)
+		then
 			if selected then
 				return nil
 			end
@@ -1221,10 +1261,12 @@ local function evidenceActorWindow(actor)
 end
 
 local function killLooksLikeWeakContainedRaidAddEvidence(instance, boss, kill)
-	if type(instance) ~= "table"
+	if
+		type(instance) ~= "table"
 		or type(boss) ~= "table"
 		or type(kill) ~= "table"
-		or not evidenceZoneIsRaid(instance, kill) then
+		or not evidenceZoneIsRaid(instance, kill)
+	then
 		return false
 	end
 
@@ -1238,16 +1280,17 @@ local function killLooksLikeWeakContainedRaidAddEvidence(instance, boss, kill)
 	end
 
 	local evidenceCount = #(kill.facts or {}) > 0 and #(kill.facts or {}) or #(kill.events or {})
-	if evidenceCount > (tonumber(C.ENCOUNTER_CONTAINED_ADD_MAX_EVENTS) or 30)
-		or #(kill.spells or {}) > (tonumber(C.ENCOUNTER_CONTAINED_ADD_MAX_ABILITIES) or 3) then
+	if
+		evidenceCount > (tonumber(C.ENCOUNTER_CONTAINED_ADD_MAX_EVENTS) or 30)
+		or #(kill.spells or {}) > (tonumber(C.ENCOUNTER_CONTAINED_ADD_MAX_ABILITIES) or 3)
+	then
 		return false
 	end
 
 	local start10, end10 = evidenceActorWindow(actor)
 	local duration10 = tonumber(kill.duration10) or end10
 	local grace10 = math.floor(((tonumber(C.ENCOUNTER_CONTAINED_ADD_START_GRACE_SECONDS) or 2) * 10) + 0.5)
-	return start10 >= grace10
-		and end10 <= duration10 - grace10
+	return start10 >= grace10 and end10 <= duration10 - grace10
 end
 
 local function entryHasBossIdentityEvidence(entry)
@@ -1323,16 +1366,19 @@ end
 local function fallbackComponentsFromPull(pull, pullState)
 	local components = {}
 	for actorKey, context in pairs(pull and pull.bossContexts or {}) do
-		local bossState = pullState and pullState.bosses and pullState.bosses[actorKey] or fallbackBossStateFromContext(context)
+		local bossState = pullState and pullState.bosses and pullState.bosses[actorKey]
+			or fallbackBossStateFromContext(context)
 		local entry = {
 			actorKey = actorKey,
 			bossState = bossState,
 			context = context,
 		}
-		if bossState
+		if
+			bossState
 			and (tonumber(context and context.eventCount) or tonumber(bossState.eventCount) or 0) > 0
 			and entryHasBossIdentityEvidence(entry)
-			and entryCompletionReason(entry) then
+			and entryCompletionReason(entry)
+		then
 			local component = { entry }
 			component.encounterKey = bossState.bossKey or context.modelKey
 			component.encounterName = bossState.bossName or context.name
@@ -1348,7 +1394,14 @@ local function componentActorIds(draft, component)
 		local entry = component[index]
 		local bossState = entry and entry.bossState
 		local context = entry and entry.context
-		ensureActorFromContext(draft, context, round10(((context and context.endedAtSession) or (bossState and bossState.endedAtSession) or Util.now()) - (draft.startedAtSession or 0)))
+		ensureActorFromContext(
+			draft,
+			context,
+			round10(
+				((context and context.endedAtSession) or (bossState and bossState.endedAtSession) or Util.now())
+					- (draft.startedAtSession or 0)
+			)
+		)
 		local actor = bossState and draft.actorByKey[bossState.actorKey]
 		if actor then
 			ids[actor.id] = true
@@ -1416,18 +1469,58 @@ local function filteredKillTables(draft, ownerIds)
 	return actors, spells, facts, counters
 end
 
-local function killHashForEvidence(instanceKey, encounterKey, difficultyKey, facts, actors, spells, duration10, endReason, counters)
+local function killHashForEvidence(
+	instanceKey,
+	encounterKey,
+	difficultyKey,
+	facts,
+	actors,
+	spells,
+	duration10,
+	endReason,
+	counters
+)
 	if not Codec or not Codec.hashKillData then
 		return nil
 	end
-	return Codec.hashKillData(instanceKey, encounterKey, difficultyKey, actors, spells, facts, counters, duration10, endReason)
+	return Codec.hashKillData(
+		instanceKey,
+		encounterKey,
+		difficultyKey,
+		actors,
+		spells,
+		facts,
+		counters,
+		duration10,
+		endReason
+	)
 end
 
-function EvidenceStore.killHashForEvidence(instanceKey, encounterKey, difficultyKey, facts, actors, spells, duration10, endReason, counters)
+function EvidenceStore.killHashForEvidence(
+	instanceKey,
+	encounterKey,
+	difficultyKey,
+	facts,
+	actors,
+	spells,
+	duration10,
+	endReason,
+	counters
+)
 	if not instanceKey or not encounterKey or type(facts) ~= "table" or #facts == 0 then
 		return nil
 	end
-	return killHashForEvidence(instanceKey, encounterKey, difficultyKey, facts, actors, spells, duration10, endReason, counters)
+	return killHashForEvidence(
+		instanceKey,
+		encounterKey,
+		difficultyKey,
+		facts,
+		actors,
+		spells,
+		duration10,
+		endReason,
+		counters
+	)
 end
 
 local function ensureInstance(evidence, zone)
@@ -1487,7 +1580,10 @@ local function bossHasEquivalentKill(instance, boss, hash)
 	end
 	for storedHash, storedKill in pairs(boss.kills or {}) do
 		local decoded = Codec.decodeStoredKill(instance, boss, storedKill)
-		local canonicalHash = decoded and decoded.kill and Codec.hashKill(decoded.instance or instance, decoded.boss or boss, decoded.kill) or nil
+		local canonicalHash = decoded
+				and decoded.kill
+				and Codec.hashKill(decoded.instance or instance, decoded.boss or boss, decoded.kill)
+			or nil
 		if canonicalHash == hash then
 			return true, storedHash
 		end
@@ -1551,11 +1647,14 @@ local function commitComponent(draft, component)
 		counters = counters,
 		truncated = draft.truncated == true or nil,
 	}
-	if Codec.validDecodedKill and not Codec.validDecodedKill({
-		instance = instance,
-		boss = boss,
-		kill = kill,
-	}) then
+	if
+		Codec.validDecodedKill
+		and not Codec.validDecodedKill({
+			instance = instance,
+			boss = boss,
+			kill = kill,
+		})
+	then
 		logWarn("Rejected permanent evidence kill because generated facts failed validation", {
 			instanceKey = instance.key,
 			bossKey = boss.key,
@@ -1627,11 +1726,14 @@ function EvidenceStore.finishPull(pull, reason, pullState, components)
 	if #effectiveComponents == 0 then
 		effectiveComponents = fallbackComponentsFromPull(pull, pullState)
 		if #effectiveComponents > 0 then
-			logWarn("Used conservative evidence fallback after learned component scoring produced no completed boss component", {
-				pullId = pull.id,
-				reason = reason,
-				componentCount = #effectiveComponents,
-			})
+			logWarn(
+				"Used conservative evidence fallback after learned component scoring produced no completed boss component",
+				{
+					pullId = pull.id,
+					reason = reason,
+					componentCount = #effectiveComponents,
+				}
+			)
 		end
 	end
 
@@ -1801,10 +1903,14 @@ function EvidenceStore.collectKillHashes()
 	for index = 1, #blocks do
 		local hash = blocks[index].hash
 		if type(hash) ~= "string" or hash == "" then
-			return nil, uniqueCount, "stored evidence contains kill block without canonical hash; hash inventory cannot be created"
+			return nil,
+				uniqueCount,
+				"stored evidence contains kill block without canonical hash; hash inventory cannot be created"
 		end
 		if hashes[hash] == true then
-			return nil, uniqueCount, "stored evidence contains duplicate kill hash(es); hash inventory cannot be created"
+			return nil,
+				uniqueCount,
+				"stored evidence contains duplicate kill hash(es); hash inventory cannot be created"
 		end
 		hashes[hash] = true
 		uniqueCount = uniqueCount + 1
@@ -1827,8 +1933,7 @@ end
 
 local function legacyEncounterSuppressed(options, zoneKey, encounterKey)
 	local suppressed = options and options.suppressedLegacyEncounters
-	return type(suppressed) == "table"
-		and suppressed[learnedEncounterIdentity(zoneKey, encounterKey)] == true
+	return type(suppressed) == "table" and suppressed[learnedEncounterIdentity(zoneKey, encounterKey)] == true
 end
 
 local function tracebackError(err)
@@ -1882,9 +1987,11 @@ local function preserveLegacyLearned(previousLearned, rebuiltLearned, options)
 		legacyPartialEncounters = 0,
 		legacySuppressedEncounters = 0,
 	}
-	if type(previousLearned) ~= "table"
+	if
+		type(previousLearned) ~= "table"
 		or type(previousLearned.zones) ~= "table"
-		or type(rebuiltLearned) ~= "table" then
+		or type(rebuiltLearned) ~= "table"
+	then
 		return stats
 	end
 	rebuiltLearned.zones = type(rebuiltLearned.zones) == "table" and rebuiltLearned.zones or {}
@@ -1905,15 +2012,21 @@ local function preserveLegacyLearned(previousLearned, rebuiltLearned, options)
 						local targetEncounter = targetZone.encounters[encounterKey]
 						if type(targetEncounter) ~= "table" then
 							local legacyEncounter = copyTable(previousEncounter)
-							local preservedEncounters, preservedAbilities = markLegacyEncounter(legacyEncounter, options)
+							local preservedEncounters, preservedAbilities =
+								markLegacyEncounter(legacyEncounter, options)
 							targetZone.encounters[encounterKey] = legacyEncounter
 							stats.legacyPreservedEncounters = stats.legacyPreservedEncounters + preservedEncounters
 							stats.legacyPreservedAbilities = stats.legacyPreservedAbilities + preservedAbilities
 						else
-							targetEncounter.abilities = type(targetEncounter.abilities) == "table" and targetEncounter.abilities or {}
+							targetEncounter.abilities = type(targetEncounter.abilities) == "table"
+									and targetEncounter.abilities
+								or {}
 							local preservedAbilities = 0
 							for abilityKey, previousAbility in pairs(previousEncounter.abilities or {}) do
-								if type(previousAbility) == "table" and type(targetEncounter.abilities[abilityKey]) ~= "table" then
+								if
+									type(previousAbility) == "table"
+									and type(targetEncounter.abilities[abilityKey]) ~= "table"
+								then
 									local legacyAbility = copyTable(previousAbility)
 									preservedAbilities = preservedAbilities + markLegacyAbility(legacyAbility, options)
 									targetEncounter.abilities[abilityKey] = legacyAbility
@@ -1921,7 +2034,8 @@ local function preserveLegacyLearned(previousLearned, rebuiltLearned, options)
 							end
 							if preservedAbilities > 0 then
 								targetEncounter.rebuildCoverage = "partial"
-								targetEncounter.legacyAbilityCount = (tonumber(targetEncounter.legacyAbilityCount) or 0) + preservedAbilities
+								targetEncounter.legacyAbilityCount = (tonumber(targetEncounter.legacyAbilityCount) or 0)
+									+ preservedAbilities
 								targetEncounter.abilityCount = countKeys(targetEncounter.abilities)
 								stats.legacyPreservedAbilities = stats.legacyPreservedAbilities + preservedAbilities
 								stats.legacyPartialEncounters = stats.legacyPartialEncounters + 1
@@ -1990,8 +2104,15 @@ local function contextForActor(actor, endReason)
 		duration = (endedAt10 - startedAt10) / 10,
 		endReason = endReason or "unit_died",
 		unitClassification = actor.class,
-		lastUnitSource = actor.bossFrame and "boss_unit" or actor.targetSeen and "target" or actor.focusSeen and "focus" or nil,
-		lastUnitToken = actor.bossUnitToken or actor.bossFrame and "boss1" or actor.targetSeen and "target" or actor.focusSeen and "focus" or nil,
+		lastUnitSource = actor.bossFrame and "boss_unit"
+			or actor.targetSeen and "target"
+			or actor.focusSeen and "focus"
+			or nil,
+		lastUnitToken = actor.bossUnitToken
+			or actor.bossFrame and "boss1"
+			or actor.targetSeen and "target"
+			or actor.focusSeen and "focus"
+			or nil,
 		lastHpPct = actor.endHp10 and actor.endHp10 / 10 or nil,
 		sawBossUnit = actor.bossFrame == true,
 		bossUnitToken = actor.bossUnitToken or actor.bossFrame and "boss1" or nil,
@@ -2225,9 +2346,11 @@ function EvidenceStore.rebuildLearned(options)
 							suppressedLegacyEncounters[learnedEncounterIdentity(
 								(decoded.kill.zone and decoded.kill.zone.key) or decodedInstance.key,
 								decodedBoss.key
-							)] = true
+							)] =
+								true
 						else
-							stats.promoted = stats.promoted + replayKill(decodedInstance, decodedBoss, decoded.kill, stats.evidenceKills)
+							stats.promoted = stats.promoted
+								+ replayKill(decodedInstance, decodedBoss, decoded.kill, stats.evidenceKills)
 						end
 					else
 						stats.skippedCorruptEvidence = stats.skippedCorruptEvidence + 1

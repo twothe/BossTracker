@@ -76,7 +76,11 @@ addon.frame:SetScript("OnEvent", function(self, eventName, ...)
 			else
 				local ok, err = pcall(entry.handler, eventName, ...)
 				if not ok and addon.Core.Logger then
-					addon.Core.Logger.error(entry.moduleName, "Handler failed before ErrorBoundary loaded", { event = eventName, error = tostring(err) })
+					addon.Core.Logger.error(
+						entry.moduleName,
+						"Handler failed before ErrorBoundary loaded",
+						{ event = eventName, error = tostring(err) }
+					)
 				end
 			end
 		end

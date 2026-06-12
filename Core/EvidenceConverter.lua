@@ -151,16 +151,20 @@ local function addActivationFact(state, event, code, targetScope)
 	if previous then
 		local delta10 = (tonumber(event[1]) or 0) - (tonumber(previous.t10) or 0)
 		local window10 = math.floor(((tonumber(C.CAST_RESOLUTION_DEDUPE_SECONDS) or 12) * 10) + 0.5)
-		if previous.code == "CA"
+		if
+			previous.code == "CA"
 			and (code == "CS" or code == "DM" or code == "MS" or code == "AA" or code == "AR" or code == "HL" or code == "SM")
 			and delta10 >= 0
-			and delta10 <= window10 then
+			and delta10 <= window10
+		then
 			return previous, false
 		end
-		if previous.code == "CS"
+		if
+			previous.code == "CS"
 			and (code == "DM" or code == "MS" or code == "AA" or code == "AR" or code == "HL" or code == "SM")
 			and delta10 >= 0
-			and delta10 <= window10 then
+			and delta10 <= window10
+		then
 			return previous, false
 		end
 	end
@@ -329,8 +333,7 @@ local function targetSlotKey(event)
 end
 
 local function auraActivationDedupeWindow10(targetScope)
-	local seconds = targetScope == "player"
-		and (tonumber(C.PLAYER_AURA_REAPPLY_DEDUPE_SECONDS) or 12)
+	local seconds = targetScope == "player" and (tonumber(C.PLAYER_AURA_REAPPLY_DEDUPE_SECONDS) or 12)
 		or (tonumber(C.EVENT_DEDUPE_SECONDS) or 1.5)
 	return math.floor(seconds * 10 + 0.5)
 end
@@ -458,9 +461,7 @@ function EvidenceConverter.convertV1Kill(decoded)
 	local actors = actorById(kill)
 	local spells = spellById(kill)
 	for _, event in ipairs(sortedEvents(kill.events)) do
-		if actors[tonumber(event[3]) or 0]
-			and actors[tonumber(event[4]) or 0]
-			and spells[tonumber(event[6]) or 0] then
+		if actors[tonumber(event[3]) or 0] and actors[tonumber(event[4]) or 0] and spells[tonumber(event[6]) or 0] then
 			processEvent(state, event)
 		end
 	end

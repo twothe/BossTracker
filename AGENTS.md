@@ -2,6 +2,7 @@
 
 - Communicate with the user in German unless they request another language.
 - Keep addon code, identifiers, comments, saved variable names, UI copy, logs, and project documentation in English.
+- Format Lua code with StyLua using `stylua.toml`: Lua 5.1 syntax, tabs, 120-column guide, Java-like same-line calls/blocks where Lua syntax allows it, and CRLF line endings for addon Lua files.
 - Treat BossTracker as a WotLK 3.3.5a addon for Project Ascension Bronzebeard (`Interface: 30300`).
 - Preserve stock WoW addon compatibility. In `.toc` files, use backslash path separators for addon-local files.
 - Keep hot paths cheap. Future combat-log handlers, target scans, and `OnUpdate` timers must avoid unbounded scans and unnecessary allocation.

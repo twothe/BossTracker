@@ -53,9 +53,12 @@ local function backupStatusText()
 	if type(backup) ~= "table" then
 		return "none"
 	end
-	return "rev=" .. tostring(backup.revision or 0)
-		.. ", engine=" .. tostring(backup.interpretationEngineVersion or "none")
-		.. ", updated=" .. tostring(backup.updatedAt or "unknown")
+	return "rev="
+		.. tostring(backup.revision or 0)
+		.. ", engine="
+		.. tostring(backup.interpretationEngineVersion or "none")
+		.. ", updated="
+		.. tostring(backup.updatedAt or "unknown")
 end
 
 local function status()
@@ -63,17 +66,32 @@ local function status()
 	local run = addon.Core.Logger.getRun()
 	local meta = addon.db and addon.db.learnedMeta or {}
 	local encounterCount, abilityCount, legacyCount = countLearnedState()
-	Util.print("version=" .. tostring(C.VERSION)
-		.. ", dbVersion=" .. tostring(addon.db.version or "none")
-		.. ", schema=" .. tostring(addon.db.schemaVersion or "none")
-		.. ", engine=" .. tostring(C.INTERPRETATION_ENGINE_VERSION)
-		.. ", dbEngine=" .. tostring(meta.interpretationEngineVersion or "none"))
-	Util.print("enabled=" .. tostring(addon.db.config.enabled)
-		.. ", timers=" .. tostring(addon.db.config.timersEnabled)
-		.. ", debug=" .. tostring(addon.db.config.debugEnabled)
-		.. ", preview=" .. tostring(addon.charDB.config.previewTimers)
-		.. ", scale=" .. string.format("%.2f", addon.UI.TimerFrame.getScale())
-		.. ", panic=" .. tostring(addon.charDB.config.panic))
+	Util.print(
+		"version="
+			.. tostring(C.VERSION)
+			.. ", dbVersion="
+			.. tostring(addon.db.version or "none")
+			.. ", schema="
+			.. tostring(addon.db.schemaVersion or "none")
+			.. ", engine="
+			.. tostring(C.INTERPRETATION_ENGINE_VERSION)
+			.. ", dbEngine="
+			.. tostring(meta.interpretationEngineVersion or "none")
+	)
+	Util.print(
+		"enabled="
+			.. tostring(addon.db.config.enabled)
+			.. ", timers="
+			.. tostring(addon.db.config.timersEnabled)
+			.. ", debug="
+			.. tostring(addon.db.config.debugEnabled)
+			.. ", preview="
+			.. tostring(addon.charDB.config.previewTimers)
+			.. ", scale="
+			.. string.format("%.2f", addon.UI.TimerFrame.getScale())
+			.. ", panic="
+			.. tostring(addon.charDB.config.panic)
+	)
 	if pull then
 		local activeContexts = addon.Capture.EncounterState.getActiveBossContexts()
 		local contextCount = 0
@@ -84,22 +102,48 @@ local function status()
 				names[#names + 1] = context.name or "unknown"
 			end
 		end
-		Util.print("active pull " .. tostring(pull.id) .. ": " .. tostring(contextCount) .. " boss context(s) in " .. tostring(pull.zone and pull.zone.name or "unknown zone"))
+		Util.print(
+			"active pull "
+				.. tostring(pull.id)
+				.. ": "
+				.. tostring(contextCount)
+				.. " boss context(s) in "
+				.. tostring(pull.zone and pull.zone.name or "unknown zone")
+		)
 		if #names > 0 then
 			Util.print("active contexts: " .. table.concat(names, ", "))
 		end
 	end
 	if run then
-		Util.print("debug run " .. tostring(run.id) .. " is recording. Use /reload after a test to write SavedVariables.")
+		Util.print(
+			"debug run " .. tostring(run.id) .. " is recording. Use /reload after a test to write SavedVariables."
+		)
 	end
 	if addon.Core.EvidenceStore then
-		Util.print("evidence=" .. tostring(addon.Core.EvidenceStore.countPermanentKills()) .. " completed kill(s), incomplete=" .. tostring(addon.Core.EvidenceStore.countIncomplete()))
+		Util.print(
+			"evidence="
+				.. tostring(addon.Core.EvidenceStore.countPermanentKills())
+				.. " completed kill(s), incomplete="
+				.. tostring(addon.Core.EvidenceStore.countIncomplete())
+		)
 	end
-	Util.print("learned=" .. tostring(encounterCount) .. " boss(es), abilities=" .. tostring(abilityCount) .. ", legacy=" .. tostring(legacyCount))
+	Util.print(
+		"learned="
+			.. tostring(encounterCount)
+			.. " boss(es), abilities="
+			.. tostring(abilityCount)
+			.. ", legacy="
+			.. tostring(legacyCount)
+	)
 	if meta.rebuiltFromEvidenceAt or meta.rebuildCoverage then
-		Util.print("lastRebuild=" .. tostring(meta.rebuildCoverage or "unknown")
-			.. ", kills=" .. tostring(meta.rebuiltFromEvidenceKills or 0)
-			.. ", promoted=" .. tostring(meta.rebuiltFromEvidencePromoted or 0))
+		Util.print(
+			"lastRebuild="
+				.. tostring(meta.rebuildCoverage or "unknown")
+				.. ", kills="
+				.. tostring(meta.rebuiltFromEvidenceKills or 0)
+				.. ", promoted="
+				.. tostring(meta.rebuiltFromEvidencePromoted or 0)
+		)
 	end
 	Util.print("backup=" .. backupStatusText())
 end
@@ -301,10 +345,12 @@ end
 local function slashCommandTaken(command)
 	command = string.lower(tostring(command or ""))
 	for key, value in pairs(_G) do
-		if type(key) == "string"
+		if
+			type(key) == "string"
 			and string.sub(key, 1, 6) == "SLASH_"
 			and type(value) == "string"
-			and string.lower(value) == command then
+			and string.lower(value) == command
+		then
 			return true
 		end
 	end

@@ -34,27 +34,19 @@ local function clampScore(score)
 end
 
 local function durationOf(context, bossState)
-	return tonumber(context and context.duration)
-		or tonumber(bossState and bossState.duration)
-		or 0
+	return tonumber(context and context.duration) or tonumber(bossState and bossState.duration) or 0
 end
 
 local function eventCountOf(context, bossState)
-	return tonumber(context and context.eventCount)
-		or tonumber(bossState and bossState.eventCount)
-		or 0
+	return tonumber(context and context.eventCount) or tonumber(bossState and bossState.eventCount) or 0
 end
 
 local function occurrenceCountOf(context, bossState)
-	return tonumber(context and context.occurrenceCount)
-		or tonumber(bossState and bossState.occurrenceCount)
-		or 0
+	return tonumber(context and context.occurrenceCount) or tonumber(bossState and bossState.occurrenceCount) or 0
 end
 
 local function endHpPctOf(context, bossState)
-	return tonumber(context and context.lastHpPct)
-		or tonumber(bossState and bossState.lastHpPct)
-		or nil
+	return tonumber(context and context.lastHpPct) or tonumber(bossState and bossState.lastHpPct) or nil
 end
 
 local function modelContextCount(modelStats)
@@ -221,9 +213,7 @@ function EncounterClassifier.scoreContext(context, bossState, modelStats)
 	end
 
 	local confidence = clampScore(score)
-	local minimum = addon.db
-		and addon.db.config
-		and addon.db.config.minEncounterConfidence
+	local minimum = addon.db and addon.db.config and addon.db.config.minEncounterConfidence
 		or C.BOSS_CONTEXT_MIN_CONFIDENCE
 	if not classifiedAsBoss then
 		if otherBossFramePresent then
@@ -236,12 +226,8 @@ function EncounterClassifier.scoreContext(context, bossState, modelStats)
 	end
 	local isBoss = classifiedAsBoss or confidence >= minimum
 	local partialAttempt = isBoss and endReason ~= "unit_died" and not lowHpCompletion
-	local unconfirmedHighHp = partialAttempt
-		and endHpPct ~= nil
-		and endHpPct > C.BOSS_COMPLETION_HP_THRESHOLD
-	local unconfirmedNonBossContext = not classifiedAsBoss
-		and endReason ~= "unit_died"
-		and not lowHpCompletion
+	local unconfirmedHighHp = partialAttempt and endHpPct ~= nil and endHpPct > C.BOSS_COMPLETION_HP_THRESHOLD
+	local unconfirmedNonBossContext = not classifiedAsBoss and endReason ~= "unit_died" and not lowHpCompletion
 	local insufficientHighHpPartial = classifiedAsBoss
 		and endReason ~= "unit_died"
 		and not lowHpCompletion

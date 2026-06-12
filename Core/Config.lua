@@ -104,7 +104,12 @@ local function pruneAbilityOverride(zoneKey, encounterKey, abilityKey)
 	local overrides = addon.db and addon.db.config and addon.db.config.overrides
 	local zone = overrides and overrides.zones and overrides.zones[zoneKey] or nil
 	local encounter = zone and zone.encounters and zone.encounters[encounterKey] or nil
-	if encounter and encounter.abilities and encounter.abilities[abilityKey] and not hasEntries(encounter.abilities[abilityKey]) then
+	if
+		encounter
+		and encounter.abilities
+		and encounter.abilities[abilityKey]
+		and not hasEntries(encounter.abilities[abilityKey])
+	then
 		encounter.abilities[abilityKey] = nil
 	end
 	if encounter and not hasEntries(encounter.abilities) then
@@ -148,7 +153,8 @@ local function encounterOverride(zoneKey, encounterKey)
 end
 
 local function abilityOverride(zoneKey, encounterKey, abilityKey, create)
-	local encounter = create and ensureEncounterOverride(zoneKey, encounterKey) or encounterOverride(zoneKey, encounterKey)
+	local encounter = create and ensureEncounterOverride(zoneKey, encounterKey)
+		or encounterOverride(zoneKey, encounterKey)
 	if not encounter or not abilityKey then
 		return nil
 	end
@@ -188,7 +194,8 @@ function Config.setMinTimerDisplayInterval(value)
 	if not addon.db or not addon.db.config then
 		return nil
 	end
-	addon.db.config.minTimerDisplayInterval = clampNumber(value, Config.getMinTimerDisplayInterval(), 1, C.MAX_REASONABLE_INTERVAL_SECONDS)
+	addon.db.config.minTimerDisplayInterval =
+		clampNumber(value, Config.getMinTimerDisplayInterval(), 1, C.MAX_REASONABLE_INTERVAL_SECONDS)
 	syncLearnedBackup()
 	refreshRuntime()
 	return addon.db.config.minTimerDisplayInterval

@@ -24,28 +24,22 @@ local function isBossUnitToken(unit)
 end
 
 local function hasBossUnitSignal(context)
-	return context and (
-		context.sawBossUnit == true
-		or isBossUnitToken(context.bossUnitToken)
-		or isBossUnitToken(context.lastUnitToken)
-		or (
-			type(context.lastUnitSource) == "string"
-			and string.sub(context.lastUnitSource, 1, 9) == "boss_unit"
+	return context
+		and (
+			context.sawBossUnit == true
+			or isBossUnitToken(context.bossUnitToken)
+			or isBossUnitToken(context.lastUnitToken)
+			or (type(context.lastUnitSource) == "string" and string.sub(context.lastUnitSource, 1, 9) == "boss_unit")
 		)
-	)
 end
 
 local function isBossSignalContext(context)
-	return context and (
-		context.unitClassification == "worldboss"
-		or hasBossUnitSignal(context)
-	)
+	return context and (context.unitClassification == "worldboss" or hasBossUnitSignal(context))
 end
 
 local function isRaidPull(pull)
 	local zone = pull and pull.zone
-	return type(zone) == "table"
-		and (zone.instanceType == "raid" or (tonumber(zone.maxPlayers) or 0) >= 10)
+	return type(zone) == "table" and (zone.instanceType == "raid" or (tonumber(zone.maxPlayers) or 0) >= 10)
 end
 
 local function countActiveBossSignalContexts(contexts)
@@ -69,17 +63,18 @@ local function unitMatchesContext(unit, context)
 end
 
 local function unitInCombat(unit)
-	return UnitExists
-		and UnitExists(unit)
-		and UnitAffectingCombat
-		and UnitAffectingCombat(unit)
+	return UnitExists and UnitExists(unit) and UnitAffectingCombat and UnitAffectingCombat(unit)
 end
 
 local function contextUnitInCombat(context)
 	if not context then
 		return false
 	end
-	if context.bossUnitToken and unitMatchesContext(context.bossUnitToken, context) and unitInCombat(context.bossUnitToken) then
+	if
+		context.bossUnitToken
+		and unitMatchesContext(context.bossUnitToken, context)
+		and unitInCombat(context.bossUnitToken)
+	then
 		return true
 	end
 	if UnitExists then
@@ -91,7 +86,11 @@ local function contextUnitInCombat(context)
 			end
 		end
 	end
-	if context.lastUnitToken and unitMatchesContext(context.lastUnitToken, context) and unitInCombat(context.lastUnitToken) then
+	if
+		context.lastUnitToken
+		and unitMatchesContext(context.lastUnitToken, context)
+		and unitInCombat(context.lastUnitToken)
+	then
 		return true
 	end
 	if unitMatchesContext("target", context) and unitInCombat("target") then
@@ -144,7 +143,11 @@ local function liveBossQualifies(context, bossState, pullWorldbossCount, now)
 	if not context or not bossState or not bossState.abilities or (bossState.eventCount or 0) <= 0 then
 		return false
 	end
-	local decision = classifier.scoreContext(liveScoreContext(context, now), bossState, liveModelStats(context, bossState, pullWorldbossCount))
+	local decision = classifier.scoreContext(
+		liveScoreContext(context, now),
+		bossState,
+		liveModelStats(context, bossState, pullWorldbossCount)
+	)
 	return decision and decision.isBoss == true
 end
 
@@ -298,10 +301,7 @@ local function addTimer(ability, pullAbility, context, nextAt, mode, scheduledKe
 	local now = Util.now()
 	local remaining = nextAt and (nextAt - now) or nil
 
-	local duration = ability.minInterval
-		or ability.minFirstOffset
-		or ability.avgFirstOffset
-		or 10
+	local duration = ability.minInterval or ability.minFirstOffset or ability.avgFirstOffset or 10
 	if duration < 1 then
 		duration = 1
 	end
@@ -366,9 +366,7 @@ local function looksLikeSingleSampleHpGate(pullAbility)
 	end
 	local minHpPct = tonumber(pullAbility.minHpPct)
 	local maxHpPct = tonumber(pullAbility.maxHpPct)
-	return minHpPct
-		and maxHpPct
-		and (maxHpPct - minHpPct) <= C.HP_GATE_SPREAD_PCT
+	return minHpPct and maxHpPct and (maxHpPct - minHpPct) <= C.HP_GATE_SPREAD_PCT
 end
 
 local function displayIntervalFloor()
@@ -380,30 +378,38 @@ local function displayIntervalFloor()
 end
 
 local function liveTimeAbility(pullAbility)
-	if not pullAbility
+	if
+		not pullAbility
 		or not pullAbility.intervalSamples
 		or pullAbility.intervalSamples < 1
 		or not pullAbility.minInterval
-		or pullAbility.minInterval < C.MIN_INTERVAL_SECONDS then
+		or pullAbility.minInterval < C.MIN_INTERVAL_SECONDS
+	then
 		return nil
 	end
 	if pullAbility.minInterval < displayIntervalFloor() then
 		return nil
 	end
 	local relevanceScorer = addon.Learning and addon.Learning.RelevanceScorer or nil
-	if relevanceScorer
+	if
+		relevanceScorer
 		and relevanceScorer.routineReasonForAbility
-		and relevanceScorer.routineReasonForAbility(pullAbility) then
+		and relevanceScorer.routineReasonForAbility(pullAbility)
+	then
 		return nil
 	end
-	if relevanceScorer
+	if
+		relevanceScorer
 		and relevanceScorer.unstableTimeIntervalReason
-		and relevanceScorer.unstableTimeIntervalReason(pullAbility) then
+		and relevanceScorer.unstableTimeIntervalReason(pullAbility)
+	then
 		return nil
 	end
-	if relevanceScorer
+	if
+		relevanceScorer
 		and relevanceScorer.isKnownRoutineSpell
-		and relevanceScorer.isKnownRoutineSpell(pullAbility.spellKey) then
+		and relevanceScorer.isKnownRoutineSpell(pullAbility.spellKey)
+	then
 		return nil
 	end
 	if looksLikeSingleSampleHpGate(pullAbility) then
@@ -459,7 +465,8 @@ local function bestDisplayRule(ability, forced)
 	end
 
 	local selected = nil
-	local order = { "time_interval", "phase_time_interval", "phase_start_offset", "first_offset", "hp_gate", "phase_once" }
+	local order =
+		{ "time_interval", "phase_time_interval", "phase_start_offset", "first_offset", "hp_gate", "phase_once" }
 	for index = 1, #order do
 		local candidate = ability.rules[order[index]]
 		if candidate and (not selected or (candidate.confidence or 0) > (selected.confidence or 0)) then
@@ -476,16 +483,18 @@ local function learnedAbilityForPrediction(ability, zoneKey, encounterKey)
 	if ability.legacyAfterRebuild == true then
 		return nil
 	end
-	if addon.Core.Difficulty
+	if
+		addon.Core.Difficulty
 		and addon.Core.Difficulty.abilityAvailable
-		and not addon.Core.Difficulty.abilityAvailable(ability, Util.zoneInfo()) then
+		and not addon.Core.Difficulty.abilityAvailable(ability, Util.zoneInfo())
+	then
 		return nil
 	end
 
 	local config = addon.Core and addon.Core.Config
 	local forced = config
-		and config.isAbilityForcedShown
-		and config.isAbilityForcedShown(zoneKey, encounterKey, ability.key)
+			and config.isAbilityForcedShown
+			and config.isAbilityForcedShown(zoneKey, encounterKey, ability.key)
 		or false
 	if config and config.isAbilityHidden and config.isAbilityHidden(zoneKey, encounterKey, ability) then
 		return nil
@@ -509,12 +518,27 @@ local function learnedAbilityForPrediction(ability, zoneKey, encounterKey)
 	return copy
 end
 
-local function addLearnedAbilityPrediction(context, bossState, ability, pullAbility, now, scheduledKeys, zoneKey, encounterKey)
+local function addLearnedAbilityPrediction(
+	context,
+	bossState,
+	ability,
+	pullAbility,
+	now,
+	scheduledKeys,
+	zoneKey,
+	encounterKey
+)
 	local model = learnedAbilityForPrediction(ability, zoneKey, encounterKey)
 	if not model then
 		return
 	end
-	resolveDelayedTimerAt(context, model, bossState and bossState.pullId, pullAbility and pullAbility.lastActivationAt, now)
+	resolveDelayedTimerAt(
+		context,
+		model,
+		bossState and bossState.pullId,
+		pullAbility and pullAbility.lastActivationAt,
+		now
+	)
 
 	local rule = model.rule
 	local nextAt = nil
@@ -549,14 +573,19 @@ local function addLearnedAbilityPrediction(context, bossState, ability, pullAbil
 	elseif rule.type == "phase_time_interval" then
 		local segmentKey = rule.segmentKey or (bossState and bossState.currentSegmentKey)
 		local activeSegment = bossState
-			and bossState.currentSegmentKey == segmentKey
-			and bossState.segments
-			and bossState.segments[segmentKey]
+				and bossState.currentSegmentKey == segmentKey
+				and bossState.segments
+				and bossState.segments[segmentKey]
 			or nil
 		local learnedSegment = segmentKey and model.segmentStats and model.segmentStats[segmentKey] or nil
 		if activeSegment and learnedSegment then
 			local interval = rule.minInterval or learnedSegment.minInterval
-			if pullAbility and pullAbility.lastActivationAt and segmentSeen(pullAbility, segmentKey, activeSegment) and interval then
+			if
+				pullAbility
+				and pullAbility.lastActivationAt
+				and segmentSeen(pullAbility, segmentKey, activeSegment)
+				and interval
+			then
 				local anchorAt = pullAbility.lastActivationAt
 				nextAt = anchorAt + interval
 				markPredictionWindow(
@@ -585,7 +614,11 @@ local function addLearnedAbilityPrediction(context, bossState, ability, pullAbil
 			end
 		end
 	elseif rule.type == "first_offset" then
-		if (not pullAbility or (pullAbility.activationCount or 0) == 0) and rule.minFirstOffset and context.startedAtSession then
+		if
+			(not pullAbility or (pullAbility.activationCount or 0) == 0)
+			and rule.minFirstOffset
+			and context.startedAtSession
+		then
 			nextAt = context.startedAtSession + rule.minFirstOffset
 			markPredictionWindow(
 				model,
@@ -637,12 +670,21 @@ local function addEncounterPredictions(context, encounter, bossState, minConfide
 	for key, ability in pairs(encounter.abilities) do
 		local config = addon.Core and addon.Core.Config
 		local forced = config
-			and config.isAbilityForcedShown
-			and config.isAbilityForcedShown(zoneKey, encounter.key, ability.key)
+				and config.isAbilityForcedShown
+				and config.isAbilityForcedShown(zoneKey, encounter.key, ability.key)
 			or false
 		if ability.actorKey == context.modelKey and (forced or (ability.confidence or 0) >= minConfidence) then
 			local pullAbility = bossState and bossState.abilities and bossState.abilities[ability.spellKey] or nil
-			addLearnedAbilityPrediction(context, bossState, ability, pullAbility, now, scheduledKeys, zoneKey, encounter.key)
+			addLearnedAbilityPrediction(
+				context,
+				bossState,
+				ability,
+				pullAbility,
+				now,
+				scheduledKeys,
+				zoneKey,
+				encounter.key
+			)
 		end
 	end
 end
@@ -654,9 +696,9 @@ local function learnedEncounterForContext(pull, groupEncounter, context)
 	end
 
 	local encounter = groupEncounter
-		and groupEncounter.actors
-		and groupEncounter.actors[context.modelKey]
-		and groupEncounter
+			and groupEncounter.actors
+			and groupEncounter.actors[context.modelKey]
+			and groupEncounter
 		or modelStore.findSingleActorEncounter(pull.zone.key, context.modelKey)
 	if encounter then
 		return encounter
@@ -723,8 +765,10 @@ local function buildPredictions()
 	for actorKey, context in pairs(contexts) do
 		if context.active and context.modelKey then
 			local bossState = pullState and pullState.bosses and pullState.bosses[actorKey] or nil
-			if contextHasCombatEvidence(context, bossState)
-				and (not isRaidPull(pull) or isBossSignalContext(context)) then
+			if
+				contextHasCombatEvidence(context, bossState)
+				and (not isRaidPull(pull) or isBossSignalContext(context))
+			then
 				local encounter = learnedEncounterForContext(pull, groupEncounter, context)
 				addEncounterPredictions(context, encounter, bossState, minConfidence, now, scheduledKeys, pull.zone.key)
 				if bossState then

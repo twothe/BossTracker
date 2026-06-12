@@ -158,9 +158,7 @@ local function learnedHasData(learned)
 		return false
 	end
 	for _, zone in pairs(learned.zones) do
-		if type(zone) == "table"
-			and type(zone.encounters) == "table"
-			and countKeys(zone.encounters) > 0 then
+		if type(zone) == "table" and type(zone.encounters) == "table" and countKeys(zone.encounters) > 0 then
 			return true
 		end
 	end
@@ -186,9 +184,7 @@ end
 
 local function backupSchemaIsSupported(backupSchemaVersion)
 	local version = tonumber(backupSchemaVersion)
-	return version ~= nil
-		and version >= 1
-		and version <= C.LEARNED_BACKUP_SCHEMA_VERSION
+	return version ~= nil and version >= 1 and version <= C.LEARNED_BACKUP_SCHEMA_VERSION
 end
 
 local function evidenceBackupIsUsable(evidence)
@@ -540,12 +536,11 @@ local function accountUpdatedAt(meta)
 end
 
 local function createNewerBackupConflict(db, charDB)
-	if not recoveryBackupIsUsable(charDB)
-		or (
-			not learnedHasData(db and db.learned)
-			and evidenceKillCount(db) <= 0
-		)
-		or learnedDataWasExplicitlyCleared(db) then
+	if
+		not recoveryBackupIsUsable(charDB)
+		or (not learnedHasData(db and db.learned) and evidenceKillCount(db) <= 0)
+		or learnedDataWasExplicitlyCleared(db)
+	then
 		return nil
 	end
 
@@ -628,10 +623,7 @@ local function clearAbilityOverride(db, zoneKey, encounterKey, abilityKey)
 end
 
 local function removeEmptyOverrideContainers(db)
-	local zones = db
-		and db.config
-		and db.config.overrides
-		and db.config.overrides.zones
+	local zones = db and db.config and db.config.overrides and db.config.overrides.zones
 	if type(zones) ~= "table" then
 		return
 	end
@@ -834,10 +826,7 @@ recoveryBackupIsUsable = function(charDB)
 	return type(backup) == "table"
 		and backupSchemaIsSupported(backup.backupSchemaVersion)
 		and tonumber(backup.dataSchemaVersion) == C.SCHEMA_VERSION
-		and (
-			learnedHasData(backup.learned)
-			or evidencePermanentKillCount(backup.evidence) > 0
-		)
+		and (learnedHasData(backup.learned) or evidencePermanentKillCount(backup.evidence) > 0)
 end
 
 local function restoreLearnedBackup(db, charDB, previousSchemaVersion, reason)
@@ -870,7 +859,9 @@ local function restoreLearnedBackup(db, charDB, previousSchemaVersion, reason)
 	end
 	queueStartupNotice("restored account data from this character's backup because account SavedVariables were empty")
 	if backupEvidenceKills == 0 and learnedHasData(db.learned) then
-		queueStartupNotice("the restored character backup did not contain permanent evidence; future rebuilds can only use evidence captured after this restore")
+		queueStartupNotice(
+			"the restored character backup did not contain permanent evidence; future rebuilds can only use evidence captured after this restore"
+		)
 	end
 	appendMigration(db, {
 		from = previousSchemaVersion,
@@ -889,9 +880,7 @@ local function restoreLearnedBackup(db, charDB, previousSchemaVersion, reason)
 end
 
 local function currentOverrides()
-	local overrides = addon.db
-		and addon.db.config
-		and addon.db.config.overrides
+	local overrides = addon.db and addon.db.config and addon.db.config.overrides
 	return type(overrides) == "table" and overrides or { zones = {} }
 end
 
@@ -988,8 +977,7 @@ local function applyRebuildMetadata(db, reason, killCount, promoted, stats)
 	meta.rebuildLegacySuppressedEncounters = tonumber(stats.legacySuppressedEncounters) or 0
 	meta.rebuildSkippedCorruptEvidence = tonumber(stats.skippedCorruptEvidence) or 0
 	meta.rebuildSuppressedContainedAddEvidence = tonumber(stats.suppressedContainedAddEvidence) or 0
-	if meta.rebuildLegacyPreservedEncounters > 0
-		or meta.rebuildLegacyPreservedAbilities > 0 then
+	if meta.rebuildLegacyPreservedEncounters > 0 or meta.rebuildLegacyPreservedAbilities > 0 then
 		meta.rebuildCoverage = "partial"
 	else
 		meta.rebuildCoverage = "complete"
@@ -1032,8 +1020,7 @@ local function learnedRebuildNeed(db)
 	if storedEngineVersion ~= currentEngineVersion then
 		return true, "interpretation_engine"
 	end
-	if meta.rebuildCoverage == "partial"
-		and evidenceKillCount(db) > (tonumber(meta.rebuiltFromEvidenceKills) or 0) then
+	if meta.rebuildCoverage == "partial" and evidenceKillCount(db) > (tonumber(meta.rebuiltFromEvidenceKills) or 0) then
 		return true, "new_evidence_after_partial_rebuild"
 	end
 	return false, nil
@@ -1075,9 +1062,11 @@ function SavedVariables.init()
 		else
 			resetLearnedDataForSchema(db, previousSchemaVersion)
 		end
-	elseif not learnedHasData(db.learned)
+	elseif
+		not learnedHasData(db.learned)
 		and not learnedDataWasExplicitlyCleared(db)
-		and restoreLearnedBackup(db, charDB, previousSchemaVersion) then
+		and restoreLearnedBackup(db, charDB, previousSchemaVersion)
+	then
 		restoredFromBackup = true
 	end
 
@@ -1092,13 +1081,14 @@ function SavedVariables.init()
 	if addon.Core.EvidenceStore and addon.Core.EvidenceStore.ensureDb then
 		addon.Core.EvidenceStore.ensureDb(db)
 	else
-			db.evidence = type(db.evidence) == "table" and db.evidence or {
+		db.evidence = type(db.evidence) == "table" and db.evidence
+			or {
 				schemaVersion = C.EVIDENCE_SCHEMA_VERSION,
 				revision = 0,
 				instances = {},
 			}
-			db.evidence.incomplete = nil
-		end
+		db.evidence.incomplete = nil
+	end
 	if learnedHasData(db.learned) then
 		ensureLearnedMeta(db).clearedAt = nil
 	end
@@ -1271,7 +1261,7 @@ function SavedVariables.rebuildLearnedIfNeeded()
 			to = C.SCHEMA_VERSION,
 			at = wallTime(),
 			reason = killCount > 0
-				and "Rebuilt learned boss data from permanent evidence for the current interpretation engine."
+					and "Rebuilt learned boss data from permanent evidence for the current interpretation engine."
 				or "Marked stale learned boss data as legacy because the interpretation engine changed and no permanent evidence was available.",
 			rebuildReason = reason,
 			evidenceKills = killCount,
@@ -1289,7 +1279,10 @@ function SavedVariables.rebuildLearnedIfNeeded()
 			if killCount <= 0 then
 				message = "marked stale learned boss data as needing fresh evidence"
 			elseif legacyCount > 0 then
-				message = message .. "; preserved " .. tostring(legacyCount) .. " legacy boss(es) needing fresh evidence"
+				message = message
+					.. "; preserved "
+					.. tostring(legacyCount)
+					.. " legacy boss(es) needing fresh evidence"
 			end
 			addon.Core.Logger.chat(message)
 		end
@@ -1308,12 +1301,12 @@ function SavedVariables.clearLearnedData(reason)
 	if addon.Core.EvidenceStore and addon.Core.EvidenceStore.clearAll then
 		addon.Core.EvidenceStore.clearAll()
 	else
-			addon.db.evidence = {
-				schemaVersion = C.EVIDENCE_SCHEMA_VERSION,
-				revision = 0,
-				instances = {},
-			}
-		end
+		addon.db.evidence = {
+			schemaVersion = C.EVIDENCE_SCHEMA_VERSION,
+			revision = 0,
+			instances = {},
+		}
+	end
 	if addon.db.config and addon.db.config.overrides then
 		addon.db.config.overrides = { zones = {} }
 	end

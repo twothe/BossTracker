@@ -88,11 +88,13 @@ local function isAuraOnlyAbility(ability)
 
 	local sawAura = false
 	for eventType in pairs(events) do
-		if eventType == "SPELL_AURA_APPLIED"
+		if
+			eventType == "SPELL_AURA_APPLIED"
 			or eventType == "SPELL_AURA_REFRESH"
 			or eventType == "SPELL_AURA_REMOVED"
 			or eventType == "SPELL_AURA_APPLIED_DOSE"
-			or eventType == "SPELL_AURA_REMOVED_DOSE" then
+			or eventType == "SPELL_AURA_REMOVED_DOSE"
+		then
 			sawAura = true
 		else
 			return false
@@ -118,8 +120,7 @@ local function bossSelfAuraTransitionMarker(ability)
 	if not isAuraOnlyAbility(ability) then
 		return false
 	end
-	if (tonumber(ability.bossSelfAuraEventCount) or 0) <= 0
-		or (tonumber(ability.playerAuraEventCount) or 0) > 0 then
+	if (tonumber(ability.bossSelfAuraEventCount) or 0) <= 0 or (tonumber(ability.playerAuraEventCount) or 0) > 0 then
 		return false
 	end
 	if (tonumber(ability.activationCount) or 0) > math.max(1, tonumber(ability.pullSeenCount) or 1) then
@@ -162,15 +163,18 @@ local function bestPhaseTimerSegment(ability)
 	local bestKey = nil
 	local bestSegment = nil
 	for segmentKey, segment in pairs(type(ability and ability.segmentStats) == "table" and ability.segmentStats or {}) do
-		if stablePhaseTimerSegment(segment)
+		if
+			stablePhaseTimerSegment(segment)
 			and (
 				not bestSegment
 				or (tonumber(segment.intervalSamples) or 0) > (tonumber(bestSegment.intervalSamples) or 0)
 				or (
 					(tonumber(segment.intervalSamples) or 0) == (tonumber(bestSegment.intervalSamples) or 0)
-					and (tonumber(segment.phaseOffsetSamples) or 0) > (tonumber(bestSegment.phaseOffsetSamples) or 0)
+					and (tonumber(segment.phaseOffsetSamples) or 0)
+						> (tonumber(bestSegment.phaseOffsetSamples) or 0)
 				)
-			) then
+			)
+		then
 			bestKey = segmentKey
 			bestSegment = segment
 		end
@@ -196,12 +200,14 @@ local function timeRuleIntervals(ability)
 	end
 
 	local hasCastStart = type(ability.events) == "table" and (tonumber(ability.events.SPELL_CAST_START) or 0) > 0
-	if intervalSamples >= 2
+	if
+		intervalSamples >= 2
 		and hasCastStart
 		and avgInterval
 		and maxInterval
 		and avgInterval >= floor - castTimerDisplayFloorGrace()
-		and maxInterval >= floor then
+		and maxInterval >= floor
+	then
 		return floor, maxInterval, avgInterval
 	end
 	return minInterval, maxInterval, avgInterval
@@ -225,10 +231,7 @@ local function isBossSelfAuraRecord(bossState, record)
 	if record.sourceGUID and record.destGUID and record.sourceGUID == record.destGUID then
 		return true
 	end
-	return record.destIsHostileNpc == true
-		and bossState
-		and record.destName
-		and record.destName == bossState.bossName
+	return record.destIsHostileNpc == true and bossState and record.destName and record.destName == bossState.bossName
 end
 
 local function ensurePullAbility(bossState, key, spellId, spellName)
@@ -324,7 +327,8 @@ end
 
 local function noteObservedGap(target, interval)
 	if interval and interval >= 0 and interval <= C.MAX_REASONABLE_INTERVAL_SECONDS then
-		target.avgObservedGap, target.observedGapSamples = updateAverage(target.avgObservedGap, target.observedGapSamples, interval)
+		target.avgObservedGap, target.observedGapSamples =
+			updateAverage(target.avgObservedGap, target.observedGapSamples, interval)
 		updateMinMax(target, "minObservedGap", "maxObservedGap", interval)
 	end
 end
@@ -360,7 +364,9 @@ function RuleLearner.noteActivation(bossState, activation, segment)
 	ability.sourceName = ability.sourceName or activation.sourceName
 	if activation.associatedWithBoss then
 		ability.encounterAssociated = true
-		ability.associatedSourceName = activation.associatedSourceName or ability.associatedSourceName or activation.sourceName
+		ability.associatedSourceName = activation.associatedSourceName
+			or ability.associatedSourceName
+			or activation.sourceName
 	end
 	if not ability.firstActivationAt then
 		ability.firstActivationAt = activation.t
@@ -389,18 +395,16 @@ function RuleLearner.noteActivation(bossState, activation, segment)
 	if newSegmentInstance then
 		segmentStats.phaseInstanceCount = (segmentStats.phaseInstanceCount or 0) + 1
 		local phaseOffset = activation.t - segmentStartedAt
-		segmentStats.avgPhaseOffset, segmentStats.phaseOffsetSamples = updateAverage(
-			segmentStats.avgPhaseOffset,
-			segmentStats.phaseOffsetSamples,
-			phaseOffset
-		)
+		segmentStats.avgPhaseOffset, segmentStats.phaseOffsetSamples =
+			updateAverage(segmentStats.avgPhaseOffset, segmentStats.phaseOffsetSamples, phaseOffset)
 		updateMinMax(segmentStats, "minPhaseOffset", "maxPhaseOffset", phaseOffset)
 	end
 	segmentStats.lastSegmentStartedAt = segmentStartedAt or segmentStats.lastSegmentStartedAt
 	if not segmentStats.firstActivationAt then
 		segmentStats.firstActivationAt = activation.t
 		segmentStats.firstBossOffset = activation.t - (bossState.startedAtSession or activation.t)
-		segmentStats.firstPhaseOffset = activation.t - (segment and segment.startedAt or bossState.startedAtSession or activation.t)
+		segmentStats.firstPhaseOffset = activation.t
+			- (segment and segment.startedAt or bossState.startedAtSession or activation.t)
 	end
 	if previousSegmentActivationAt and not newSegmentInstance then
 		local interval = activation.t - previousSegmentActivationAt
@@ -524,10 +528,12 @@ function RuleLearner.refreshRules(ability)
 	local phaseTimerSegmentKey, phaseTimerSegment = bestPhaseTimerSegment(ability)
 	local ruleMinInterval, ruleMaxInterval, ruleAvgInterval = timeRuleIntervals(ability)
 
-	if not phaseOnlyRepeated
+	if
+		not phaseOnlyRepeated
 		and not weakSingleIntervalAcrossOneOffPhases
 		and not unstableTimeReason
-		and ruleMinInterval then
+		and ruleMinInterval
+	then
 		local confidence = math.min(0.95, 0.30 + ability.intervalSamples * 0.12)
 		if ability.maxInterval and ability.minInterval and ability.maxInterval > ability.minInterval * 1.8 then
 			confidence = confidence - 0.12
@@ -541,17 +547,22 @@ function RuleLearner.refreshRules(ability)
 	end
 
 	if phaseTimerSegment and unstableTimeReason then
-		candidate(ability, "phase_time_interval", math.min(0.90, 0.42 + (phaseTimerSegment.intervalSamples or 0) * 0.10), {
-			segmentKey = phaseTimerSegmentKey,
-			phaseReason = phaseTimerSegment.reason,
-			minInterval = phaseTimerSegment.minInterval,
-			maxInterval = phaseTimerSegment.maxInterval,
-			avgInterval = phaseTimerSegment.avgInterval,
-			samples = phaseTimerSegment.intervalSamples,
-			avgPhaseOffset = phaseTimerSegment.avgPhaseOffset or phaseTimerSegment.firstPhaseOffset,
-			minPhaseOffset = phaseTimerSegment.minPhaseOffset,
-			maxPhaseOffset = phaseTimerSegment.maxPhaseOffset,
-		})
+		candidate(
+			ability,
+			"phase_time_interval",
+			math.min(0.90, 0.42 + (phaseTimerSegment.intervalSamples or 0) * 0.10),
+			{
+				segmentKey = phaseTimerSegmentKey,
+				phaseReason = phaseTimerSegment.reason,
+				minInterval = phaseTimerSegment.minInterval,
+				maxInterval = phaseTimerSegment.maxInterval,
+				avgInterval = phaseTimerSegment.avgInterval,
+				samples = phaseTimerSegment.intervalSamples,
+				avgPhaseOffset = phaseTimerSegment.avgPhaseOffset or phaseTimerSegment.firstPhaseOffset,
+				minPhaseOffset = phaseTimerSegment.minPhaseOffset,
+				maxPhaseOffset = phaseTimerSegment.maxPhaseOffset,
+			}
+		)
 	end
 
 	if ability.pullSeenCount and ability.pullSeenCount >= 1 and ability.avgFirstOffset then
@@ -585,8 +596,10 @@ function RuleLearner.refreshRules(ability)
 		})
 	end
 
-	if (phaseSamples >= (C.MIN_PHASE_RULE_SAMPLES or 2) and (not unstableTimeReason or strongPhaseSamples > 0))
-		or strongPhaseSamples > 0 then
+	if
+		(phaseSamples >= (C.MIN_PHASE_RULE_SAMPLES or 2) and (not unstableTimeReason or strongPhaseSamples > 0))
+		or strongPhaseSamples > 0
+	then
 		candidate(ability, "phase_start_offset", math.min(0.78, 0.24 + phaseSamples * 0.08), {
 			avgPhaseOffset = strongPhaseOffsetAverage or phaseOffsetAverage,
 			samples = strongPhaseOffsetSampleCount > 0 and strongPhaseOffsetSampleCount or phaseOffsetSampleCount,
@@ -604,13 +617,15 @@ function RuleLearner.refreshRules(ability)
 		})
 	end
 
-	if unstableTimeReason
+	if
+		unstableTimeReason
 		and not ability.rules.hp_gate
 		and not ability.rules.phase_time_interval
 		and not ability.rules.phase_start_offset
 		and not ability.rules.phase_once
 		and not ability.rules.first_offset
-		and not ability.rules.encounter_add then
+		and not ability.rules.encounter_add
+	then
 		candidate(ability, "routine_noise", 1.0, {
 			reason = unstableTimeReason,
 		})
@@ -634,8 +649,10 @@ function RuleLearner.mergePullAbility(learnedAbility, pullAbility)
 	learnedAbility.eventCount = (learnedAbility.eventCount or 0) + (pullAbility.eventCount or 0)
 	learnedAbility.activationCount = (learnedAbility.activationCount or 0) + (pullAbility.activationCount or 0)
 	learnedAbility.auraEventCount = (learnedAbility.auraEventCount or 0) + (pullAbility.auraEventCount or 0)
-	learnedAbility.bossSelfAuraEventCount = (learnedAbility.bossSelfAuraEventCount or 0) + (pullAbility.bossSelfAuraEventCount or 0)
-	learnedAbility.playerAuraEventCount = (learnedAbility.playerAuraEventCount or 0) + (pullAbility.playerAuraEventCount or 0)
+	learnedAbility.bossSelfAuraEventCount = (learnedAbility.bossSelfAuraEventCount or 0)
+		+ (pullAbility.bossSelfAuraEventCount or 0)
+	learnedAbility.playerAuraEventCount = (learnedAbility.playerAuraEventCount or 0)
+		+ (pullAbility.playerAuraEventCount or 0)
 	learnedAbility.events = type(learnedAbility.events) == "table" and learnedAbility.events or {}
 	for eventType, count in pairs(pullAbility.events or {}) do
 		learnedAbility.events[eventType] = (learnedAbility.events[eventType] or 0) + count
@@ -643,11 +660,8 @@ function RuleLearner.mergePullAbility(learnedAbility, pullAbility)
 
 	if pullAbility.activationCount and pullAbility.activationCount > 0 then
 		learnedAbility.pullSeenCount = (learnedAbility.pullSeenCount or 0) + 1
-		learnedAbility.avgFirstOffset, learnedAbility.firstOffsetSamples = updateAverage(
-			learnedAbility.avgFirstOffset,
-			learnedAbility.firstOffsetSamples,
-			pullAbility.firstOffset
-		)
+		learnedAbility.avgFirstOffset, learnedAbility.firstOffsetSamples =
+			updateAverage(learnedAbility.avgFirstOffset, learnedAbility.firstOffsetSamples, pullAbility.firstOffset)
 		updateMinMax(learnedAbility, "minFirstOffset", "maxFirstOffset", pullAbility.firstOffset)
 	end
 
@@ -666,12 +680,8 @@ function RuleLearner.mergePullAbility(learnedAbility, pullAbility)
 	)
 	mergeMinMax(learnedAbility, "minObservedGap", "maxObservedGap", pullAbility, "minObservedGap", "maxObservedGap")
 
-	learnedAbility.avgHpPct, learnedAbility.hpSamples = mergeAverage(
-		learnedAbility.avgHpPct,
-		learnedAbility.hpSamples,
-		pullAbility.avgHpPct,
-		pullAbility.hpSamples
-	)
+	learnedAbility.avgHpPct, learnedAbility.hpSamples =
+		mergeAverage(learnedAbility.avgHpPct, learnedAbility.hpSamples, pullAbility.avgHpPct, pullAbility.hpSamples)
 	mergeMinMax(learnedAbility, "minHpPct", "maxHpPct", pullAbility, "minHpPct", "maxHpPct")
 
 	if pullAbility.encounterAssociated then
@@ -705,11 +715,8 @@ function RuleLearner.mergePullAbility(learnedAbility, pullAbility)
 			pullSegment.phaseOffsetSamples or (pullSegment.firstPhaseOffset and 1 or 0)
 		)
 		mergeMinMax(targetSegment, "minPhaseOffset", "maxPhaseOffset", pullSegment, "minPhaseOffset", "maxPhaseOffset")
-		targetSegment.avgBossOffset, targetSegment.bossOffsetSamples = updateAverage(
-			targetSegment.avgBossOffset,
-			targetSegment.bossOffsetSamples,
-			pullSegment.firstBossOffset
-		)
+		targetSegment.avgBossOffset, targetSegment.bossOffsetSamples =
+			updateAverage(targetSegment.avgBossOffset, targetSegment.bossOffsetSamples, pullSegment.firstBossOffset)
 		targetSegment.avgInterval, targetSegment.intervalSamples = mergeAverage(
 			targetSegment.avgInterval,
 			targetSegment.intervalSamples,
@@ -730,5 +737,4 @@ function RuleLearner.mergePullAbility(learnedAbility, pullAbility)
 	RuleLearner.refreshRules(learnedAbility)
 end
 
-function RuleLearner.start()
-end
+function RuleLearner.start() end

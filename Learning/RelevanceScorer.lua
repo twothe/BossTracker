@@ -113,9 +113,11 @@ local function abilityHasDisplayRule(zoneKey, encounter, ability)
 		return false
 	end
 	local config = addon.Core and addon.Core.Config
-	if config
+	if
+		config
 		and config.isAbilityForcedShown
-		and config.isAbilityForcedShown(zoneKey, encounter and encounter.key, ability.key) then
+		and config.isAbilityForcedShown(zoneKey, encounter and encounter.key, ability.key)
+	then
 		return true
 	end
 	return type(ability.selectedRule) == "table"
@@ -140,9 +142,7 @@ local function shouldSuppressDisplaylessFallbackEncounter(zoneKey, encounter)
 	local actorsKnown, hasBossIdentity = encounterActorsAreKnownFallback(encounter)
 	-- Low-HP elite trash can look boss-like in the classifier. If every learned
 	-- ability is routine noise, keep only diagnostics and keep it out of timers.
-	return actorsKnown
-		and not hasBossIdentity
-		and not encounterHasDisplayableAbility(zoneKey, encounter)
+	return actorsKnown and not hasBossIdentity and not encounterHasDisplayableAbility(zoneKey, encounter)
 end
 
 local function refreshUnconfirmedEncounterSuppression(encounter)
@@ -257,8 +257,7 @@ local function mixedDisplayableIntervalEvidence(target)
 	end
 	local floor = displayIntervalFloor()
 	local grace = castTimerDisplayFloorGrace()
-	return avgInterval >= floor - grace
-		and maxInterval >= displayIntervalFloor()
+	return avgInterval >= floor - grace and maxInterval >= displayIntervalFloor()
 end
 
 local function terminalLowHpCastReason(ability)
@@ -273,11 +272,13 @@ local function terminalLowHpCastReason(ability)
 	local firstOffset = tonumber(ability.avgFirstOffset or ability.minFirstOffset)
 	local activationCount = tonumber(ability.activationCount) or 0
 	local pullSeenCount = tonumber(ability.pullSeenCount) or 0
-	if maxHpPct
+	if
+		maxHpPct
 		and firstOffset
 		and maxHpPct <= (tonumber(C.TERMINAL_CAST_MAX_HP_PCT) or 5.0)
 		and firstOffset >= (tonumber(C.TERMINAL_CAST_MIN_OFFSET_SECONDS) or 120.0)
-		and activationCount <= math.max(1, pullSeenCount) + 1 then
+		and activationCount <= math.max(1, pullSeenCount) + 1
+	then
 		return "terminal_low_hp_cast"
 	end
 	return nil
@@ -287,8 +288,10 @@ local function singleInterruptedCastReason(ability)
 	if type(ability) ~= "table" or ability.encounterAssociated then
 		return nil
 	end
-	if eventCount(ability, "SPELL_INTERRUPT") <= 0
-		or (eventCount(ability, "SPELL_CAST_START") <= 0 and eventCount(ability, "SPELL_CAST_SUCCESS") <= 0) then
+	if
+		eventCount(ability, "SPELL_INTERRUPT") <= 0
+		or (eventCount(ability, "SPELL_CAST_START") <= 0 and eventCount(ability, "SPELL_CAST_SUCCESS") <= 0)
+	then
 		return nil
 	end
 	local activationCount = tonumber(ability.activationCount) or 0
@@ -313,18 +316,22 @@ local function frequentShortIntervalReason(ability)
 	local stableSegmentInterval = hasStableDisplayableSegmentInterval(ability)
 	local mixedDisplayInterval = mixedDisplayableIntervalEvidence(ability)
 
-	if activationCount >= 2
+	if
+		activationCount >= 2
 		and intervalSamples >= 1
 		and belowDisplayIntervalFloor(minInterval)
-		and not mixedDisplayInterval then
+		and not mixedDisplayInterval
+	then
 		return "short_interval_below_display_floor"
 	end
 
-	if activationCount >= 2
+	if
+		activationCount >= 2
 		and observedGapSamples >= 1
 		and belowDisplayIntervalFloor(minObservedGap)
 		and not stableSegmentInterval
-		and not mixedDisplayInterval then
+		and not mixedDisplayInterval
+	then
 		return "short_activation_gap_below_display_floor"
 	end
 
@@ -334,10 +341,12 @@ local function frequentShortIntervalReason(ability)
 	end
 	local possibleIntervalCount = math.max(0, activationCount - pullSeenCount)
 	local uncountedIntervalCount = possibleIntervalCount - intervalSamples
-	if activationCount >= 4
+	if
+		activationCount >= 4
 		and uncountedIntervalCount >= 2
 		and uncountedIntervalCount >= intervalSamples
-		and not stableSegmentInterval then
+		and not stableSegmentInterval
+	then
 		return "uncounted_activation_gap_below_model_floor"
 	end
 
@@ -358,7 +367,12 @@ local function unstableTimeIntervalReason(ability)
 	local minInterval = tonumber(ability.minInterval)
 	local maxInterval = tonumber(ability.maxInterval)
 	local hasRangeEvidence = intervalSamples >= 2
-		or (activationCount >= 3 and minInterval and maxInterval and math.abs(maxInterval - minInterval) > DISPLAY_FLOOR_EPSILON_SECONDS)
+		or (
+			activationCount >= 3
+			and minInterval
+			and maxInterval
+			and math.abs(maxInterval - minInterval) > DISPLAY_FLOOR_EPSILON_SECONDS
+		)
 	if not hasRangeEvidence or not minInterval or not maxInterval or minInterval <= 0 then
 		return nil
 	end
@@ -379,11 +393,13 @@ local function isAuraOnlyAbility(ability)
 
 	local sawAura = false
 	for eventType in pairs(events) do
-		if eventType == "SPELL_AURA_APPLIED"
+		if
+			eventType == "SPELL_AURA_APPLIED"
 			or eventType == "SPELL_AURA_REFRESH"
 			or eventType == "SPELL_AURA_REMOVED"
 			or eventType == "SPELL_AURA_APPLIED_DOSE"
-			or eventType == "SPELL_AURA_REMOVED_DOSE" then
+			or eventType == "SPELL_AURA_REMOVED_DOSE"
+		then
 			sawAura = true
 		else
 			return false
@@ -402,30 +418,32 @@ local function auraStackStateReason(ability)
 		return nil
 	end
 
-	local doseCount = (tonumber(events.SPELL_AURA_APPLIED_DOSE) or 0)
-		+ (tonumber(events.SPELL_AURA_REMOVED_DOSE) or 0)
-	local auraStartCount = (tonumber(events.SPELL_AURA_APPLIED) or 0)
-		+ (tonumber(events.SPELL_AURA_REFRESH) or 0)
+	local doseCount = (tonumber(events.SPELL_AURA_APPLIED_DOSE) or 0) + (tonumber(events.SPELL_AURA_REMOVED_DOSE) or 0)
+	local auraStartCount = (tonumber(events.SPELL_AURA_APPLIED) or 0) + (tonumber(events.SPELL_AURA_REFRESH) or 0)
 	local activationCount = tonumber(ability.activationCount) or 0
 	local pullSeenCount = tonumber(ability.pullSeenCount) or 0
 	local intervalSamples = tonumber(ability.intervalSamples) or 0
 
-	if doseCount >= 3
+	if
+		doseCount >= 3
 		and auraStartCount > 0
 		and intervalSamples == 0
 		and activationCount <= math.max(1, pullSeenCount)
-		and doseCount >= auraStartCount * 4 then
+		and doseCount >= auraStartCount * 4
+	then
 		return "aura_stack_state_update"
 	end
 	return nil
 end
 
 local function auraOnlySameHpRepeatReason(ability)
-	if type(ability) ~= "table"
+	if
+		type(ability) ~= "table"
 		or ability.encounterAssociated
 		or not isAuraOnlyAbility(ability)
 		or (tonumber(ability.activationCount) or 0) < 2
-		or (tonumber(ability.intervalSamples) or 0) < 1 then
+		or (tonumber(ability.intervalSamples) or 0) < 1
+	then
 		return nil
 	end
 
@@ -438,11 +456,13 @@ local function auraOnlySameHpRepeatReason(ability)
 end
 
 local function bossSelfAuraPhaseStateReason(ability)
-	if type(ability) ~= "table"
+	if
+		type(ability) ~= "table"
 		or ability.encounterAssociated
 		or not isAuraOnlyAbility(ability)
 		or (tonumber(ability.bossSelfAuraEventCount) or 0) <= 0
-		or (tonumber(ability.playerAuraEventCount) or 0) > 0 then
+		or (tonumber(ability.playerAuraEventCount) or 0) > 0
+	then
 		return nil
 	end
 	return "boss_self_aura_phase_state"
@@ -455,8 +475,7 @@ local function bossSelfAuraTransitionMarker(ability)
 	if not isAuraOnlyAbility(ability) then
 		return false
 	end
-	if (tonumber(ability.bossSelfAuraEventCount) or 0) <= 0
-		or (tonumber(ability.playerAuraEventCount) or 0) > 0 then
+	if (tonumber(ability.bossSelfAuraEventCount) or 0) <= 0 or (tonumber(ability.playerAuraEventCount) or 0) > 0 then
 		return false
 	end
 	if (tonumber(ability.activationCount) or 0) > math.max(1, tonumber(ability.pullSeenCount) or 1) then
@@ -466,28 +485,34 @@ local function bossSelfAuraTransitionMarker(ability)
 end
 
 local function playerAuraPhaseStateReason(ability)
-	if type(ability) ~= "table"
+	if
+		type(ability) ~= "table"
 		or ability.encounterAssociated
 		or not isAuraOnlyAbility(ability)
 		or (tonumber(ability.playerAuraEventCount) or 0) <= 0
-		or (tonumber(ability.bossSelfAuraEventCount) or 0) > 0 then
+		or (tonumber(ability.bossSelfAuraEventCount) or 0) > 0
+	then
 		return nil
 	end
-	if (tonumber(ability.intervalSamples) or 0) >= 1
+	if
+		(tonumber(ability.intervalSamples) or 0) >= 1
 		and not belowDisplayIntervalFloor(ability.minInterval)
 		and unstableTimeIntervalReason(ability) == nil
-		and auraOnlySameHpRepeatReason(ability) == nil then
+		and auraOnlySameHpRepeatReason(ability) == nil
+	then
 		return nil
 	end
 	return "player_aura_phase_state"
 end
 
 local function mixedAuraPhaseStateReason(ability)
-	if type(ability) ~= "table"
+	if
+		type(ability) ~= "table"
 		or ability.encounterAssociated
 		or not isAuraOnlyAbility(ability)
 		or (tonumber(ability.playerAuraEventCount) or 0) <= 0
-		or (tonumber(ability.bossSelfAuraEventCount) or 0) <= 0 then
+		or (tonumber(ability.bossSelfAuraEventCount) or 0) <= 0
+	then
 		return nil
 	end
 	return "mixed_aura_phase_state"
@@ -519,14 +544,20 @@ local function rebuildRoutineSpellIndex()
 
 	for _, zone in pairs(learned.zones) do
 		for _, encounter in pairs(zone.encounters or {}) do
-			if type(encounter) == "table"
+			if
+				type(encounter) == "table"
 				and encounter.suppressed ~= true
 				and encounter.autoSuppressed ~= true
-				and type(encounter.abilities) == "table" then
+				and type(encounter.abilities) == "table"
+			then
 				local seenInEncounter = {}
 				for _, ability in pairs(encounter.abilities) do
 					local spellKey = ability and ability.spellKey
-					if abilityHasRoutineRule(ability) and type(spellKey) == "string" and not seenInEncounter[spellKey] then
+					if
+						abilityHasRoutineRule(ability)
+						and type(spellKey) == "string"
+						and not seenInEncounter[spellKey]
+					then
 						seenInEncounter[spellKey] = true
 						routineSpellIndex[spellKey] = (routineSpellIndex[spellKey] or 0) + 1
 					end
@@ -606,10 +637,12 @@ function RelevanceScorer.refreshZone(zone)
 		if type(encounter) == "table" then
 			refreshUnconfirmedEncounterSuppression(encounter)
 		end
-		if type(encounter) == "table"
+		if
+			type(encounter) == "table"
 			and not encounter.suppressed
 			and not encounter.autoSuppressed
-			and type(encounter.abilities) == "table" then
+			and type(encounter.abilities) == "table"
+		then
 			local seenInEncounter = {}
 			for _, ability in pairs(encounter.abilities) do
 				if type(ability) == "table" and ability.spellKey and not seenInEncounter[ability.spellKey] then

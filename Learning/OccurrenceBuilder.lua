@@ -46,8 +46,7 @@ local function isCastSuccessFollowupEvent(eventType)
 end
 
 local function isAuraApplyEvent(eventType)
-	return eventType == "SPELL_AURA_APPLIED"
-		or eventType == "SPELL_AURA_REFRESH"
+	return eventType == "SPELL_AURA_APPLIED" or eventType == "SPELL_AURA_REFRESH"
 end
 
 local function isAuraLifecycleEffectEvent(eventType)
@@ -58,15 +57,11 @@ local function isAuraLifecycleEffectEvent(eventType)
 end
 
 local function isPlayerTarget(record)
-	return record
-		and record.destFlags
-		and Util.flagSet(record.destFlags, C.FLAG_PLAYER)
+	return record and record.destFlags and Util.flagSet(record.destFlags, C.FLAG_PLAYER)
 end
 
 local function isPlayerAuraApplyEvent(record)
-	return record
-		and isAuraApplyEvent(record.eventType)
-		and isPlayerTarget(record)
+	return record and isAuraApplyEvent(record.eventType) and isPlayerTarget(record)
 end
 
 local function isPlayerAuraLifecycleEffectEvent(record)
@@ -108,7 +103,8 @@ local function updateLifecycleState(state, record)
 end
 
 local function castResolutionWindow(state, record)
-	if (
+	if
+		(
 			isAuraLifecycleEffectEvent(record.eventType)
 			or (isAuraApplyEvent(record.eventType) and isSelfAuraEvent(record))
 			or isPlayerAuraApplyEvent(record)
@@ -116,7 +112,8 @@ local function castResolutionWindow(state, record)
 		and (
 			state.lastActivationEventType == "SPELL_CAST_START"
 			or state.lastActivationEventType == "SPELL_CAST_SUCCESS"
-		) then
+		)
+	then
 		return C.AURA_LIFECYCLE_DEDUPE_SECONDS
 	end
 	return C.CAST_RESOLUTION_DEDUPE_SECONDS
@@ -132,35 +129,34 @@ local function shouldAcceptActivation(state, record)
 		return false, "event_dedupe"
 	end
 
-	if state.lastActivationEventType == "SPELL_CAST_START"
+	if
+		state.lastActivationEventType == "SPELL_CAST_START"
 		and isCastStartResolutionEvent(record.eventType)
-		and delta <= castResolutionWindow(state, record) then
+		and delta <= castResolutionWindow(state, record)
+	then
 		return false, "cast_start_resolution"
 	end
 
-	if state.lastActivationEventType == "SPELL_CAST_SUCCESS"
+	if
+		state.lastActivationEventType == "SPELL_CAST_SUCCESS"
 		and isCastSuccessFollowupEvent(record.eventType)
-		and delta <= castResolutionWindow(state, record) then
+		and delta <= castResolutionWindow(state, record)
+	then
 		return false, "cast_success_followup"
 	end
 
-	if isPlayerAuraApplyEvent(record)
-		and delta <= C.PLAYER_AURA_REAPPLY_DEDUPE_SECONDS then
+	if isPlayerAuraApplyEvent(record) and delta <= C.PLAYER_AURA_REAPPLY_DEDUPE_SECONDS then
 		return false, "player_aura_reapply_followup"
 	end
 
-	if state.activeSelfAura
-		and isAuraLifecycleEffectEvent(record.eventType)
-		and state.activeSelfAuraStartedAt then
+	if state.activeSelfAura and isAuraLifecycleEffectEvent(record.eventType) and state.activeSelfAuraStartedAt then
 		local auraAge = record.t - state.activeSelfAuraStartedAt
 		if auraAge >= 0 and auraAge <= C.AURA_LIFECYCLE_DEDUPE_SECONDS then
 			return false, "self_aura_lifecycle"
 		end
 	end
 
-	if state.activePlayerAura
-		and isPlayerAuraLifecycleEffectEvent(record)
-		and state.activePlayerAuraStartedAt then
+	if state.activePlayerAura and isPlayerAuraLifecycleEffectEvent(record) and state.activePlayerAuraStartedAt then
 		local auraAge = record.t - state.activePlayerAuraStartedAt
 		-- Packed evidence can keep follow-up damage without an anonymous
 		-- player target id. After a player aura anchor, same-spell effects are

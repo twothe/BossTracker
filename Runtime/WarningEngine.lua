@@ -92,7 +92,11 @@ function WarningEngine.playWarningSound(soundKey)
 		ok = pcall(PlaySoundFile, sound.path)
 	end
 	if not ok and addon.Core.Logger then
-		addon.Core.Logger.warn("WarningEngine", "Warning sound playback failed", { soundKey = sound.key, path = sound.path })
+		addon.Core.Logger.warn(
+			"WarningEngine",
+			"Warning sound playback failed",
+			{ soundKey = sound.key, path = sound.path }
+		)
 	end
 	return ok and true or false
 end
@@ -140,17 +144,25 @@ local function onUpdate(self, elapsed)
 	for index = 1, #timers do
 		local timer = timers[index]
 		local mode = warningMode(timer)
-		if mode ~= "off"
+		if
+			mode ~= "off"
 			and timer.mode == "time"
 			and timer.nextAt
 			and timer.remaining
 			and timer.remaining <= leadTime
-			and timer.remaining > 0 then
+			and timer.remaining > 0
+		then
 			local key = warningKey(timer)
 			if not warned[key] then
 				warned[key] = (timer.nextAt or now) + 20
 				WarningEngine.playWarningSound(warningSound(timer))
-				emitWarning(mode, tostring(timer.spellName or "Ability") .. " ready in " .. tostring(math.floor(leadTime + 0.5)) .. " seconds.")
+				emitWarning(
+					mode,
+					tostring(timer.spellName or "Ability")
+						.. " ready in "
+						.. tostring(math.floor(leadTime + 0.5))
+						.. " seconds."
+				)
 			end
 		end
 	end

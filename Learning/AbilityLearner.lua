@@ -36,7 +36,8 @@ local function warnRestartRequired(missingModule)
 		return
 	end
 	dependencyWarningShown = true
-	local message = "BossTracker update needs a full client restart. Boss learning is paused for this session; /reload is not enough after new addon files were added."
+	local message =
+		"BossTracker update needs a full client restart. Boss learning is paused for this session; /reload is not enough after new addon files were added."
 	if addon.Core.Logger then
 		addon.Core.Logger.warn("AbilityLearner", "Required module missing", {
 			missingModule = missingModule,
@@ -187,8 +188,8 @@ function AbilityLearner.finishPull(pull, reason)
 	local promotedCount = 0
 	for index = 1, #components do
 		local completionReason = addon.Core.EvidenceStore
-			and addon.Core.EvidenceStore.componentCompletionReason
-			and addon.Core.EvidenceStore.componentCompletionReason(components[index])
+				and addon.Core.EvidenceStore.componentCompletionReason
+				and addon.Core.EvidenceStore.componentCompletionReason(components[index])
 			or nil
 		local encounter = addon.Core.ModelStore.promoteComponent(pullState, components[index], {
 			evidenceCompletionReason = completionReason,

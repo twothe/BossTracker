@@ -245,11 +245,13 @@ local function shortName(name)
 end
 
 local function timerDisplayName(timer)
-	if timer
+	if
+		timer
 		and timer.encounterAssociated
 		and timer.sourceName
 		and timer.sourceName ~= ""
-		and timer.sourceName ~= timer.bossName then
+		and timer.sourceName ~= timer.bossName
+	then
 		return timer.sourceName .. ": " .. tostring(timer.spellName or "Unknown Ability")
 	end
 	return timer and timer.spellName or "Unknown Ability"
@@ -752,7 +754,9 @@ function updateRows()
 				row.bar:SetValue(value)
 			end
 
-			row.icon:SetTexture(timer.iconTexture or Util.spellIconTexture(timer.spellId, timer.spellKey) or QUESTION_ICON)
+			row.icon:SetTexture(
+				timer.iconTexture or Util.spellIconTexture(timer.spellId, timer.spellKey) or QUESTION_ICON
+			)
 			row.name:SetText(shortName(timerDisplayName(timer)))
 			row.name:SetTextColor(1.00, 1.00, 0.96, 1)
 			row.time:SetText(formatDisplayRemaining(timer, remaining))

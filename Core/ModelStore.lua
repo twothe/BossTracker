@@ -172,19 +172,21 @@ local function ensureActor(encounter, bossState, decision)
 	actor.lastSeenAt = Util.wallTime()
 	actor.pullCount = (actor.pullCount or 0) + 1
 	actor.confidence = math.max(actor.confidence or 0, decision and decision.confidence or 0)
-	actor.lastDecision = decision and {
-		confidence = decision.confidence,
-		minimum = decision.minimum,
-		reasons = decision.reasonText,
-		endHpPct = decision.endHpPct,
-		partialAttempt = decision.partialAttempt,
-		bossUnitSignal = decision.bossUnitSignal,
-		councilSignal = decision.councilSignal,
-		duration = decision.duration,
-		eventCount = decision.eventCount,
-		occurrenceCount = decision.occurrenceCount,
-		abilityCount = decision.abilityCount,
-	} or actor.lastDecision
+	actor.lastDecision = decision
+			and {
+				confidence = decision.confidence,
+				minimum = decision.minimum,
+				reasons = decision.reasonText,
+				endHpPct = decision.endHpPct,
+				partialAttempt = decision.partialAttempt,
+				bossUnitSignal = decision.bossUnitSignal,
+				councilSignal = decision.councilSignal,
+				duration = decision.duration,
+				eventCount = decision.eventCount,
+				occurrenceCount = decision.occurrenceCount,
+				abilityCount = decision.abilityCount,
+			}
+		or actor.lastDecision
 	return actor
 end
 
@@ -235,11 +237,8 @@ local function averageComponentConfidence(component)
 end
 
 local function encounterIsSuppressed(encounter)
-	return encounter and (
-		encounter.suppressed == true
-		or encounter.autoSuppressed == true
-		or encounter.legacyAfterRebuild == true
-	)
+	return encounter
+		and (encounter.suppressed == true or encounter.autoSuppressed == true or encounter.legacyAfterRebuild == true)
 end
 
 local function mergeEventCounts(target, source)
@@ -251,7 +250,8 @@ end
 
 local function mergeSegment(targetSegment, sourceSegment)
 	targetSegment.seenCount = (tonumber(targetSegment.seenCount) or 0) + (tonumber(sourceSegment.seenCount) or 0)
-	targetSegment.activationCount = (tonumber(targetSegment.activationCount) or 0) + (tonumber(sourceSegment.activationCount) or 0)
+	targetSegment.activationCount = (tonumber(targetSegment.activationCount) or 0)
+		+ (tonumber(sourceSegment.activationCount) or 0)
 	mergeAverageField(targetSegment, sourceSegment, "avgPhaseOffset", "phaseOffsetSamples")
 	mergeAverageField(targetSegment, sourceSegment, "avgBossOffset", "bossOffsetSamples")
 	mergeAverageField(targetSegment, sourceSegment, "avgInterval", "intervalSamples")
@@ -290,8 +290,10 @@ local function mergeAbility(target, source)
 	target.associatedSourceName = target.associatedSourceName or source.associatedSourceName
 	target.sourceType = target.sourceType or source.sourceType
 	target.auraEventCount = (tonumber(target.auraEventCount) or 0) + (tonumber(source.auraEventCount) or 0)
-	target.bossSelfAuraEventCount = (tonumber(target.bossSelfAuraEventCount) or 0) + (tonumber(source.bossSelfAuraEventCount) or 0)
-	target.playerAuraEventCount = (tonumber(target.playerAuraEventCount) or 0) + (tonumber(source.playerAuraEventCount) or 0)
+	target.bossSelfAuraEventCount = (tonumber(target.bossSelfAuraEventCount) or 0)
+		+ (tonumber(source.bossSelfAuraEventCount) or 0)
+	target.playerAuraEventCount = (tonumber(target.playerAuraEventCount) or 0)
+		+ (tonumber(source.playerAuraEventCount) or 0)
 	mergeEventCounts(target, source)
 	mergeAverageField(target, source, "avgFirstOffset", "firstOffsetSamples")
 	mergeAverageField(target, source, "avgInterval", "intervalSamples")
@@ -346,10 +348,12 @@ local function mergeEncounter(target, source)
 end
 
 local function singleActorKey(encounterKey, encounter)
-	if type(encounterKey) ~= "string"
+	if
+		type(encounterKey) ~= "string"
 		or string.sub(encounterKey, 1, 6) == "group:"
 		or type(encounter) ~= "table"
-		or type(encounter.actors) ~= "table" then
+		or type(encounter.actors) ~= "table"
+	then
 		return nil
 	end
 	local foundKey = nil
@@ -378,12 +382,14 @@ local function bestGroupContainingActor(zone, actorKey)
 	local bestEncounter = nil
 	local bestScore = nil
 	for encounterKey, encounter in pairs(zone.encounters or {}) do
-		if type(encounterKey) == "string"
+		if
+			type(encounterKey) == "string"
 			and string.sub(encounterKey, 1, 6) == "group:"
 			and type(encounter) == "table"
 			and encounter.legacyAfterRebuild ~= true
 			and type(encounter.actors) == "table"
-			and encounter.actors[actorKey] then
+			and encounter.actors[actorKey]
+		then
 			local score = groupMergeScore(encounter, actorKey)
 			if not bestScore or score > bestScore then
 				bestScore = score
@@ -417,7 +423,8 @@ local function normalizeContainedSingleActorEncounters(zone)
 	local mergeCount = 0
 	local actions = {}
 	for encounterKey, encounter in pairs(zone.encounters) do
-		local actorKey = encounter and encounter.legacyAfterRebuild ~= true and singleActorKey(encounterKey, encounter) or nil
+		local actorKey = encounter and encounter.legacyAfterRebuild ~= true and singleActorKey(encounterKey, encounter)
+			or nil
 		local target = actorKey and bestGroupContainingActor(zone, actorKey) or nil
 		if target and target ~= encounter then
 			actions[#actions + 1] = {
@@ -528,9 +535,11 @@ function ModelStore.findBestEncounterContainingActor(zoneKey, actorKey)
 	local bestEncounter = nil
 	local bestScore = nil
 	for _, encounter in pairs(zone.encounters) do
-		if not encounterIsSuppressed(encounter)
+		if
+			not encounterIsSuppressed(encounter)
 			and type(encounter.actors) == "table"
-			and encounter.actors[actorKey] then
+			and encounter.actors[actorKey]
+		then
 			local actor = encounter.actors[actorKey]
 			local actorAbilityCount = 0
 			for _, ability in pairs(encounter.abilities or {}) do

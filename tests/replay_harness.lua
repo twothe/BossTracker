@@ -25,12 +25,13 @@ local raidMembers = 0
 local partyMembers = 0
 
 UIParent = UIParent or {}
-DEFAULT_CHAT_FRAME = DEFAULT_CHAT_FRAME or {
-	messages = {},
-	AddMessage = function(self, message)
-		self.messages[#self.messages + 1] = message
-	end,
-}
+DEFAULT_CHAT_FRAME = DEFAULT_CHAT_FRAME
+	or {
+		messages = {},
+		AddMessage = function(self, message)
+			self.messages[#self.messages + 1] = message
+		end,
+	}
 SlashCmdList = SlashCmdList or {}
 MAX_BOSS_FRAMES = MAX_BOSS_FRAMES or 5
 

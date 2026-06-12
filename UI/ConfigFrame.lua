@@ -191,9 +191,9 @@ end
 
 local function selectedEncounter()
 	local zone = addon.db
-		and addon.db.learned
-		and addon.db.learned.zones
-		and addon.db.learned.zones[state.selectedZoneKey]
+			and addon.db.learned
+			and addon.db.learned.zones
+			and addon.db.learned.zones[state.selectedZoneKey]
 		or nil
 	return zone and zone.encounters and zone.encounters[state.selectedEncounterKey] or nil
 end
@@ -233,10 +233,12 @@ local function abilityDifficultyText(ability)
 end
 
 local function abilityDisplayName(ability)
-	if ability
+	if
+		ability
 		and ability.encounterAssociated
 		and ability.associatedSourceName
-		and ability.associatedSourceName ~= ability.actorName then
+		and ability.associatedSourceName ~= ability.actorName
+	then
 		return tostring(ability.associatedSourceName) .. ": " .. tostring(ability.spellName or "Unknown Ability")
 	end
 	return ability and ability.spellName or "Unknown Ability"
@@ -311,9 +313,21 @@ local function collectAbilities()
 				ability = ability,
 				label = label,
 				active = active,
-				displayMode = addon.Core.Config.getAbilityDisplayMode(state.selectedZoneKey, state.selectedEncounterKey, abilityKey),
-				warningMode = addon.Core.Config.getAbilityWarningMode(state.selectedZoneKey, state.selectedEncounterKey, abilityKey),
-				warningSound = addon.Core.Config.getAbilityWarningSound(state.selectedZoneKey, state.selectedEncounterKey, abilityKey),
+				displayMode = addon.Core.Config.getAbilityDisplayMode(
+					state.selectedZoneKey,
+					state.selectedEncounterKey,
+					abilityKey
+				),
+				warningMode = addon.Core.Config.getAbilityWarningMode(
+					state.selectedZoneKey,
+					state.selectedEncounterKey,
+					abilityKey
+				),
+				warningSound = addon.Core.Config.getAbilityWarningSound(
+					state.selectedZoneKey,
+					state.selectedEncounterKey,
+					abilityKey
+				),
 			}
 		end
 	end
@@ -413,7 +427,13 @@ local function updateBossRows()
 
 	local maxOffset = math.max(0, #bosses - BOSS_ROW_COUNT)
 	state.bossOffset = clamp(state.bossOffset, 0, maxOffset)
-	frame.bossCount:SetText(#bosses > 0 and (tostring(state.bossOffset + 1) .. "-" .. tostring(math.min(#bosses, state.bossOffset + BOSS_ROW_COUNT)) .. " / " .. tostring(#bosses)) or "0 / 0")
+	frame.bossCount:SetText(
+		#bosses > 0
+				and (tostring(state.bossOffset + 1) .. "-" .. tostring(
+					math.min(#bosses, state.bossOffset + BOSS_ROW_COUNT)
+				) .. " / " .. tostring(#bosses))
+			or "0 / 0"
+	)
 	updateScrollBar(frame.bossScrollBar, #bosses, BOSS_ROW_COUNT, state.bossOffset)
 
 	for rowIndex = 1, BOSS_ROW_COUNT do
@@ -437,7 +457,12 @@ local function updateBossRows()
 				row.text:SetTextColor(0.90, 0.90, 0.86)
 				row.status:SetTextColor(0.65, 0.70, 0.76)
 			end
-			row:SetBackdropColor(selected and 0.13 or 0.06, selected and 0.10 or 0.065, selected and 0.05 or 0.075, 0.92)
+			row:SetBackdropColor(
+				selected and 0.13 or 0.06,
+				selected and 0.10 or 0.065,
+				selected and 0.05 or 0.075,
+				0.92
+			)
 			if selected then
 				row:SetBackdropBorderColor(0.95, 0.72, 0.22, 1.0)
 			elseif entry.legacy or entry.suppressed then
@@ -456,7 +481,13 @@ local function updateAbilityRows()
 	local abilities = collectAbilities()
 	local maxOffset = math.max(0, #abilities - ABILITY_ROW_COUNT)
 	state.abilityOffset = clamp(state.abilityOffset, 0, maxOffset)
-	frame.abilityCount:SetText(#abilities > 0 and (tostring(state.abilityOffset + 1) .. "-" .. tostring(math.min(#abilities, state.abilityOffset + ABILITY_ROW_COUNT)) .. " / " .. tostring(#abilities)) or "0 / 0")
+	frame.abilityCount:SetText(
+		#abilities > 0
+				and (tostring(state.abilityOffset + 1) .. "-" .. tostring(
+					math.min(#abilities, state.abilityOffset + ABILITY_ROW_COUNT)
+				) .. " / " .. tostring(#abilities))
+			or "0 / 0"
+	)
 	updateScrollBar(frame.abilityScrollBar, #abilities, ABILITY_ROW_COUNT, state.abilityOffset)
 
 	if not selectedEncounter() then
@@ -477,11 +508,33 @@ local function updateAbilityRows()
 			row.name:SetText(entry.label)
 			row.info:SetText(abilityTimingText(ability))
 			row.difficulty:SetText(difficultyText)
-			row:SetBackdropColor(entry.active and 0.065 or 0.035, entry.active and 0.075 or 0.04, entry.active and 0.085 or 0.045, 0.94)
-			row.name:SetTextColor(entry.active and 0.92 or 0.48, entry.active and 0.90 or 0.48, entry.active and 0.82 or 0.46)
-			row.info:SetTextColor(entry.active and 0.62 or 0.42, entry.active and 0.70 or 0.42, entry.active and 0.78 or 0.42)
-			row.difficulty:SetTextColor(entry.active and 0.86 or 0.46, entry.active and 0.78 or 0.44, entry.active and 0.58 or 0.38)
-			row:SetBackdropBorderColor(entry.active and 0.40 or 0.22, entry.active and 0.34 or 0.20, entry.active and 0.23 or 0.18, 0.95)
+			row:SetBackdropColor(
+				entry.active and 0.065 or 0.035,
+				entry.active and 0.075 or 0.04,
+				entry.active and 0.085 or 0.045,
+				0.94
+			)
+			row.name:SetTextColor(
+				entry.active and 0.92 or 0.48,
+				entry.active and 0.90 or 0.48,
+				entry.active and 0.82 or 0.46
+			)
+			row.info:SetTextColor(
+				entry.active and 0.62 or 0.42,
+				entry.active and 0.70 or 0.42,
+				entry.active and 0.78 or 0.42
+			)
+			row.difficulty:SetTextColor(
+				entry.active and 0.86 or 0.46,
+				entry.active and 0.78 or 0.44,
+				entry.active and 0.58 or 0.38
+			)
+			row:SetBackdropBorderColor(
+				entry.active and 0.40 or 0.22,
+				entry.active and 0.34 or 0.20,
+				entry.active and 0.23 or 0.18,
+				0.95
+			)
 			applyAbilityIcon(row, ability)
 			setSegmentButtonActive(row.autoButton, entry.displayMode == "auto")
 			setSegmentButtonActive(row.showButton, entry.displayMode == "show")
@@ -489,7 +542,11 @@ local function updateAbilityRows()
 			setSegmentButtonActive(row.warnOffButton, entry.warningMode == "off")
 			setSegmentButtonActive(row.warnPersonalButton, entry.warningMode == "personal")
 			setSegmentButtonActive(row.warnRaidButton, entry.warningMode == "raid")
-			applyWarningSoundControl(row, entry.warningSound, entry.warningMode ~= "off" and entry.warningSound ~= (C.WARNING_SOUND_OFF or "none"))
+			applyWarningSoundControl(
+				row,
+				entry.warningSound,
+				entry.warningMode ~= "off" and entry.warningSound ~= (C.WARNING_SOUND_OFF or "none")
+			)
 			row:Show()
 		else
 			row:Hide()
@@ -606,7 +663,12 @@ local function setWarningSound(row, soundKey, preview)
 	if not row or not row.entry then
 		return
 	end
-	local selectedSound = addon.Core.Config.setAbilityWarningSound(state.selectedZoneKey, state.selectedEncounterKey, row.entry.key, soundKey)
+	local selectedSound = addon.Core.Config.setAbilityWarningSound(
+		state.selectedZoneKey,
+		state.selectedEncounterKey,
+		row.entry.key,
+		soundKey
+	)
 	row.entry.warningSound = selectedSound
 	if preview and addon.Runtime.WarningEngine then
 		addon.Runtime.WarningEngine.playWarningSound(selectedSound)
@@ -843,27 +905,39 @@ local function createAbilityRow(parent, index)
 
 	row.autoButton = createButton(row, "Auto", 36, 18)
 	row.autoButton:SetPoint("LEFT", row.difficulty, "RIGHT", 4, 0)
-	row.autoButton:SetScript("OnClick", function() setDisplayMode(row, "auto") end)
+	row.autoButton:SetScript("OnClick", function()
+		setDisplayMode(row, "auto")
+	end)
 
 	row.showButton = createButton(row, "Show", 40, 18)
 	row.showButton:SetPoint("LEFT", row.autoButton, "RIGHT", 1, 0)
-	row.showButton:SetScript("OnClick", function() setDisplayMode(row, "show") end)
+	row.showButton:SetScript("OnClick", function()
+		setDisplayMode(row, "show")
+	end)
 
 	row.hideButton = createButton(row, "Hide", 36, 18)
 	row.hideButton:SetPoint("LEFT", row.showButton, "RIGHT", 1, 0)
-	row.hideButton:SetScript("OnClick", function() setDisplayMode(row, "hide") end)
+	row.hideButton:SetScript("OnClick", function()
+		setDisplayMode(row, "hide")
+	end)
 
 	row.warnOffButton = createButton(row, "Off", 32, 18)
 	row.warnOffButton:SetPoint("LEFT", row.hideButton, "RIGHT", 7, 0)
-	row.warnOffButton:SetScript("OnClick", function() setWarningMode(row, "off") end)
+	row.warnOffButton:SetScript("OnClick", function()
+		setWarningMode(row, "off")
+	end)
 
 	row.warnPersonalButton = createButton(row, "Personal", 58, 18)
 	row.warnPersonalButton:SetPoint("LEFT", row.warnOffButton, "RIGHT", 1, 0)
-	row.warnPersonalButton:SetScript("OnClick", function() setWarningMode(row, "personal") end)
+	row.warnPersonalButton:SetScript("OnClick", function()
+		setWarningMode(row, "personal")
+	end)
 
 	row.warnRaidButton = createButton(row, "Raid", 40, 18)
 	row.warnRaidButton:SetPoint("LEFT", row.warnPersonalButton, "RIGHT", 1, 0)
-	row.warnRaidButton:SetScript("OnClick", function() setWarningMode(row, "raid") end)
+	row.warnRaidButton:SetScript("OnClick", function()
+		setWarningMode(row, "raid")
+	end)
 
 	row.soundDropDown = createWarningSoundDropDown(row)
 
@@ -926,8 +1000,12 @@ local function ensureFrame()
 		insets = { left = 7, right = 7, top = 7, bottom = 7 },
 	})
 	frame:SetBackdropColor(0.025, 0.028, 0.034, 0.98)
-	frame:SetScript("OnDragStart", function(self) self:StartMoving() end)
-	frame:SetScript("OnDragStop", function(self) self:StopMovingOrSizing() end)
+	frame:SetScript("OnDragStart", function(self)
+		self:StartMoving()
+	end)
+	frame:SetScript("OnDragStop", function(self)
+		self:StopMovingOrSizing()
+	end)
 
 	frame.title = createLabel(frame, "BossTracker Configuration", "GameFontNormalLarge")
 	frame.title:SetPoint("TOPLEFT", frame, "TOPLEFT", 18, -14)
@@ -944,27 +1022,37 @@ local function ensureFrame()
 	frame.enabledCheck = createCheck(frame.globalPanel, "Addon enabled", function(checked)
 		addon.db.config.enabled = checked
 		syncLearnedBackup()
-		if addon.UI.TimerFrame then addon.UI.TimerFrame.refresh() end
+		if addon.UI.TimerFrame then
+			addon.UI.TimerFrame.refresh()
+		end
 	end)
 	frame.enabledCheck:SetPoint("TOPLEFT", frame.globalPanel, "TOPLEFT", 12, -10)
 
 	frame.timersCheck = createCheck(frame.globalPanel, "Timer window", function(checked)
 		addon.db.config.timersEnabled = checked
 		syncLearnedBackup()
-		if not checked and addon.UI.TimerFrame then addon.UI.TimerFrame.hide() end
-		if checked and addon.UI.TimerFrame then addon.UI.TimerFrame.refresh() end
+		if not checked and addon.UI.TimerFrame then
+			addon.UI.TimerFrame.hide()
+		end
+		if checked and addon.UI.TimerFrame then
+			addon.UI.TimerFrame.refresh()
+		end
 	end)
 	frame.timersCheck:SetPoint("TOPLEFT", frame.globalPanel, "TOPLEFT", 12, -36)
 
 	frame.lockCheck = createCheck(frame.globalPanel, "Lock timer frame", function(checked)
 		addon.db.config.uiLocked = checked
 		syncLearnedBackup()
-		if addon.UI.TimerFrame then addon.UI.TimerFrame.refresh() end
+		if addon.UI.TimerFrame then
+			addon.UI.TimerFrame.refresh()
+		end
 	end)
 	frame.lockCheck:SetPoint("TOPLEFT", frame.globalPanel, "TOPLEFT", 180, -10)
 
 	frame.previewCheck = createCheck(frame.globalPanel, "Preview timers", function(checked)
-		if addon.UI.TimerFrame then addon.UI.TimerFrame.setPreview(checked) end
+		if addon.UI.TimerFrame then
+			addon.UI.TimerFrame.setPreview(checked)
+		end
 	end)
 	frame.previewCheck:SetPoint("TOPLEFT", frame.globalPanel, "TOPLEFT", 180, -36)
 

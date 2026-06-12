@@ -179,8 +179,7 @@ local function versionAtLeast(version, requiredVersion)
 end
 
 local function hashNegotiationEnabled(peerVersion)
-	return versionAtLeast(C.VERSION, HASH_NEGOTIATION_VERSION)
-		and versionAtLeast(peerVersion, HASH_NEGOTIATION_VERSION)
+	return versionAtLeast(C.VERSION, HASH_NEGOTIATION_VERSION) and versionAtLeast(peerVersion, HASH_NEGOTIATION_VERSION)
 end
 
 local function sessionPeerKey(peer)
@@ -304,13 +303,14 @@ function EvidenceSync.exportPayload(maxKills)
 	end
 	local payload = payloads[1] and payloads[1].payload or nil
 	local stats = statsOrError or {}
-	return payload, {
-		exported = payloads[1] and payloads[1].killCount or 0,
-		total = stats.total or 0,
-		skippedTooLarge = stats.skippedTooLarge or 0,
-		truncated = (stats.batchCount or 0) > 1 or (stats.exported or 0) < (stats.total or 0),
-		batchCount = stats.batchCount or 0,
-	}
+	return payload,
+		{
+			exported = payloads[1] and payloads[1].killCount or 0,
+			total = stats.total or 0,
+			skippedTooLarge = stats.skippedTooLarge or 0,
+			truncated = (stats.batchCount or 0) > 1 or (stats.exported or 0) < (stats.total or 0),
+			batchCount = stats.batchCount or 0,
+		}
 end
 
 local function maxSyncKillsPerPayload()
@@ -333,9 +333,11 @@ local function buildPayloadsFromBlocks(evidence, killBlocks, totalKills)
 		if additionalLength > maxPayloadBytes then
 			return nil, "one evidence kill block exceeds the sync payload limit"
 		end
-		if not currentBatch
+		if
+			not currentBatch
 			or currentBatch.payloadLength + additionalLength > maxPayloadBytes
-			or currentBatch.killCount >= maxKillsPerPayload then
+			or currentBatch.killCount >= maxKillsPerPayload
+		then
 			currentBatch = {
 				lines = { "" },
 				payloadLength = 0,
@@ -457,14 +459,15 @@ function EvidenceSync.exportPayloads(maxKills, wantedHashes)
 	if not payloads then
 		return nil, buildError
 	end
-	return payloads, {
-		exported = #killBlocks,
-		total = totalKills,
-		skippedTooLarge = 0,
-		truncated = not requestedHashes and #killBlocks < totalKills,
-		batchCount = #payloads,
-		requested = requestedHashes ~= nil,
-	}
+	return payloads,
+		{
+			exported = #killBlocks,
+			total = totalKills,
+			skippedTooLarge = 0,
+			truncated = not requestedHashes and #killBlocks < totalKills,
+			batchCount = #payloads,
+			requested = requestedHashes ~= nil,
+		}
 end
 
 local function parsePayload(payload)
@@ -516,12 +519,14 @@ local function parsePayload(payload)
 	if parsed.schemaVersion ~= C.EVIDENCE_SCHEMA_VERSION then
 		return nil, "unsupported evidence schema"
 	end
-	if not isNonNegativeInteger(parsed.revision)
+	if
+		not isNonNegativeInteger(parsed.revision)
 		or not isNonNegativeInteger(parsed.declaredKills)
 		or not isNonNegativeInteger(parsed.totalKills or parsed.declaredKills)
 		or not isPositiveInteger(parsed.batchIndex)
 		or not isPositiveInteger(parsed.batchCount)
-		or parsed.batchIndex > parsed.batchCount then
+		or parsed.batchIndex > parsed.batchCount
+	then
 		return nil, "invalid payload metadata"
 	end
 	parsed.totalKills = parsed.totalKills or parsed.declaredKills
@@ -535,9 +540,7 @@ local function parsePayload(payload)
 end
 
 local function refreshAfterImport(skipLearnedBackup)
-	if not skipLearnedBackup
-		and addon.Core.SavedVariables
-		and addon.Core.SavedVariables.boundLearnedData then
+	if not skipLearnedBackup and addon.Core.SavedVariables and addon.Core.SavedVariables.boundLearnedData then
 		addon.Core.SavedVariables.boundLearnedData()
 	end
 	if addon.Runtime.PredictionEngine and addon.Runtime.PredictionEngine.reset then
@@ -609,7 +612,10 @@ local function runDeferredSyncRebuild()
 	deferredSyncRebuild = false
 	local rebuilt, errorMessage, handledRefresh = rebuildAfterSyncImport("evidence_sync_deferred_import")
 	if rebuilt == nil then
-		chat("deferred sync evidence import was stored, but learned rebuild failed: " .. tostring(errorMessage or "learned rebuild failed"))
+		chat(
+			"deferred sync evidence import was stored, but learned rebuild failed: "
+				.. tostring(errorMessage or "learned rebuild failed")
+		)
 		refreshAfterImport(true)
 		return false
 	end
@@ -807,7 +813,11 @@ local function sendImmediate(message, distribution, target)
 end
 
 local function sendSyncFailure(sessionId, receiver, message)
-	sendImmediate("N|" .. tostring(sessionId or "") .. "|" .. escapeField(message or "sync failed"), "WHISPER", receiver)
+	sendImmediate(
+		"N|" .. tostring(sessionId or "") .. "|" .. escapeField(message or "sync failed"),
+		"WHISPER",
+		receiver
+	)
 end
 
 local function cleanupExpired()
@@ -1120,9 +1130,18 @@ local function maybeRebuildFromExistingEvidence(sender)
 	end
 	local rebuilt, errorMessage = rebuildAfterSyncImport("evidence_sync_manifest")
 	if rebuilt == nil then
-		chat("sync complete with " .. tostring(sender) .. ": no missing evidence kills requested, but learned rebuild failed: " .. tostring(errorMessage or "learned rebuild failed"))
+		chat(
+			"sync complete with "
+				.. tostring(sender)
+				.. ": no missing evidence kills requested, but learned rebuild failed: "
+				.. tostring(errorMessage or "learned rebuild failed")
+		)
 	elseif rebuilt > 0 then
-		chat("sync complete with " .. tostring(sender) .. ": no missing evidence kills requested; rebuilt local models from existing evidence")
+		chat(
+			"sync complete with "
+				.. tostring(sender)
+				.. ": no missing evidence kills requested; rebuilt local models from existing evidence"
+		)
 	else
 		chat("sync complete with " .. tostring(sender) .. ": no missing evidence kills requested")
 	end
@@ -1207,7 +1226,14 @@ local function completeHashListTransfer(transferKey, transfer)
 				wanted[#wanted + 1] = hashes[index]
 			end
 		end
-		chat("sync inventory from " .. tostring(transfer.sender) .. ": they have " .. tostring(#hashes) .. " kill(s), requesting " .. tostring(#wanted))
+		chat(
+			"sync inventory from "
+				.. tostring(transfer.sender)
+				.. ": they have "
+				.. tostring(#hashes)
+				.. " kill(s), requesting "
+				.. tostring(#wanted)
+		)
 		if not sendWantedHashes(transfer.session, transfer.sender, wanted) then
 			return
 		end
@@ -1241,7 +1267,11 @@ local function receiveHashListHeader(sender, parts, listType)
 	local payloadHash = parts[4]
 	local chunkCount = tonumber(parts[5])
 	local hashCount = tonumber(parts[6])
-	if not sessionId or not length or not chunkCount or not hashCount
+	if
+		not sessionId
+		or not length
+		or not chunkCount
+		or not hashCount
 		or not isNonNegativeInteger(length)
 		or not isNonNegativeInteger(chunkCount)
 		or not isNonNegativeInteger(hashCount)
@@ -1253,7 +1283,8 @@ local function receiveHashListHeader(sender, parts, listType)
 		or not string.match(payloadHash, "^[0-9a-f]+$")
 		or #payloadHash < 8
 		or #payloadHash > 64
-		or hashCount < 0 then
+		or hashCount < 0
+	then
 		logWarn("Rejected invalid sync hash list header", {
 			sender = sender,
 			session = sessionId,
@@ -1300,11 +1331,13 @@ local function receiveHashListChunk(sender, message, listType)
 	local body = parts[5] or ""
 	local transferKey = requestKey(sender, string.upper(listType) .. ":" .. sessionId)
 	local transfer = inboundHashLists[transferKey]
-	if not transfer
+	if
+		not transfer
 		or not isPositiveInteger(index)
 		or index > transfer.chunkCount
 		or not isPositiveInteger(total)
-		or total ~= transfer.chunkCount then
+		or total ~= transfer.chunkCount
+	then
 		return
 	end
 	if not transfer.chunks[index] then
@@ -1357,33 +1390,50 @@ function startTransfer(sessionId, receiver, wantedHashes)
 		local chunks = payloadInfo.chunks
 		local batchSession = transferSessionId(sessionId, batchIndex, #payloads)
 		local payloadHash = hashString(payload)
-		queueMessage(table.concat({
-			"H",
-			batchSession,
-			tostring(#payload),
-			payloadHash,
-			tostring(#chunks),
-			tostring(payloadInfo.killCount),
-			C.VERSION,
-			tostring(batchIndex),
-			tostring(#payloads),
-			tostring(stats.exported),
-		}, "|"), "WHISPER", receiver)
-		for index = 1, #chunks do
-			queueMessage(table.concat({
-				"C",
+		queueMessage(
+			table.concat({
+				"H",
 				batchSession,
-				tostring(index),
+				tostring(#payload),
+				payloadHash,
 				tostring(#chunks),
-				chunks[index],
-			}, "|"), "WHISPER", receiver)
+				tostring(payloadInfo.killCount),
+				C.VERSION,
+				tostring(batchIndex),
+				tostring(#payloads),
+				tostring(stats.exported),
+			}, "|"),
+			"WHISPER",
+			receiver
+		)
+		for index = 1, #chunks do
+			queueMessage(
+				table.concat({
+					"C",
+					batchSession,
+					tostring(index),
+					tostring(#chunks),
+					chunks[index],
+				}, "|"),
+				"WHISPER",
+				receiver
+			)
 		end
 	end
 	local batchText = ""
 	if #payloads > 1 then
 		batchText = " across " .. tostring(#payloads) .. " batch(es)"
 	end
-	chat("syncing " .. tostring(stats.exported) .. " evidence kill(s) to " .. tostring(receiver) .. " in " .. tostring(totalChunks) .. " chunk(s)" .. batchText)
+	chat(
+		"syncing "
+			.. tostring(stats.exported)
+			.. " evidence kill(s) to "
+			.. tostring(receiver)
+			.. " in "
+			.. tostring(totalChunks)
+			.. " chunk(s)"
+			.. batchText
+	)
 	session.sentTo = session.sentTo or {}
 	session.sentTo[normalizedName(receiver)] = true
 	return true
@@ -1391,7 +1441,12 @@ end
 
 local function showRequestPopup(request)
 	if not StaticPopupDialogs or not StaticPopup_Show then
-		chat(tostring(request.sender) .. " wants to exchange BossTracker evidence. Use /btr sync accept " .. tostring(request.sender) .. " to accept.")
+		chat(
+			tostring(request.sender)
+				.. " wants to exchange BossTracker evidence. Use /btr sync accept "
+				.. tostring(request.sender)
+				.. " to accept."
+		)
 		return false
 	end
 	StaticPopupDialogs.BOSSTRACKER_EVIDENCE_SYNC_REQUEST = {
@@ -1451,9 +1506,11 @@ end
 function EvidenceSync.acceptRequest(sender, session)
 	local key, request = findPendingRequest(sender, session)
 	if not request then
-		if addon.Core.SyncTransport
+		if
+			addon.Core.SyncTransport
 			and type(addon.Core.SyncTransport.acceptRequest) == "function"
-			and addon.Core.SyncTransport.acceptRequest(TRANSPORT_NAMESPACE, sender, session) then
+			and addon.Core.SyncTransport.acceptRequest(TRANSPORT_NAMESPACE, sender, session)
+		then
 			return true
 		end
 		chat("no pending sync request from " .. tostring(sender))
@@ -1462,13 +1519,14 @@ function EvidenceSync.acceptRequest(sender, session)
 	pendingRequests[key] = nil
 	authorizeInboundTransfer(request.sender, request.session, "accepted_request")
 	sendImmediate("A|" .. request.session .. "|" .. C.VERSION, "WHISPER", request.sender)
-	outboundSessions[request.session] = outboundSessions[request.session] or {
-		session = request.session,
-		startedAt = now(),
-		distribution = "WHISPER",
-		target = request.sender,
-		reciprocal = true,
-	}
+	outboundSessions[request.session] = outboundSessions[request.session]
+		or {
+			session = request.session,
+			startedAt = now(),
+			distribution = "WHISPER",
+			target = request.sender,
+			reciprocal = true,
+		}
 	setSessionPeerVersion(outboundSessions[request.session], request.sender, request.version)
 	if hashNegotiationEnabled(request.version) then
 		sendInventory(request.session, request.sender)
@@ -1482,9 +1540,11 @@ end
 function EvidenceSync.declineRequest(sender, session)
 	local key, request = findPendingRequest(sender, session)
 	if not request then
-		if addon.Core.SyncTransport
+		if
+			addon.Core.SyncTransport
 			and type(addon.Core.SyncTransport.declineRequest) == "function"
-			and addon.Core.SyncTransport.declineRequest(TRANSPORT_NAMESPACE, sender, session) then
+			and addon.Core.SyncTransport.declineRequest(TRANSPORT_NAMESPACE, sender, session)
+		then
 			return true
 		end
 		chat("no pending sync request from " .. tostring(sender))
@@ -1521,7 +1581,8 @@ local function receiveHeader(sender, parts)
 	local baseSession, batchFromSession = splitBatchSession(sessionId)
 	batchIndex = batchIndex or batchFromSession or 1
 	batchCount = batchCount or 1
-	if not sessionId
+	if
+		not sessionId
 		or not isNonNegativeInteger(length)
 		or not isPositiveInteger(chunkCount)
 		or not isNonNegativeInteger(killCount)
@@ -1534,7 +1595,8 @@ local function receiveHeader(sender, parts)
 		or #payloadHash > 64
 		or not isPositiveInteger(batchIndex)
 		or not isPositiveInteger(batchCount)
-		or batchIndex > batchCount then
+		or batchIndex > batchCount
+	then
 		logWarn("Rejected invalid sync header", {
 			sender = sender,
 			session = sessionId,
@@ -1575,9 +1637,29 @@ local function receiveHeader(sender, parts)
 		updatedAt = now(),
 	}
 	if batchCount > 1 then
-		chat("receiving BossTracker evidence batch " .. tostring(batchIndex) .. "/" .. tostring(batchCount) .. " from " .. tostring(sender) .. " (" .. tostring(killCount) .. " of " .. tostring(totalKills) .. " kill(s))")
+		chat(
+			"receiving BossTracker evidence batch "
+				.. tostring(batchIndex)
+				.. "/"
+				.. tostring(batchCount)
+				.. " from "
+				.. tostring(sender)
+				.. " ("
+				.. tostring(killCount)
+				.. " of "
+				.. tostring(totalKills)
+				.. " kill(s))"
+		)
 	else
-		chat("receiving " .. tostring(killCount) .. " BossTracker evidence kill(s) from " .. tostring(sender) .. " in " .. tostring(chunkCount) .. " chunk(s)")
+		chat(
+			"receiving "
+				.. tostring(killCount)
+				.. " BossTracker evidence kill(s) from "
+				.. tostring(sender)
+				.. " in "
+				.. tostring(chunkCount)
+				.. " chunk(s)"
+		)
 	end
 end
 
@@ -1588,8 +1670,10 @@ local function cleanupInboundImportSession(sender, session)
 	authorizedInboundSessions[sessionKey] = nil
 	authorizedInboundSessions[requestKey(sender, session)] = nil
 	for transferKey, activeTransfer in pairs(inboundTransfers) do
-		if normalizedName(activeTransfer.sender) == normalizedName(sender)
-			and (activeTransfer.baseSession or activeTransfer.session) == baseSession then
+		if
+			normalizedName(activeTransfer.sender) == normalizedName(sender)
+			and (activeTransfer.baseSession or activeTransfer.session) == baseSession
+		then
 			inboundTransfers[transferKey] = nil
 		end
 	end
@@ -1597,21 +1681,32 @@ end
 
 local function canonicalBlockHashes(parsed)
 	local codec = addon.Core.EvidenceCodec
-	if not codec
+	if
+		not codec
 		or type(codec.decodeKillBlock) ~= "function"
 		or type(codec.validDecodedKill) ~= "function"
-		or type(codec.hashKill) ~= "function" then
+		or type(codec.hashKill) ~= "function"
+	then
 		return nil, "evidence codec is unavailable"
 	end
 	local hashes = {}
 	for index = 1, #(parsed.blocks or {}) do
 		local decoded, decodeError = codec.decodeKillBlock(parsed.blocks[index])
 		if not decoded or not codec.validDecodedKill(decoded) then
-			return nil, "invalid kill evidence in batch " .. tostring(parsed.batchIndex or "?") .. " block " .. tostring(index) .. ": " .. tostring(decodeError or "invalid kill evidence")
+			return nil,
+				"invalid kill evidence in batch "
+					.. tostring(parsed.batchIndex or "?")
+					.. " block "
+					.. tostring(index)
+					.. ": "
+					.. tostring(decodeError or "invalid kill evidence")
 		end
 		local hash = codec.hashKill(decoded.instance, decoded.boss, decoded.kill)
 		if type(hash) ~= "string" or hash == "" then
-			return nil, "missing canonical kill hash in batch " .. tostring(parsed.batchIndex or "?") .. " block " .. tostring(index)
+			return nil,
+				"missing canonical kill hash in batch " .. tostring(parsed.batchIndex or "?") .. " block " .. tostring(
+					index
+				)
 		end
 		hashes[#hashes + 1] = hash
 	end
@@ -1736,20 +1831,29 @@ local function transportImportPayloads(entries, context)
 	if context.expectedIds and not sameHashList(allHashes, context.expectedIds) then
 		return nil, "payload batch set does not match the sync plan"
 	end
-	return importParsedBlocks({
-		blocks = blocks,
-		batchIndex = #(entries or {}),
-		batchCount = #(entries or {}),
-		totalKills = #blocks,
-		declaredKills = #blocks,
-	}, context.sender, {
-		deferRebuild = context.deferHeavyWork == true,
-	})
+	return importParsedBlocks(
+		{
+			blocks = blocks,
+			batchIndex = #(entries or {}),
+			batchCount = #(entries or {}),
+			totalKills = #blocks,
+			declaredKills = #blocks,
+		},
+		context.sender,
+		{
+			deferRebuild = context.deferHeavyWork == true,
+		}
+	)
 end
 
 local function showManagedRequestPopup(request)
 	if not StaticPopupDialogs or not StaticPopup_Show then
-		chat(tostring(request.sender) .. " wants to start managed BossTracker group sync. Use /btr sync accept " .. tostring(request.sender) .. " to accept.")
+		chat(
+			tostring(request.sender)
+				.. " wants to start managed BossTracker group sync. Use /btr sync accept "
+				.. tostring(request.sender)
+				.. " to accept."
+		)
 		return false
 	end
 	StaticPopupDialogs.BOSSTRACKER_EVIDENCE_SYNC_REQUEST = {
@@ -1791,7 +1895,9 @@ local function registerTransportAdapter()
 		end,
 		onPayloadImported = function(stats)
 			if stats and stats.valid and stats.valid > 0 and stats.rebuildError then
-				chat("managed group sync imported evidence, but learned rebuild failed: " .. tostring(stats.rebuildError))
+				chat(
+					"managed group sync imported evidence, but learned rebuild failed: " .. tostring(stats.rebuildError)
+				)
 			end
 		end,
 	})
@@ -1816,12 +1922,14 @@ local function aggregateBatchPayload(transfer, parsed)
 		inboundImportSessions[sessionKey] = sessionStats
 	end
 
-	if sessionStats.batchCount ~= (transfer.batchCount or 1)
+	if
+		sessionStats.batchCount ~= (transfer.batchCount or 1)
 		or sessionStats.totalKills ~= (transfer.totalKills or transfer.killCount or 0)
 		or parsed.batchIndex ~= transfer.batchIndex
 		or parsed.batchCount ~= transfer.batchCount
 		or (parsed.totalKills or 0) ~= (transfer.totalKills or transfer.killCount or 0)
-		or (parsed.declaredKills or 0) ~= (transfer.killCount or 0) then
+		or (parsed.declaredKills or 0) ~= (transfer.killCount or 0)
+	then
 		return nil, "batch metadata mismatch"
 	end
 
@@ -1829,12 +1937,8 @@ local function aggregateBatchPayload(transfer, parsed)
 	if not validBlocks then
 		return nil, validationError
 	end
-	local requestedValid, requestedError = validateRequestedPayloadHashes(
-		transfer.sender,
-		transfer.baseSession or transfer.session,
-		blockHashes,
-		false
-	)
+	local requestedValid, requestedError =
+		validateRequestedPayloadHashes(transfer.sender, transfer.baseSession or transfer.session, blockHashes, false)
 	if not requestedValid then
 		return nil, requestedError
 	end
@@ -1870,12 +1974,8 @@ local function aggregateBatchPayload(transfer, parsed)
 				blockHashes[#blockHashes + 1] = batch.hashes[hashIndex]
 			end
 		end
-		local requestedValid, requestedError = validateRequestedPayloadHashes(
-			transfer.sender,
-			transfer.baseSession or transfer.session,
-			blockHashes,
-			true
-		)
+		local requestedValid, requestedError =
+			validateRequestedPayloadHashes(transfer.sender, transfer.baseSession or transfer.session, blockHashes, true)
 		if not requestedValid then
 			return nil, requestedError
 		end
@@ -1905,7 +2005,16 @@ local function finishBatchImportSession(transfer, sessionStats)
 		return
 	end
 	if stats.rebuildError then
-		chat("sync imported " .. tostring(stats.imported) .. " kill(s), ignored " .. tostring(stats.duplicates) .. " duplicate(s)" .. rejectedSummary(stats.rejected) .. ", but learned rebuild failed: " .. tostring(stats.rebuildError))
+		chat(
+			"sync imported "
+				.. tostring(stats.imported)
+				.. " kill(s), ignored "
+				.. tostring(stats.duplicates)
+				.. " duplicate(s)"
+				.. rejectedSummary(stats.rejected)
+				.. ", but learned rebuild failed: "
+				.. tostring(stats.rebuildError)
+		)
 		logWarn("Batched sync rebuild failed", {
 			sender = transfer.sender,
 			session = transfer.baseSession or transfer.session,
@@ -1915,9 +2024,23 @@ local function finishBatchImportSession(transfer, sessionStats)
 			error = stats.rebuildError,
 		})
 	elseif (tonumber(stats.imported) or 0) > 0 then
-		chat("sync imported " .. tostring(stats.imported) .. " kill(s), ignored " .. tostring(stats.duplicates) .. " duplicate(s)" .. rejectedSummary(stats.rejected) .. ", rebuilt " .. tostring(stats.promoted) .. " model component(s)")
+		chat(
+			"sync imported "
+				.. tostring(stats.imported)
+				.. " kill(s), ignored "
+				.. tostring(stats.duplicates)
+				.. " duplicate(s)"
+				.. rejectedSummary(stats.rejected)
+				.. ", rebuilt "
+				.. tostring(stats.promoted)
+				.. " model component(s)"
+		)
 	elseif (tonumber(stats.valid) or 0) > 0 then
-		chat("sync complete: no new evidence kills imported" .. rejectedSummary(stats.rejected) .. "; rebuilt local models from existing evidence")
+		chat(
+			"sync complete: no new evidence kills imported"
+				.. rejectedSummary(stats.rejected)
+				.. "; rebuilt local models from existing evidence"
+		)
 	else
 		chat("sync complete: no new evidence kills imported" .. rejectedSummary(stats.rejected))
 	end
@@ -2005,12 +2128,8 @@ local function completeTransfer(transferKey, transfer)
 			})
 			return
 		end
-		local requestedValid, requestedError = validateRequestedPayloadHashes(
-			transfer.sender,
-			transfer.baseSession or transfer.session,
-			blockHashes,
-			true
-		)
+		local requestedValid, requestedError =
+			validateRequestedPayloadHashes(transfer.sender, transfer.baseSession or transfer.session, blockHashes, true)
 		if not requestedValid then
 			chat("sync from " .. tostring(transfer.sender) .. " failed: " .. tostring(requestedError))
 			logWarn("Sync payload requested-hash validation failed", {
@@ -2034,13 +2153,36 @@ local function completeTransfer(transferKey, transfer)
 		return
 	end
 	if stats.rebuildError then
-		chat("sync imported " .. tostring(stats.imported) .. " kill(s), ignored " .. tostring(stats.duplicates) .. " duplicate(s)" .. rejectedSummary(stats.rejected) .. ", but learned rebuild failed: " .. tostring(stats.rebuildError))
+		chat(
+			"sync imported "
+				.. tostring(stats.imported)
+				.. " kill(s), ignored "
+				.. tostring(stats.duplicates)
+				.. " duplicate(s)"
+				.. rejectedSummary(stats.rejected)
+				.. ", but learned rebuild failed: "
+				.. tostring(stats.rebuildError)
+		)
 		return
 	end
 	if stats.imported > 0 then
-		chat("sync imported " .. tostring(stats.imported) .. " kill(s), ignored " .. tostring(stats.duplicates) .. " duplicate(s)" .. rejectedSummary(stats.rejected) .. ", rebuilt " .. tostring(stats.promoted) .. " model component(s)")
+		chat(
+			"sync imported "
+				.. tostring(stats.imported)
+				.. " kill(s), ignored "
+				.. tostring(stats.duplicates)
+				.. " duplicate(s)"
+				.. rejectedSummary(stats.rejected)
+				.. ", rebuilt "
+				.. tostring(stats.promoted)
+				.. " model component(s)"
+		)
 	elseif stats.valid and stats.valid > 0 then
-		chat("sync complete: no new evidence kills imported" .. rejectedSummary(stats.rejected) .. "; rebuilt local models from existing evidence")
+		chat(
+			"sync complete: no new evidence kills imported"
+				.. rejectedSummary(stats.rejected)
+				.. "; rebuilt local models from existing evidence"
+		)
 	else
 		chat("sync complete: no new evidence kills imported" .. rejectedSummary(stats.rejected))
 	end
@@ -2054,11 +2196,13 @@ local function receiveChunk(sender, message)
 	local body = parts[5] or ""
 	local transferKey = requestKey(sender, sessionId)
 	local transfer = inboundTransfers[transferKey]
-	if not transfer
+	if
+		not transfer
 		or not isPositiveInteger(index)
 		or index > transfer.chunkCount
 		or not isPositiveInteger(total)
-		or total ~= transfer.chunkCount then
+		or total ~= transfer.chunkCount
+	then
 		return
 	end
 	if not transfer.chunks[index] then
@@ -2178,7 +2322,10 @@ local function requestSync(target)
 	end
 
 	local evidence = addon.Core.EvidenceStore and addon.Core.EvidenceStore.ensureDb(addon.db) or nil
-	local killCount = addon.Core.EvidenceStore and addon.Core.EvidenceStore.countPermanentKills and addon.Core.EvidenceStore.countPermanentKills() or 0
+	local killCount = addon.Core.EvidenceStore
+			and addon.Core.EvidenceStore.countPermanentKills
+			and addon.Core.EvidenceStore.countPermanentKills()
+		or 0
 	if not evidence then
 		chat("evidence store is not available")
 		return false
@@ -2199,13 +2346,17 @@ local function requestSync(target)
 		distribution = distribution,
 		target = targetName,
 	}
-	sendImmediate(table.concat({
-		"R",
-		sessionId,
-		C.VERSION,
-		tostring(killCount),
-		tostring(evidence.revision or 0),
-	}, "|"), distribution, targetName)
+	sendImmediate(
+		table.concat({
+			"R",
+			sessionId,
+			C.VERSION,
+			tostring(killCount),
+			tostring(evidence.revision or 0),
+		}, "|"),
+		distribution,
+		targetName
+	)
 	if targetName then
 		chat("sent BossTracker evidence sync request to " .. tostring(targetName))
 	else

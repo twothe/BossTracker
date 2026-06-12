@@ -598,8 +598,7 @@ local function parseLambdaSchedules(text, model)
 			break
 		end
 
-		local lambdaStart = text:find("%[[^%]]*%]%s*%([^)]*%)%s*{", openEnd)
-			or text:find("%[[^%]]*%]%s*{", openEnd)
+		local lambdaStart = text:find("%[[^%]]*%]%s*%([^)]*%)%s*{", openEnd) or text:find("%[[^%]]*%]%s*{", openEnd)
 		if not lambdaStart then
 			searchFrom = openEnd + 1
 		else
@@ -925,7 +924,10 @@ local function emitPlayerInterrupt(model, action, timeValue, hp, variant, summar
 		1
 	)
 	local pull = addon.Capture.EncounterState.getCurrent()
-	local context = pull and pull.bossContexts and pull.bossContexts[addon.Core.Util.actorKey(model.bossName, summary.bossGuid)] or nil
+	local context = pull
+			and pull.bossContexts
+			and pull.bossContexts[addon.Core.Util.actorKey(model.bossName, summary.bossGuid)]
+		or nil
 	markContextForVariant(context, hp, variant, timeValue)
 	summary.emittedSpellCount = summary.emittedSpellCount + 1
 	summary.emitted[spellName] = (summary.emitted[spellName] or 0) + 1
@@ -934,18 +936,37 @@ local function emitPlayerInterrupt(model, action, timeValue, hp, variant, summar
 end
 
 local function emitLifecycle(model, action, timeValue, hp, variant, summary)
-	if variant.interruptPressure
+	if
+		variant.interruptPressure
 		and action.repeatSeconds
 		and action.repeatSeconds <= 10
-		and (action.occurrences or 0) % 2 == 0 then
+		and (action.occurrences or 0) % 2 == 0
+	then
 		return emitPlayerInterrupt(model, action, timeValue, hp, variant, summary)
 	end
 
 	if action.categories and action.categories.channel then
 		local pull, context = emitBossSpell(model, action, timeValue, hp, variant, summary, "SPELL_CAST_START")
 		emitBossSpell(model, action, timeValue + 0.1, hp, variant, summary, "SPELL_AURA_APPLIED", true)
-		emitBossSpell(model, action, timeValue + 2.0, hpAtTime(timeValue + 2.0, variant.duration), variant, summary, "SPELL_DAMAGE")
-		emitBossSpell(model, action, timeValue + 4.0, hpAtTime(timeValue + 4.0, variant.duration), variant, summary, "SPELL_AURA_REMOVED", true)
+		emitBossSpell(
+			model,
+			action,
+			timeValue + 2.0,
+			hpAtTime(timeValue + 2.0, variant.duration),
+			variant,
+			summary,
+			"SPELL_DAMAGE"
+		)
+		emitBossSpell(
+			model,
+			action,
+			timeValue + 4.0,
+			hpAtTime(timeValue + 4.0, variant.duration),
+			variant,
+			summary,
+			"SPELL_AURA_REMOVED",
+			true
+		)
 		return pull, context
 	end
 
@@ -1068,8 +1089,8 @@ function Simulator.simulateModel(model, variant, options)
 	if variant.bossSignalAt and finishAt >= variant.bossSignalAt then
 		local pull = addon.Capture.EncounterState.getCurrent()
 		local context = pull
-			and pull.bossContexts
-			and pull.bossContexts[addon.Core.Util.actorKey(model.bossName, summary.bossGuid)]
+				and pull.bossContexts
+				and pull.bossContexts[addon.Core.Util.actorKey(model.bossName, summary.bossGuid)]
 			or nil
 		if context then
 			markContextForVariant(context, hpAtTime(finishAt, variant.duration), variant, finishAt)
@@ -1118,23 +1139,41 @@ local function assertActionInvariants(model, summary)
 				if ability and ability.autoSuppressed ~= true then
 					addFailure(summary, spellName .. " repeated below display floor but was not suppressed")
 				end
-			elseif action.repeatSeconds and action.repeatSeconds >= displayFloor and activationCount >= 2 and not hasCategory(action, "hp_gate") and not repeatedVisibleSpell then
+			elseif
+				action.repeatSeconds
+				and action.repeatSeconds >= displayFloor
+				and activationCount >= 2
+				and not hasCategory(action, "hp_gate")
+				and not repeatedVisibleSpell
+			then
 				local learnedShortGap = ability
 					and (
 						(ability.minObservedGap and ability.minObservedGap < displayFloor)
 						or (ability.minInterval and ability.minInterval < displayFloor)
 					)
-				if ability and ability.autoSuppressed == true and ability.suppressionReason ~= "shared_routine_spell" and not learnedShortGap then
-					addFailure(summary, spellName .. " repeated above display floor but was suppressed as " .. tostring(ability.suppressionReason))
+				if
+					ability
+					and ability.autoSuppressed == true
+					and ability.suppressionReason ~= "shared_routine_spell"
+					and not learnedShortGap
+				then
+					addFailure(
+						summary,
+						spellName
+							.. " repeated above display floor but was suppressed as "
+							.. tostring(ability.suppressionReason)
+					)
 				end
 			end
-			if hasCategory(action, "hp_gate")
+			if
+				hasCategory(action, "hp_gate")
 				and not action.repeatSeconds
 				and not repeatedVisibleSpell
 				and ability
 				and ability.selectedRule
 				and ability.selectedRule.type == "time_interval"
-				and (ability.intervalSamples or 0) <= 1 then
+				and (ability.intervalSamples or 0) <= 1
+			then
 				addFailure(summary, spellName .. " HP-gated sparse action became a time interval")
 			end
 		end
@@ -1147,10 +1186,12 @@ local function assertInterruptInvariant(summary)
 	end
 	for index = 1, #summary.learnedAbilities do
 		local ability = summary.learnedAbilities[index]
-		if (ability.events and (ability.events.SPELL_INTERRUPT or 0) > 0)
+		if
+			(ability.events and (ability.events.SPELL_INTERRUPT or 0) > 0)
 			and ability.minObservedGap
 			and ability.minObservedGap < addon.Core.Config.getMinTimerDisplayInterval()
-			and ability.autoSuppressed ~= true then
+			and ability.autoSuppressed ~= true
+		then
 			addFailure(summary, tostring(ability.spellName) .. " had interrupted short gaps but was not suppressed")
 		end
 	end
@@ -1203,7 +1244,10 @@ function Simulator.assertKnownFixture(summary)
 	elseif summary.fileName == "boss_overlord_wyrmthalak.cpp" then
 		local blastWave = knownAbility("Blast Wave")
 		Harness.assertTrue(blastWave ~= nil, "Overlord Wyrmthalak should learn Blast Wave")
-		Harness.assertTrue(blastWave.minInterval and blastWave.minInterval >= 19 and blastWave.minInterval <= 21, "Overlord Wyrmthalak Blast Wave should preserve repeat interval evidence")
+		Harness.assertTrue(
+			blastWave.minInterval and blastWave.minInterval >= 19 and blastWave.minInterval <= 21,
+			"Overlord Wyrmthalak Blast Wave should preserve repeat interval evidence"
+		)
 	end
 end
 
@@ -1226,8 +1270,7 @@ local function copyVariants(names)
 	for index = 1, #names do
 		if not matched[names[index]] then
 			error(
-				"unknown simulator variant '" .. tostring(names[index])
-				.. "'. Available variants: " .. variantNames(),
+				"unknown simulator variant '" .. tostring(names[index]) .. "'. Available variants: " .. variantNames(),
 				2
 			)
 		end
@@ -1357,7 +1400,7 @@ local function parseArgs(args)
 end
 
 local function printUsage()
-	print([[
+	local message = [[
 Usage: lua tests/cpp_module_replay.lua [options] [boss_script.cpp ...]
 
 Options:
@@ -1368,19 +1411,26 @@ Options:
   --variant <name>   Run one simulator variant. Can be passed more than once.
   --help, -h         Print this help text.
 
-Available variants: ]] .. variantNames())
+Available variants: ]] .. variantNames()
+	print(message)
 end
 
 local function printSummaryLine(summary)
 	print(
 		"cpp simulator passed: "
-		.. summary.fileName
-		.. " variant=" .. summary.variant
-		.. " actions=" .. tostring(summary.coverage and summary.coverage.actionCount)
-		.. " emitted=" .. tostring(summary.emittedSpellCount)
-		.. " learned=" .. tostring(summary.learnedAbilityCount)
-		.. " fallback=" .. tostring(summary.fallback)
-		.. " interrupts=" .. tostring(summary.interruptCount)
+			.. summary.fileName
+			.. " variant="
+			.. summary.variant
+			.. " actions="
+			.. tostring(summary.coverage and summary.coverage.actionCount)
+			.. " emitted="
+			.. tostring(summary.emittedSpellCount)
+			.. " learned="
+			.. tostring(summary.learnedAbilityCount)
+			.. " fallback="
+			.. tostring(summary.fallback)
+			.. " interrupts="
+			.. tostring(summary.interruptCount)
 	)
 end
 
@@ -1409,9 +1459,11 @@ function Simulator.run(paths, options)
 			aggregate.fallbackScripts = aggregate.fallbackScripts + 1
 		end
 		aggregate.patterns.events = aggregate.patterns.events + (model.coverage.eventCount or 0)
-		aggregate.patterns.initialSchedules = aggregate.patterns.initialSchedules + (model.coverage.initialScheduleCount or 0)
+		aggregate.patterns.initialSchedules = aggregate.patterns.initialSchedules
+			+ (model.coverage.initialScheduleCount or 0)
 		aggregate.patterns.hpSchedules = aggregate.patterns.hpSchedules + (model.coverage.hpScheduleCount or 0)
-		aggregate.patterns.directSchedules = aggregate.patterns.directSchedules + (model.coverage.directScheduleCount or 0)
+		aggregate.patterns.directSchedules = aggregate.patterns.directSchedules
+			+ (model.coverage.directScheduleCount or 0)
 		aggregate.patterns.actions = aggregate.patterns.actions + (model.coverage.actionCount or 0)
 		for summaryIndex = 1, #report.summaries do
 			aggregate.scenarioCount = aggregate.scenarioCount + 1
@@ -1439,21 +1491,33 @@ function Simulator.main(args)
 			local failure = aggregate.failures[index]
 			io.stderr:write(
 				"cpp simulator failed: "
-				.. tostring(failure.fileName)
-				.. " variant=" .. tostring(failure.variant)
-				.. " " .. tostring(failure.message)
-				.. "\n"
+					.. tostring(failure.fileName)
+					.. " variant="
+					.. tostring(failure.variant)
+					.. " "
+					.. tostring(failure.message)
+					.. "\n"
 			)
 		end
 		error("cpp simulator failures: " .. tostring(#aggregate.failures), 0)
 	end
 	print(
-		"cpp simulator summary: scripts=" .. tostring(aggregate.scriptCount)
-		.. " scenarios=" .. tostring(aggregate.scenarioCount)
-		.. " fallbacks=" .. tostring(aggregate.fallbackScripts)
-		.. " events=" .. tostring(aggregate.patterns.events)
-		.. " schedules=" .. tostring(aggregate.patterns.initialSchedules + aggregate.patterns.hpSchedules + aggregate.patterns.directSchedules)
-		.. " actions=" .. tostring(aggregate.patterns.actions)
+		"cpp simulator summary: scripts="
+			.. tostring(aggregate.scriptCount)
+			.. " scenarios="
+			.. tostring(aggregate.scenarioCount)
+			.. " fallbacks="
+			.. tostring(aggregate.fallbackScripts)
+			.. " events="
+			.. tostring(aggregate.patterns.events)
+			.. " schedules="
+			.. tostring(
+				aggregate.patterns.initialSchedules
+					+ aggregate.patterns.hpSchedules
+					+ aggregate.patterns.directSchedules
+			)
+			.. " actions="
+			.. tostring(aggregate.patterns.actions)
 	)
 end
 

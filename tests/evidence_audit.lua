@@ -67,9 +67,11 @@ local function matchesQuery(value, query)
 	if normalizedValue == "" or normalizedQuery == "" then
 		return false
 	end
-	if normalizedValue == normalizedQuery
+	if
+		normalizedValue == normalizedQuery
 		or string.find(normalizedValue, normalizedQuery, 1, true) ~= nil
-		or string.find(normalizedQuery, normalizedValue, 1, true) ~= nil then
+		or string.find(normalizedQuery, normalizedValue, 1, true) ~= nil
+	then
 		return true
 	end
 	for token in string.gmatch(normalizedQuery, "[^_]+") do
@@ -311,15 +313,16 @@ local function killLooksLikeSuppressedContainedRaidAdd(instance, boss, kill)
 		return false
 	end
 	local evidenceCount = #(kill.facts or {}) > 0 and #(kill.facts or {}) or #(kill.events or {})
-	if evidenceCount > (tonumber(C.ENCOUNTER_CONTAINED_ADD_MAX_EVENTS) or 30)
-		or #(kill.spells or {}) > (tonumber(C.ENCOUNTER_CONTAINED_ADD_MAX_ABILITIES) or 3) then
+	if
+		evidenceCount > (tonumber(C.ENCOUNTER_CONTAINED_ADD_MAX_EVENTS) or 30)
+		or #(kill.spells or {}) > (tonumber(C.ENCOUNTER_CONTAINED_ADD_MAX_ABILITIES) or 3)
+	then
 		return false
 	end
 	local start10, end10 = evidenceActorWindow(actor)
 	local duration10 = tonumber(kill.duration10) or end10
 	local grace10 = math.floor(((tonumber(C.ENCOUNTER_CONTAINED_ADD_START_GRACE_SECONDS) or 2) * 10) + 0.5)
-	return start10 >= grace10
-		and end10 <= duration10 - grace10
+	return start10 >= grace10 and end10 <= duration10 - grace10
 end
 
 local function collectEvidenceRecords(db)
@@ -341,7 +344,11 @@ local function collectEvidenceRecords(db)
 						error = decodeError,
 					}
 				else
-					local canonical = addon.Core.EvidenceCodec.hashKill(decoded.instance or instance, decoded.boss or boss, decoded.kill)
+					local canonical = addon.Core.EvidenceCodec.hashKill(
+						decoded.instance or instance,
+						decoded.boss or boss,
+						decoded.kill
+					)
 					local record = {
 						instance = decoded.instance or instance,
 						boss = decoded.boss or boss,
@@ -351,7 +358,8 @@ local function collectEvidenceRecords(db)
 						duplicateCanonical = canonicalByHash[canonical],
 					}
 					if canonical then
-						canonicalByHash[canonical] = canonicalByHash[canonical] or (tostring(instanceKey) .. "/" .. tostring(bossKey) .. "/" .. tostring(storedHash))
+						canonicalByHash[canonical] = canonicalByHash[canonical]
+							or (tostring(instanceKey) .. "/" .. tostring(bossKey) .. "/" .. tostring(storedHash))
 					end
 					records[#records + 1] = record
 				end
@@ -401,7 +409,9 @@ local function matchRecords(records, query)
 			fuzzy = string.find(recordSearchText(record), normalizedQuery, 1, true) ~= nil
 		end
 		if direct or fuzzy then
-			local key = tostring(record.instance and record.instance.key) .. "/" .. tostring(record.boss and record.boss.key)
+			local key = tostring(record.instance and record.instance.key)
+				.. "/"
+				.. tostring(record.boss and record.boss.key)
 			if not seen[key] then
 				seen[key] = true
 				matched[#matched + 1] = {
@@ -421,7 +431,9 @@ local function matchRecords(records, query)
 	end
 	table.sort(matched, function(left, right)
 		local leftKey = tostring(left.instance and left.instance.key) .. "/" .. tostring(left.boss and left.boss.key)
-		local rightKey = tostring(right.instance and right.instance.key) .. "/" .. tostring(right.boss and right.boss.key)
+		local rightKey = tostring(right.instance and right.instance.key)
+			.. "/"
+			.. tostring(right.boss and right.boss.key)
 		return leftKey < rightKey
 	end)
 	return matched
@@ -439,9 +451,15 @@ local function describeRule(ability)
 		return "none"
 	end
 	if rule.type == "time_interval" then
-		return "time " .. formatSeconds(rule.minInterval or ability.minInterval) .. ".." .. formatSeconds(rule.maxInterval or ability.maxInterval)
+		return "time "
+			.. formatSeconds(rule.minInterval or ability.minInterval)
+			.. ".."
+			.. formatSeconds(rule.maxInterval or ability.maxInterval)
 	elseif rule.type == "phase_time_interval" then
-		return "phase-time " .. formatSeconds(rule.minInterval or ability.minInterval) .. ".." .. formatSeconds(rule.maxInterval or ability.maxInterval)
+		return "phase-time "
+			.. formatSeconds(rule.minInterval or ability.minInterval)
+			.. ".."
+			.. formatSeconds(rule.maxInterval or ability.maxInterval)
 	elseif rule.type == "first_offset" then
 		return "first " .. formatSeconds(rule.minFirstOffset or ability.minFirstOffset or ability.avgFirstOffset)
 	elseif rule.type == "phase_start_offset" then
@@ -658,7 +676,8 @@ local function auditMatchedBoss(db, match)
 		elseif record.canonicalHash ~= tostring(record.storedHash) and record.canonicalHash ~= tostring(kill.hash) then
 			addLine(warnings, "stored hash differs from recomputed canonical hash " .. tostring(record.storedHash))
 		end
-		local duplicateCanonical = type(record.canonicalHash) == "string" and canonicalSeen[record.canonicalHash] or false
+		local duplicateCanonical = type(record.canonicalHash) == "string" and canonicalSeen[record.canonicalHash]
+			or false
 		if record.duplicateCanonical or duplicateCanonical then
 			addLine(errors, "duplicate canonical hash " .. tostring(record.canonicalHash))
 		end
@@ -673,7 +692,9 @@ local function auditMatchedBoss(db, match)
 		updateRange(actorRange, #(kill.actors or {}))
 		updateRange(spellRange, #(kill.spells or {}))
 		completionReasons[kill.endReason or "unknown"] = (completionReasons[kill.endReason or "unknown"] or 0) + 1
-		difficulties[(kill.difficulty and kill.difficulty.key) or "unknown"] = (difficulties[(kill.difficulty and kill.difficulty.key) or "unknown"] or 0) + 1
+		difficulties[(kill.difficulty and kill.difficulty.key) or "unknown"] = (
+			difficulties[(kill.difficulty and kill.difficulty.key) or "unknown"] or 0
+		) + 1
 
 		local actorsById = byId(kill.actors)
 		local spellsById = byId(kill.spells)
@@ -811,17 +832,35 @@ local function auditMatchedBoss(db, match)
 						targetScope = flagSet(event[8], EVENT_FLAG_DEST_PLAYER) and "player" or "none",
 					})
 				end
-				if ROUTINE_CODES[event[2]] and flagSet(event[8], EVENT_FLAG_SELF_TARGET) and flagSet(event[8], EVENT_FLAG_DEST_PLAYER) then
-					addLine(notes, "self-target and player-target flags both set on routine event " .. tostring(record.storedHash))
+				if
+					ROUTINE_CODES[event[2]]
+					and flagSet(event[8], EVENT_FLAG_SELF_TARGET)
+					and flagSet(event[8], EVENT_FLAG_DEST_PLAYER)
+				then
+					addLine(
+						notes,
+						"self-target and player-target flags both set on routine event " .. tostring(record.storedHash)
+					)
 				end
 			end
 		end
 		if maxT10 > (tonumber(kill.duration10) or 0) + 20 then
-			addLine(warnings, "evidence timestamp exceeds kill duration by more than 2 seconds " .. tostring(record.storedHash))
+			addLine(
+				warnings,
+				"evidence timestamp exceeds kill duration by more than 2 seconds " .. tostring(record.storedHash)
+			)
 		end
 		local duration10 = tonumber(kill.duration10) or 0
 		if duration10 > 0 and duration10 - maxT10 > 300 and maxT10 < duration10 * 0.75 then
-			addLine(warnings, "stored evidence facts end " .. formatSeconds(maxT10 / 10) .. " before kill duration " .. formatSeconds(duration10 / 10) .. " for " .. tostring(record.storedHash))
+			addLine(
+				warnings,
+				"stored evidence facts end "
+					.. formatSeconds(maxT10 / 10)
+					.. " before kill duration "
+					.. formatSeconds(duration10 / 10)
+					.. " for "
+					.. tostring(record.storedHash)
+			)
 		end
 	end
 
@@ -829,7 +868,10 @@ local function auditMatchedBoss(db, match)
 		addLine(warnings, "only one kill is available; learned timers are evidence-backed but low sample size")
 	end
 	if bossIdentityKills ~= #match.records then
-		addLine(warnings, tostring(#match.records - bossIdentityKills) .. " kill(s) do not have strong boss identity evidence")
+		addLine(
+			warnings,
+			tostring(#match.records - bossIdentityKills) .. " kill(s) do not have strong boss identity evidence"
+		)
 	end
 	if bossHpEnd.max and bossHpEnd.max > 20 then
 		addLine(warnings, "boss end HP evidence is above 20% in at least one completed kill")
@@ -838,9 +880,18 @@ local function auditMatchedBoss(db, match)
 	local zone, encounter = findLearnedEncounter(db, match.instance.key, match.boss.key)
 	local suppressedRuntime = suppressedContainedAddKills == #match.records and #match.records > 0
 	if not encounter and suppressedRuntime then
-		addLine(notes, "contained raid add evidence is intentionally kept diagnostic-only and not promoted to a learned encounter")
+		addLine(
+			notes,
+			"contained raid add evidence is intentionally kept diagnostic-only and not promoted to a learned encounter"
+		)
 	elseif not encounter then
-		addLine(errors, "no learned encounter exists after rebuild for " .. tostring(match.instance.key) .. "/" .. tostring(match.boss.key))
+		addLine(
+			errors,
+			"no learned encounter exists after rebuild for "
+				.. tostring(match.instance.key)
+				.. "/"
+				.. tostring(match.boss.key)
+		)
 	elseif encounter.legacyAfterRebuild == true then
 		addLine(errors, "learned encounter is still legacy after rebuild")
 	end
@@ -856,13 +907,23 @@ local function auditMatchedBoss(db, match)
 		local raw = rawByIdentity[row.identity]
 		if not raw and not row.legacy then
 			addLine(warnings, "model ability has no matching raw spell activation: " .. tostring(row.name))
-		elseif (row.ruleType == "time_interval" or row.ruleType == "phase_time_interval")
+		elseif
+			(row.ruleType == "time_interval" or row.ruleType == "phase_time_interval")
 			and row.minInterval
 			and row.minInterval < row.displayFloor - 0.000001
-			and not string.find(row.marker, "suppressed", 1, true) then
+			and not string.find(row.marker, "suppressed", 1, true)
+		then
 			addLine(errors, "displayed model interval below floor: " .. tostring(row.name))
-		elseif raw and string.sub(row.marker, 1, 7) == "display" and raw.intervalCount > 0 and raw.intervalRange.min then
-			if row.minInterval and (row.minInterval < raw.intervalRange.min - 15 or row.minInterval > raw.intervalRange.max + 15) then
+		elseif
+			raw
+			and string.sub(row.marker, 1, 7) == "display"
+			and raw.intervalCount > 0
+			and raw.intervalRange.min
+		then
+			if
+				row.minInterval
+				and (row.minInterval < raw.intervalRange.min - 15 or row.minInterval > raw.intervalRange.max + 15)
+			then
 				addLine(warnings, "model interval is far outside raw activation gaps: " .. tostring(row.name))
 			end
 		end
@@ -908,25 +969,63 @@ end
 
 local function printAudit(query, match, audit)
 	print("")
-	print("== " .. tostring(query) .. " -> " .. tostring(match.instance.name) .. "/" .. tostring(match.boss.name) .. " (" .. tostring(match.instance.key) .. "/" .. tostring(match.boss.key) .. ") ==")
-	print("kills=" .. tostring(audit.killCount)
-		.. " completions=" .. formatCountMap(audit.completionReasons)
-		.. " difficulties=" .. formatCountMap(audit.difficulties)
-		.. " bossIdentityKills=" .. tostring(audit.bossIdentityKills) .. "/" .. tostring(audit.killCount))
-	print("duration=" .. formatRange(audit.durationRange, "s")
-		.. " facts=" .. formatRange(audit.evidenceRange)
-		.. " evidenceTime=" .. formatRange(audit.evidenceTimeRange, "s")
-		.. " actors=" .. formatRange(audit.actorRange)
-		.. " spells=" .. formatRange(audit.spellRange))
-	print("bossHpStart=" .. formatRange(audit.bossHpStart, "%")
-		.. " bossHpEnd=" .. formatRange(audit.bossHpEnd, "%")
-		.. " avgDuration=" .. formatSeconds(average(audit.durationRange)))
+	print(
+		"== "
+			.. tostring(query)
+			.. " -> "
+			.. tostring(match.instance.name)
+			.. "/"
+			.. tostring(match.boss.name)
+			.. " ("
+			.. tostring(match.instance.key)
+			.. "/"
+			.. tostring(match.boss.key)
+			.. ") =="
+	)
+	print(
+		"kills="
+			.. tostring(audit.killCount)
+			.. " completions="
+			.. formatCountMap(audit.completionReasons)
+			.. " difficulties="
+			.. formatCountMap(audit.difficulties)
+			.. " bossIdentityKills="
+			.. tostring(audit.bossIdentityKills)
+			.. "/"
+			.. tostring(audit.killCount)
+	)
+	print(
+		"duration="
+			.. formatRange(audit.durationRange, "s")
+			.. " facts="
+			.. formatRange(audit.evidenceRange)
+			.. " evidenceTime="
+			.. formatRange(audit.evidenceTimeRange, "s")
+			.. " actors="
+			.. formatRange(audit.actorRange)
+			.. " spells="
+			.. formatRange(audit.spellRange)
+	)
+	print(
+		"bossHpStart="
+			.. formatRange(audit.bossHpStart, "%")
+			.. " bossHpEnd="
+			.. formatRange(audit.bossHpEnd, "%")
+			.. " avgDuration="
+			.. formatSeconds(average(audit.durationRange))
+	)
 	print("actors=" .. table.concat(sortedKeys(audit.actorNames), ", "))
 	if audit.encounter then
-		print("learnedEncounter=" .. tostring(audit.encounter.name)
-			.. " abilities=" .. tostring(countKeys(audit.encounter.abilities))
-			.. " legacy=" .. tostring(audit.encounter.legacyAfterRebuild)
-			.. " coverage=" .. tostring(audit.encounter.rebuildCoverage))
+		print(
+			"learnedEncounter="
+				.. tostring(audit.encounter.name)
+				.. " abilities="
+				.. tostring(countKeys(audit.encounter.abilities))
+				.. " legacy="
+				.. tostring(audit.encounter.legacyAfterRebuild)
+				.. " coverage="
+				.. tostring(audit.encounter.rebuildCoverage)
+		)
 	elseif audit.suppressedRuntime then
 		print("learnedEncounter=suppressed reason=contained_raid_add")
 	end
@@ -954,16 +1053,28 @@ local function printAudit(query, match, audit)
 	print("rawSpellSignals:")
 	for index = 1, math.min(#audit.rawRows, 20) do
 		local row = audit.rawRows[index]
-			print("  - " .. tostring(row.name)
-				.. " activations=" .. tostring(row.activationCount)
-				.. " intervals=" .. tostring(row.intervalCount)
-				.. " intervalRange=" .. formatRange(row.intervalRange, "s")
-				.. " first=" .. formatRange(row.firstRange, "s")
-				.. " hp=" .. formatRange(row.hpRange, "%")
-				.. " rawEvents=" .. tostring(row.rawEvents)
-				.. " codes=" .. formatCountMap(row.codeCounts)
-				.. " associated=" .. tostring(row.associatedEvents)
-				.. " playerTargets=" .. tostring(row.playerTargetEvents))
+		print(
+			"  - "
+				.. tostring(row.name)
+				.. " activations="
+				.. tostring(row.activationCount)
+				.. " intervals="
+				.. tostring(row.intervalCount)
+				.. " intervalRange="
+				.. formatRange(row.intervalRange, "s")
+				.. " first="
+				.. formatRange(row.firstRange, "s")
+				.. " hp="
+				.. formatRange(row.hpRange, "%")
+				.. " rawEvents="
+				.. tostring(row.rawEvents)
+				.. " codes="
+				.. formatCountMap(row.codeCounts)
+				.. " associated="
+				.. tostring(row.associatedEvents)
+				.. " playerTargets="
+				.. tostring(row.playerTargetEvents)
+		)
 	end
 	if #audit.rawRows > 20 then
 		print("  - ... " .. tostring(#audit.rawRows - 20) .. " more")
@@ -989,19 +1100,31 @@ local rebuilt, rebuildResult = addon.Core.SavedVariables.rebuildLearnedIfNeeded(
 local records, decodeErrors = collectEvidenceRecords(db)
 print("accountSavedVariables=" .. tostring(accountPath))
 print("characterSavedVariables=" .. tostring(characterPath))
-print("loaded schema=" .. tostring(db.schemaVersion)
-	.. " savedVersion=" .. tostring(db.version)
-	.. " codeVersion=" .. tostring(C.VERSION)
-	.. " engine=" .. tostring(C.INTERPRETATION_ENGINE_VERSION))
+print(
+	"loaded schema="
+		.. tostring(db.schemaVersion)
+		.. " savedVersion="
+		.. tostring(db.version)
+		.. " codeVersion="
+		.. tostring(C.VERSION)
+		.. " engine="
+		.. tostring(C.INTERPRETATION_ENGINE_VERSION)
+)
 print("rebuildIfNeeded result=" .. tostring(rebuilt) .. " detail=" .. tostring(rebuildResult))
 print("evidenceRecords=" .. tostring(#records) .. " decodeErrors=" .. tostring(#decodeErrors))
 if #decodeErrors > 0 then
 	for index = 1, math.min(#decodeErrors, 20) do
 		local item = decodeErrors[index]
-		print("DECODE_ERROR instance=" .. tostring(item.instanceKey)
-			.. " boss=" .. tostring(item.bossKey)
-			.. " hash=" .. tostring(item.hash)
-			.. " error=" .. tostring(item.error))
+		print(
+			"DECODE_ERROR instance="
+				.. tostring(item.instanceKey)
+				.. " boss="
+				.. tostring(item.bossKey)
+				.. " hash="
+				.. tostring(item.hash)
+				.. " error="
+				.. tostring(item.error)
+		)
 	end
 	fail("cannot audit while stored evidence has decode errors")
 end
