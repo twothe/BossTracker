@@ -977,6 +977,7 @@ local function applyRebuildMetadata(db, reason, killCount, promoted, stats)
 	meta.rebuildLegacySuppressedEncounters = tonumber(stats.legacySuppressedEncounters) or 0
 	meta.rebuildSkippedCorruptEvidence = tonumber(stats.skippedCorruptEvidence) or 0
 	meta.rebuildSuppressedContainedAddEvidence = tonumber(stats.suppressedContainedAddEvidence) or 0
+	meta.rebuildSuppressedFallbackTrashEvidence = tonumber(stats.suppressedFallbackTrashEvidence) or 0
 	if meta.rebuildLegacyPreservedEncounters > 0 or meta.rebuildLegacyPreservedAbilities > 0 then
 		meta.rebuildCoverage = "partial"
 	else

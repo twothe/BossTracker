@@ -3802,6 +3802,35 @@ local function scenarioDisplaylessFallbackEliteTrashSuppressed()
 	)
 end
 
+local function scenarioHighHpUnitDiedFallbackTrashNotPromoted()
+	Harness.resetState("Replay High HP Dead Trash")
+	local mob = "Thuzadin Shadowcaster"
+	local guid = Harness.makeGuid(mob, 682)
+	local spells = { "Shadow Bolt", "Curse of Elements", "Cripple" }
+	for index = 0, 44 do
+		local _, context = Harness.emitSpell({
+			t = index * 1.1,
+			sourceName = mob,
+			sourceGUID = guid,
+			spellName = spells[(index % #spells) + 1],
+			hp = index == 0 and 59 or 57.7,
+			boss = false,
+		})
+		context.unitClassification = "elite"
+		context.lastUnitSource = "target"
+		context.lastUnitToken = "target"
+		context.lastHpPct = 57.7
+	end
+	Harness.finishPull(52.2, "unit_died")
+
+	local model = Harness.encounter(addon.Core.Util.bossKey(mob, guid))
+	Harness.assertTrue(model == nil, "High-HP fallback trash death must not be promoted as a boss")
+	Harness.assertTrue(
+		addon.Core.EvidenceStore.countPermanentKills() == 0,
+		"High-HP fallback trash death must not enter permanent evidence"
+	)
+end
+
 local function scenarioRaidEliteTrashRequiresBossSignal()
 	Harness.resetState("Replay Raid Trash")
 	Harness.setInstanceInfo({
@@ -4493,6 +4522,47 @@ local function scenarioEvidenceRebuildSkipsInvalidDecodedFacts()
 		"Invalid decoded facts should count as skipped corrupt evidence"
 	)
 	Harness.assertTrue(next(addon.db.learned.zones) == nil, "Invalid decoded facts should not produce learned models")
+end
+
+local function scenarioEvidenceRebuildSuppressesHighHpFallbackDeath()
+	Harness.resetState("Replay Evidence High HP Fallback")
+	local mob = "Thuzadin Shadowcaster"
+	local guid = Harness.makeGuid(mob, 909)
+	Harness.emitSpell({ t = 0, sourceName = mob, sourceGUID = guid, spellName = "Shadow Bolt", hp = 59 })
+	Harness.emitSpell({ t = 14, sourceName = mob, sourceGUID = guid, spellName = "Shadow Bolt", hp = 57.7 })
+	Harness.finishPull(52.2, "unit_died")
+
+	local decoded = firstDecodedEvidenceKill()
+	Harness.assertTrue(decoded ~= nil, "High-HP fallback fixture should start from a stored evidence kill")
+	local actor = decoded.kill.actors[1]
+	actor.class = "elite"
+	actor.bossFrame = nil
+	actor.bossUnitToken = nil
+	actor.targetSeen = true
+	actor.focusSeen = nil
+	actor.startHp10 = 590
+	actor.endHp10 = 577
+	actor.hp = { { 0, 590 }, { 522, 577 } }
+	local hash = addon.Core.EvidenceCodec.hashKill(decoded.instance, decoded.boss, decoded.kill)
+	decoded.kill.hash = hash
+	local storedKill, storeError =
+		addon.Core.EvidenceCodec.encodeStoredKill(decoded.instance, decoded.boss, decoded.kill, hash)
+	Harness.assertTrue(storedKill ~= nil, "High-HP fallback fixture should repack: " .. tostring(storeError))
+	addon.db.evidence.instances[decoded.instance.key].bosses[decoded.boss.key].kills = {
+		[hash] = storedKill,
+	}
+
+	local promoted, rebuildError, stats = addon.Core.EvidenceStore.rebuildLearned({ preserveLegacy = true })
+	Harness.assertTrue(rebuildError == nil, "High-HP fallback rebuild should not error")
+	Harness.assertTrue(promoted == 0, "High-HP fallback death evidence must not rebuild into a model")
+	Harness.assertTrue(
+		stats and stats.suppressedFallbackTrashEvidence == 1,
+		"High-HP fallback death evidence should be counted as suppressed fallback trash"
+	)
+	Harness.assertTrue(
+		Harness.encounter(decoded.boss.key) == nil,
+		"Suppressed high-HP fallback evidence must not preserve the stale learned encounter as legacy"
+	)
 end
 
 local function scenarioEvidenceCommitsWhenLearnerIsBlocked()
@@ -6475,6 +6545,7 @@ local scenarios = {
 	scenarioRepeatedSameHpAbilityDoesNotBecomeHpGate,
 	scenarioUnconfirmedEliteTrashNotPromoted,
 	scenarioDisplaylessFallbackEliteTrashSuppressed,
+	scenarioHighHpUnitDiedFallbackTrashNotPromoted,
 	scenarioRaidEliteTrashRequiresBossSignal,
 	scenarioRaidFallbackLearnedModelDoesNotDisplay,
 	scenarioShortHighHpPartialIgnored,
@@ -6485,6 +6556,7 @@ local scenarios = {
 	scenarioEvidenceStoresCompletedBossEvidence,
 	scenarioEvidenceRejectsMalformedFactPayloads,
 	scenarioEvidenceRebuildSkipsInvalidDecodedFacts,
+	scenarioEvidenceRebuildSuppressesHighHpFallbackDeath,
 	scenarioEvidenceCommitsWhenLearnerIsBlocked,
 	scenarioEvidenceSchemaMismatchArchivesExistingStore,
 	scenarioEvidenceMigratesLegacyPackedEventsToFacts,

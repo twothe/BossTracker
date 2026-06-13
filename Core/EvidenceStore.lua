@@ -1217,6 +1217,17 @@ local function contextHasBossIdentityEvidence(context, bossState)
 			) == "boss_unit"))
 end
 
+local function actorHasBossIdentityEvidence(actor)
+	if type(actor) ~= "table" then
+		return false
+	end
+	local actorKey = actor.modelKey or actor.key
+	return actor.class == "worldboss"
+		or actor.bossFrame == true
+		or isBossUnitToken(actor.bossUnitToken)
+		or (type(actorKey) == "string" and string.sub(actorKey, -4) == "_rel")
+end
+
 local function evidenceZoneIsRaid(instance, kill)
 	local zone = kill and kill.zone
 	local difficulty = kill and kill.difficulty
@@ -1293,6 +1304,23 @@ local function killLooksLikeWeakContainedRaidAddEvidence(instance, boss, kill)
 	return start10 >= grace10 and end10 <= duration10 - grace10
 end
 
+local function killLooksLikeHighHpFallbackDeathEvidence(instance, boss, kill)
+	if type(instance) ~= "table" or type(boss) ~= "table" or type(kill) ~= "table" then
+		return false
+	end
+	if kill.endReason ~= "unit_died" then
+		return false
+	end
+
+	local actor = singleBossActorForKill(boss, kill)
+	if not actor or actorHasBossIdentityEvidence(actor) then
+		return false
+	end
+
+	local endHpPct = tonumber(actor.endHp10) and actor.endHp10 / 10 or nil
+	return endHpPct ~= nil and endHpPct > C.BOSS_COMPLETION_HP_THRESHOLD
+end
+
 local function entryHasBossIdentityEvidence(entry)
 	if type(entry) ~= "table" then
 		return false
@@ -1304,10 +1332,19 @@ local function entryCompletionReason(entry)
 	local bossState = entry and entry.bossState
 	local context = entry and entry.context
 	local endReason = context and context.endReason or bossState and bossState.endReason
-	if endReason == "unit_died" then
-		return endReason
-	end
 	local decision = entry and entry.decision
+	if endReason == "unit_died" then
+		local endHpPct = tonumber(context and context.lastHpPct) or tonumber(bossState and bossState.lastHpPct)
+		if
+			decisionHasBossIdentityEvidence(decision)
+			or entryHasBossIdentityEvidence(entry)
+			or not endHpPct
+			or endHpPct <= C.BOSS_COMPLETION_HP_THRESHOLD
+		then
+			return endReason
+		end
+		return nil
+	end
 	local endHpPct = tonumber(decision and decision.endHpPct)
 		or tonumber(context and context.lastHpPct)
 		or tonumber(bossState and bossState.lastHpPct)
@@ -2325,6 +2362,7 @@ function EvidenceStore.rebuildLearned(options)
 			evidenceKills = 0,
 			skippedCorruptEvidence = 0,
 			suppressedContainedAddEvidence = 0,
+			suppressedFallbackTrashEvidence = 0,
 			legacyPreservedEncounters = 0,
 			legacyPreservedAbilities = 0,
 			legacyPartialEncounters = 0,
@@ -2343,6 +2381,13 @@ function EvidenceStore.rebuildLearned(options)
 						local decodedBoss = decoded.boss or boss
 						if killLooksLikeWeakContainedRaidAddEvidence(decodedInstance, decodedBoss, decoded.kill) then
 							stats.suppressedContainedAddEvidence = stats.suppressedContainedAddEvidence + 1
+							suppressedLegacyEncounters[learnedEncounterIdentity(
+								(decoded.kill.zone and decoded.kill.zone.key) or decodedInstance.key,
+								decodedBoss.key
+							)] =
+								true
+						elseif killLooksLikeHighHpFallbackDeathEvidence(decodedInstance, decodedBoss, decoded.kill) then
+							stats.suppressedFallbackTrashEvidence = stats.suppressedFallbackTrashEvidence + 1
 							suppressedLegacyEncounters[learnedEncounterIdentity(
 								(decoded.kill.zone and decoded.kill.zone.key) or decodedInstance.key,
 								decodedBoss.key

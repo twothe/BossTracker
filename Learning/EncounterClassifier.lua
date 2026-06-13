@@ -111,6 +111,10 @@ function EncounterClassifier.scoreContext(context, bossState, modelStats)
 	local otherBossFramePresent = worldbossesInPull > 0 and not classifiedAsBoss
 	local lowHpCompletion = endHpPct ~= nil and endHpPct <= C.BOSS_COMPLETION_HP_THRESHOLD
 	local raidFallbackBlocked = isRaidInstance(modelStats) and not classifiedAsBoss
+	local highHpFallbackDeath = not classifiedAsBoss
+		and endReason == "unit_died"
+		and endHpPct ~= nil
+		and endHpPct > C.BOSS_COMPLETION_HP_THRESHOLD
 
 	if classification == "worldboss" then
 		score = score + 0.90
@@ -241,6 +245,13 @@ function EncounterClassifier.scoreContext(context, bossState, modelStats)
 		addReason(reasons, "unconfirmed_non_boss_context")
 	end
 
+	if highHpFallbackDeath then
+		isBoss = false
+		partialAttempt = false
+		unconfirmedHighHp = false
+		addReason(reasons, "high_hp_fallback_death")
+	end
+
 	if insufficientHighHpPartial then
 		isBoss = false
 		partialAttempt = false
@@ -264,6 +275,7 @@ function EncounterClassifier.scoreContext(context, bossState, modelStats)
 		partialAttempt = partialAttempt,
 		incompleteHighHp = false,
 		unconfirmedHighHp = unconfirmedHighHp,
+		highHpFallbackDeath = highHpFallbackDeath,
 		bossUnitSignal = bossUnitSignal,
 		councilSignal = councilSignal,
 		otherBossFramePresent = otherBossFramePresent,

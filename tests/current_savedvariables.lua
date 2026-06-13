@@ -705,6 +705,15 @@ local function validateKnownCurrentData(db)
 	if standaloneWhelps > 0 then
 		fail("Contained Lashlayer whelps are still learned as standalone BWL encounters")
 	end
+
+	local stratholmeZone = db.learned and db.learned.zones and db.learned.zones["329_stratholme"]
+	local shadowcaster = stratholmeZone
+		and stratholmeZone.encounters
+		and stratholmeZone.encounters.thuzadin_shadowcaster
+	print("stratholmeThuzadinShadowcaster present=" .. tostring(shadowcaster ~= nil))
+	if shadowcaster then
+		fail("Thuzadin Shadowcaster trash is still preserved as a learned Stratholme encounter")
+	end
 end
 
 local defaultAccountPath, defaultCharacterPath = defaultSavedVariablesPaths()
@@ -752,6 +761,8 @@ print(
 		.. tostring(db.learnedMeta and db.learnedMeta.rebuildSkippedCorruptEvidence)
 		.. " suppressedContainedAdds="
 		.. tostring(db.learnedMeta and db.learnedMeta.rebuildSuppressedContainedAddEvidence)
+		.. " suppressedFallbackTrash="
+		.. tostring(db.learnedMeta and db.learnedMeta.rebuildSuppressedFallbackTrashEvidence)
 )
 if tonumber(db.learnedMeta and db.learnedMeta.rebuildSkippedCorruptEvidence) ~= 0 then
 	fail("rebuild skipped corrupt evidence")

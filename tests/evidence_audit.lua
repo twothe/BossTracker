@@ -260,6 +260,17 @@ local function isBossUnitToken(unit)
 	return type(unit) == "string" and string.sub(unit, 1, 4) == "boss"
 end
 
+local function actorHasBossIdentityEvidence(actor)
+	if type(actor) ~= "table" then
+		return false
+	end
+	local actorKey = actor.modelKey or actor.key
+	return actor.class == "worldboss"
+		or actor.bossFrame == true
+		or isBossUnitToken(actor.bossUnitToken)
+		or (type(actorKey) == "string" and string.sub(actorKey, -4) == "_rel")
+end
+
 local function evidenceZoneIsRaid(instance, kill)
 	local zone = kill and kill.zone
 	local difficulty = kill and kill.difficulty
@@ -323,6 +334,21 @@ local function killLooksLikeSuppressedContainedRaidAdd(instance, boss, kill)
 	local duration10 = tonumber(kill.duration10) or end10
 	local grace10 = math.floor(((tonumber(C.ENCOUNTER_CONTAINED_ADD_START_GRACE_SECONDS) or 2) * 10) + 0.5)
 	return start10 >= grace10 and end10 <= duration10 - grace10
+end
+
+local function killLooksLikeSuppressedFallbackTrash(instance, boss, kill)
+	if type(instance) ~= "table" or type(boss) ~= "table" or type(kill) ~= "table" then
+		return false
+	end
+	if kill.endReason ~= "unit_died" then
+		return false
+	end
+	local actor = singleBossActorForKill(boss, kill)
+	if not actor or actorHasBossIdentityEvidence(actor) then
+		return false
+	end
+	local endHpPct = tonumber(actor.endHp10) and actor.endHp10 / 10 or nil
+	return endHpPct ~= nil and endHpPct > C.BOSS_COMPLETION_HP_THRESHOLD
 end
 
 local function collectEvidenceRecords(db)
@@ -648,6 +674,7 @@ local function auditMatchedBoss(db, match)
 	local warnings = {}
 	local notes = {}
 	local suppressedContainedAddKills = 0
+	local suppressedFallbackTrashKills = 0
 	local durationRange = {}
 	local evidenceRange = {}
 	local evidenceTimeRange = {}
@@ -667,6 +694,9 @@ local function auditMatchedBoss(db, match)
 		local kill = record.kill
 		if killLooksLikeSuppressedContainedRaidAdd(record.instance, record.boss, kill) then
 			suppressedContainedAddKills = suppressedContainedAddKills + 1
+		end
+		if killLooksLikeSuppressedFallbackTrash(record.instance, record.boss, kill) then
+			suppressedFallbackTrashKills = suppressedFallbackTrashKills + 1
 		end
 		if not addon.Core.EvidenceCodec.validDecodedKill(record) then
 			addLine(errors, "invalid decoded kill " .. tostring(record.storedHash))
@@ -879,10 +909,16 @@ local function auditMatchedBoss(db, match)
 
 	local zone, encounter = findLearnedEncounter(db, match.instance.key, match.boss.key)
 	local suppressedRuntime = suppressedContainedAddKills == #match.records and #match.records > 0
+	local suppressedFallbackTrash = suppressedFallbackTrashKills == #match.records and #match.records > 0
 	if not encounter and suppressedRuntime then
 		addLine(
 			notes,
 			"contained raid add evidence is intentionally kept diagnostic-only and not promoted to a learned encounter"
+		)
+	elseif not encounter and suppressedFallbackTrash then
+		addLine(
+			notes,
+			"high-HP fallback trash death evidence is intentionally kept diagnostic-only and not promoted to a learned encounter"
 		)
 	elseif not encounter then
 		addLine(
@@ -950,6 +986,7 @@ local function auditMatchedBoss(db, match)
 		zone = zone,
 		encounter = encounter,
 		suppressedRuntime = suppressedRuntime,
+		suppressedFallbackTrash = suppressedFallbackTrash,
 	}
 end
 
@@ -1028,6 +1065,8 @@ local function printAudit(query, match, audit)
 		)
 	elseif audit.suppressedRuntime then
 		print("learnedEncounter=suppressed reason=contained_raid_add")
+	elseif audit.suppressedFallbackTrash then
+		print("learnedEncounter=suppressed reason=high_hp_fallback_trash")
 	end
 
 	if #audit.errors == 0 and #audit.warnings == 0 then

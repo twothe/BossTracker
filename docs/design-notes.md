@@ -38,6 +38,7 @@ The addon records hostile NPC spell evidence broadly because manual dungeon test
 - Contexts are scored for durable learning at pull end, after the addon can see the full boss group and repeated trash models.
 - Only qualified boss-like contexts are promoted into persistent timer models.
 - Non-boss-frame and non-worldboss fallback contexts require death or low-HP confirmation before promotion. Long elite trash with many casts stays diagnostic-only unless the client sees stronger boss evidence.
+- A fallback-only `UNIT_DIED` with last known HP still above the completion threshold is ambiguous, because ordinary trash deaths can carry stale target HP. Without boss-frame, worldboss, council, or low-HP confirmation, that evidence remains diagnostic-only.
 - Repeated model names inside one run are strong evidence for trash or adds unless boss-frame or worldboss classification proves a boss.
 - If a pull has boss-frame evidence, nearby non-boss actors are treated conservatively so adds and long trash chains do not become timer models.
 - Summon spells from non-boss actors may be associated with a single active boss-frame owner as encounter mechanics. The boss owns the encounter timer, but the original source is retained so add-driven mechanics are not treated as direct boss casts. Ambiguous multi-boss ownership is skipped until the model can resolve it safely.
